@@ -54,19 +54,8 @@ class FnosSign(_PluginBase):
         """
         try:
             logger.info("============= FnosSign插件初始化开始 =============")
-            logger.info(f"插件类名: FnosSign")
-            logger.info(f"目录名: fnos_sign")
-            logger.info(f"插件名称: {self.plugin_name}")
-            logger.info(f"插件版本: {self.plugin_version}")
             super().__init__()
             logger.info("FnosSign插件基类初始化完成")
-            # 初始化通知服务
-            if hasattr(settings, 'VERSION_FLAG'):
-                self._version = settings.VERSION_FLAG  # V2
-                logger.info(f"飞牛论坛签到插件运行在 V2 版本, VERSION_FLAG={settings.VERSION_FLAG}")
-            else:
-                self._version = "v1"  # V1
-                logger.info("飞牛论坛签到插件运行在 V1 版本")
             logger.info("============= FnosSign插件初始化完成 =============")
         except Exception as e:
             logger.error(f"============= FnosSign插件初始化异常: {str(e)} =============")
@@ -258,45 +247,58 @@ class FnosSign(_PluginBase):
                         mtype=NotificationType.SiteMessage,
                         title="【飞牛论坛签到失败】",
                         text="请检查Cookie是否有效")
+        except Exception as e:
+            logger.error(f"签到异常: {str(e)}")
+            # 记录签到异常
+            try:
+                sign_dict = {
+                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                    "status": f"签到异常: {str(e)}"
+                }
+                history = self.get_data('sign_history') or []
+                history.append(sign_dict)
+                self.save_data(key="sign_history", value=history)
+                
+                # 发送异常通知
+                if self._notify:
+                    self.post_message(
+                        mtype=NotificationType.SiteMessage,
+                        title="【飞牛论坛签到异常】",
+                        text=f"签到过程发生异常: {str(e)}")
+            except Exception as e2:
+                logger.error(f"记录异常签到状态时发生错误: {str(e2)}")
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"签到请求异常: {e}")
-
-    def get_credit_info(self, html_content: str) -> Dict[str, Any]:
+    def get_credit_info(self, html_content):
         """
-        从页面内容中提取积分信息
+        从积分页面解析积分信息
         """
         try:
-            # 提取飞牛币 (fnb)
-            fnb_match = re.search(r'飞牛币.*?(\d+)', html_content, re.DOTALL)
-            fnb = int(fnb_match.group(1)) if fnb_match else 0
-
-            # 提取牛值 (nz)
-            nz_match = re.search(r'牛值.*?(\d+)', html_content, re.DOTALL)
-            nz = int(nz_match.group(1)) if nz_match else 0
-
-            # 提取积分 (jf)
-            credit_match = re.search(r'积分.*?(\d+)', html_content, re.DOTALL)
-            credit = int(credit_match.group(1)) if credit_match else 0
-
-            # 提取登录天数/总天数 (ts)
-            login_days_match = re.search(r'登录天数.*?(\d+)', html_content, re.DOTALL)
-            login_days = int(login_days_match.group(1)) if login_days_match else 0
-
-            return {
-                "fnb": fnb,
-                "nz": nz,
-                "credit": credit,
-                "login_days": login_days
-            }
+            credit_info = {}
+            
+            # 解析飞牛币
+            fnb_match = re.search(r'飞牛币</em>.*?(\d+)', html_content, re.DOTALL)
+            if fnb_match:
+                credit_info["fnb"] = fnb_match.group(1)
+            
+            # 解析牛值
+            nz_match = re.search(r'牛值</em>.*?(\d+)', html_content, re.DOTALL)
+            if nz_match:
+                credit_info["nz"] = nz_match.group(1)
+            
+            # 解析积分
+            credit_match = re.search(r'积分: (\d+)', html_content)
+            if credit_match:
+                credit_info["credit"] = credit_match.group(1)
+            
+            # 解析连续登录天数
+            login_days_match = re.search(r'连续登录(\d+)天', html_content)
+            if login_days_match:
+                credit_info["login_days"] = login_days_match.group(1)
+            
+            return credit_info
         except Exception as e:
-            logger.error(f"提取积分信息失败: {str(e)}")
-            return {
-                "fnb": 0,
-                "nz": 0,
-                "credit": 0,
-                "login_days": 0
-            }
+            logger.error(f"解析积分信息异常: {str(e)}")
+            return {}
 
     def get_state(self) -> bool:
         """
@@ -304,15 +306,6 @@ class FnosSign(_PluginBase):
         """
         logger.info(f"============= FnosSign get_state 被调用，返回 {self._enabled} =============")
         return self._enabled
-
-    @staticmethod
-    def get_command() -> List[Dict[str, Any]]:
-        logger.info("============= FnosSign get_command 被调用 =============")
-        pass
-
-    def get_api(self) -> List[Dict[str, Any]]:
-        logger.info("============= FnosSign get_api 被调用 =============")
-        pass
 
     def get_service(self) -> List[Dict[str, Any]]:
         """
@@ -629,16 +622,14 @@ class FnosSign(_PluginBase):
             logger.error(f"============= FnosSign stop_service 异常: {str(e)} =============")
             return False
 
-    def get_plugin_name(self):
+    def get_command(self) -> List[Dict[str, Any]]:
         """
-        获取插件名称
+        注册命令
         """
-        logger.info("============= FnosSign get_plugin_name 被调用，返回 飞牛论坛签到 =============")
-        return self.plugin_name
+        return []
 
-    def get_plugin_id(self):
+    def get_api(self) -> List[Dict[str, Any]]:
         """
-        获取插件ID
+        注册API
         """
-        logger.info("============= FnosSign get_plugin_id 被调用，返回 FnosSign =============")
-        return "FnosSign"
+        return []
