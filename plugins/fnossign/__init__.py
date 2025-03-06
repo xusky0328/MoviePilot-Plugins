@@ -36,7 +36,7 @@ class fnossign(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico"
     # 插件版本
-    plugin_version = "1.0"
+    plugin_version = "1.7"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -448,8 +448,8 @@ class fnossign(_PluginBase):
             
             return credit_info
             
-        except requests.RequestException as req_exc:
-            logger.error(f"获取积分信息网络错误: {str(req_exc)}")
+        except requests.RequestException as request_exception:
+            logger.error(f"获取积分信息网络错误: {str(request_exception)}")
             return {}
             
         except Exception as e:
@@ -496,18 +496,18 @@ class fnossign(_PluginBase):
         except Exception as e:
             logger.error(f"保存签到历史记录失败: {str(e)}", exc_info=True)
 
-    def _send_sign_notification(self, sign_data):
+    def _send_sign_notification(self, sign_dict):
         """
-        发送美观的签到通知
+        发送签到通知
         """
         if not self._notify:
             return
             
-        status = sign_data.get("status", "未知")
-        fnb = sign_data.get("fnb", "—")
-        nz = sign_data.get("nz", "—")
-        credit = sign_data.get("credit", "—")
-        login_days = sign_data.get("login_days", "—")
+        status = sign_dict.get("status", "未知")
+        fnb = sign_dict.get("fnb", "—")
+        nz = sign_dict.get("nz", "—")
+        credit = sign_dict.get("credit", "—")
+        login_days = sign_dict.get("login_days", "—")
         
         # 构建通知文本
         if "签到成功" in status or "已签到" in status:
