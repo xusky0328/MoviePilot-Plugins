@@ -1,6 +1,6 @@
 """
 飞牛论坛签到插件
-版本: 1.0
+版本: 2.0
 作者: madrays
 功能:
 - 自动完成飞牛论坛每日签到
@@ -10,7 +10,7 @@
 - 增强的错误处理和日志
 
 修改记录:
-- v1.0: 初始版本，基本签到功能
+- v2.0: 初始版本，基本签到功能
 """
 import time
 import requests
@@ -36,7 +36,7 @@ class fnossign(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico"
     # 插件版本
-    plugin_version = "1.9"
+    plugin_version = "2.0"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -58,6 +58,7 @@ class fnossign(_PluginBase):
     _max_retries = 3  # 最大重试次数
     _retry_interval = 30  # 重试间隔(秒)
     _history_days = 30  # 历史保留天数
+    _manual_trigger = False
 
     def init_plugin(self, config: dict = None):
         logger.info("============= fnossign 初始化 =============")
@@ -76,6 +77,7 @@ class fnossign(_PluginBase):
             if self._onlyonce:
                 logger.info("执行一次性签到")
                 self._onlyonce = False
+                self._manual_trigger = True  # 标记为手动触发
                 self.update_config({
                     "onlyonce": False,
                     "enabled": self._enabled,
@@ -94,6 +96,14 @@ class fnossign(_PluginBase):
         """执行签到，支持失败重试"""
         logger.info("============= 开始签到 =============")
         try:
+            # 检查是否今日已成功签到（通过记录）
+            if not self._is_manual_trigger() and self._is_already_signed_today():
+                logger.info("根据历史记录，今日已成功签到，跳过本次执行")
+                return {
+                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                    "status": "跳过: 今日已签到",
+                }
+            
             # 检查先决条件
             if not self._cookie:
                 logger.error("签到失败：未配置Cookie")
@@ -335,11 +345,15 @@ class fnossign(_PluginBase):
             "fnb": credit_info.get("fnb", 0),
             "nz": credit_info.get("nz", 0),
             "credit": credit_info.get("jf", 0),
-            "login_days": credit_info.get("ts", 0)
+            "login_days": credit_info.get("login_days", 0)
         }
         
         # 保存签到记录
         self._save_sign_history(sign_dict)
+        
+        # 记录最后一次成功签到的日期
+        if "签到成功" in status or "已签到" in status:
+            self._save_last_sign_date()
         
         return sign_dict
 
@@ -589,170 +603,342 @@ class fnossign(_PluginBase):
                 'component': 'VForm',
                 'content': [
                     {
-                        'component': 'VRow',
+                        'component': 'VCard',
+                        'props': {
+                            'variant': 'outlined',
+                            'class': 'mb-4'
+                        },
                         'content': [
                             {
-                                'component': 'VCol',
+                                'component': 'VCardTitle',
                                 'props': {
-                                    'cols': 12,
-                                    'md': 4
+                                    'class': 'text-h6'
                                 },
-                                'content': [
-                                    {
-                                        'component': 'VSwitch',
-                                        'props': {
-                                            'model': 'enabled',
-                                            'label': '启用插件',
-                                        }
-                                    }
-                                ]
+                                'text': '🔄 基本设置'
                             },
                             {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12,
-                                    'md': 4
-                                },
+                                'component': 'VCardText',
                                 'content': [
                                     {
-                                        'component': 'VSwitch',
-                                        'props': {
-                                            'model': 'notify',
-                                            'label': '开启通知',
-                                        }
-                                    }
-                                ]
-                            },
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12,
-                                    'md': 4
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VSwitch',
-                                        'props': {
-                                            'model': 'onlyonce',
-                                            'label': '立即运行一次',
-                                        }
+                                        'component': 'VRow',
+                                        'content': [
+                                            {
+                                                'component': 'VCol',
+                                                'props': {
+                                                    'cols': 12,
+                                                    'md': 4
+                                                },
+                                                'content': [
+                                                    {
+                                                        'component': 'VSwitch',
+                                                        'props': {
+                                                            'model': 'enabled',
+                                                            'label': '启用插件',
+                                                            'color': 'primary',
+                                                            'hide-details': False,
+                                                            'density': 'comfortable',
+                                                            'prepend-icon': 'mdi-power'
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                'component': 'VCol',
+                                                'props': {
+                                                    'cols': 12,
+                                                    'md': 4
+                                                },
+                                                'content': [
+                                                    {
+                                                        'component': 'VSwitch',
+                                                        'props': {
+                                                            'model': 'notify',
+                                                            'label': '开启通知',
+                                                            'color': 'info',
+                                                            'hide-details': False,
+                                                            'density': 'comfortable',
+                                                            'prepend-icon': 'mdi-bell'
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                'component': 'VCol',
+                                                'props': {
+                                                    'cols': 12,
+                                                    'md': 4
+                                                },
+                                                'content': [
+                                                    {
+                                                        'component': 'VSwitch',
+                                                        'props': {
+                                                            'model': 'onlyonce',
+                                                            'label': '立即运行一次',
+                                                            'color': 'success',
+                                                            'hide-details': False,
+                                                            'density': 'comfortable',
+                                                            'prepend-icon': 'mdi-play'
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        ]
                                     }
                                 ]
                             }
                         ]
                     },
                     {
-                        'component': 'VRow',
+                        'component': 'VCard',
+                        'props': {
+                            'variant': 'outlined',
+                            'class': 'mb-4'
+                        },
                         'content': [
                             {
-                                'component': 'VCol',
+                                'component': 'VCardTitle',
                                 'props': {
-                                    'cols': 12,
+                                    'class': 'text-h6'
                                 },
+                                'text': '🔐 账号设置'
+                            },
+                            {
+                                'component': 'VCardText',
                                 'content': [
                                     {
-                                        'component': 'VTextField',
-                                        'props': {
-                                            'model': 'cookie',
-                                            'label': '站点Cookie',
-                                            'placeholder': '请输入站点Cookie值'
-                                        }
+                                        'component': 'VRow',
+                                        'content': [
+                                            {
+                                                'component': 'VCol',
+                                                'props': {
+                                                    'cols': 12
+                                                },
+                                                'content': [
+                                                    {
+                                                        'component': 'VTextField',
+                                                        'props': {
+                                                            'model': 'cookie',
+                                                            'label': '站点Cookie',
+                                                            'placeholder': '请输入站点Cookie值',
+                                                            'variant': 'outlined',
+                                                            'prepend-icon': 'mdi-cookie',
+                                                            'hide-details': False,
+                                                            'persistent-hint': True,
+                                                            'hint': '复制浏览器中的完整Cookie字符串，必须包含pvRK_2132_saltkey和pvRK_2132_auth'
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        ]
                                     }
                                 ]
                             }
                         ]
                     },
-                {
-                    'component': 'VRow',
-                    'content': [
-                        {
-                            'component': 'VCol',
-                            'props': {
-                                'cols': 12,
-                                    'md': 3
-                            },
-                            'content': [
-                                {
-                                        'component': 'VTextField',
-                                    'props': {
-                                            'model': 'cron',
-                                            'label': '签到周期',
-                                            'placeholder': '0 8 * * *'
-                                        }
-                                    }
-                                ]
-                            },
-                            {
-                                'component': 'VCol',
-                                            'props': {
-                                    'cols': 12,
-                                    'md': 3
-                                            },
-                                            'content': [
-                                                {
-                                        'component': 'VTextField',
-                                                    'props': {
-                                            'model': 'max_retries',
-                                            'label': '最大重试次数',
-                                            'type': 'number',
-                                            'placeholder': '3'
-                                        }
-                                    }
-                                ]
-                            },
-                            {
-                                'component': 'VCol',
-                                                    'props': {
-                                    'cols': 12,
-                                    'md': 3
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VTextField',
-                                        'props': {
-                                            'model': 'retry_interval',
-                                            'label': '重试间隔(秒)',
-                                            'type': 'number',
-                                            'placeholder': '30'
-                                        }
-                                }
-                            ]
+                    {
+                        'component': 'VCard',
+                        'props': {
+                            'variant': 'outlined',
+                            'class': 'mb-4'
                         },
-                        {
-                            'component': 'VCol',
-                            'props': {
-                                'cols': 12,
-                                    'md': 3
+                        'content': [
+                            {
+                                'component': 'VCardTitle',
+                                'props': {
+                                    'class': 'text-h6'
+                                },
+                                'text': '⚙️ 高级设置'
                             },
-                            'content': [
-                                {
-                                        'component': 'VTextField',
-                                    'props': {
-                                            'model': 'history_days',
-                                            'label': '历史保留天数',
-                                            'type': 'number',
-                                            'placeholder': '30'
-                                        }
+                            {
+                                'component': 'VCardText',
+                                'content': [
+                                    {
+                                        'component': 'VRow',
+                                        'content': [
+                                            {
+                                                'component': 'VCol',
+                                                'props': {
+                                                    'cols': 12,
+                                                    'md': 3
+                                                },
+                                                'content': [
+                                                    {
+                                                        'component': 'VTextField',
+                                                        'props': {
+                                                            'model': 'cron',
+                                                            'label': '签到周期',
+                                                            'placeholder': '0 8 * * *',
+                                                            'prepend-icon': 'mdi-calendar-clock',
+                                                            'hint': '使用cron表达式设置执行时间',
+                                                            'persistent-hint': True
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                'component': 'VCol',
+                                                'props': {
+                                                    'cols': 12,
+                                                    'md': 3
+                                                },
+                                                'content': [
+                                                    {
+                                                        'component': 'VTextField',
+                                                        'props': {
+                                                            'model': 'max_retries',
+                                                            'label': '最大重试次数',
+                                                            'type': 'number',
+                                                            'placeholder': '3',
+                                                            'prepend-icon': 'mdi-refresh',
+                                                            'hint': '签到失败后的自动重试次数',
+                                                            'persistent-hint': True
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                'component': 'VCol',
+                                                'props': {
+                                                    'cols': 12,
+                                                    'md': 3
+                                                },
+                                                'content': [
+                                                    {
+                                                        'component': 'VTextField',
+                                                        'props': {
+                                                            'model': 'retry_interval',
+                                                            'label': '重试间隔(秒)',
+                                                            'type': 'number',
+                                                            'placeholder': '30',
+                                                            'prepend-icon': 'mdi-timer',
+                                                            'hint': '每次重试之间的等待时间',
+                                                            'persistent-hint': True
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                'component': 'VCol',
+                                                'props': {
+                                                    'cols': 12,
+                                                    'md': 3
+                                                },
+                                                'content': [
+                                                    {
+                                                        'component': 'VTextField',
+                                                        'props': {
+                                                            'model': 'history_days',
+                                                            'label': '历史保留天数',
+                                                            'type': 'number',
+                                                            'placeholder': '30',
+                                                            'prepend-icon': 'mdi-history',
+                                                            'hint': '签到历史记录的保留时间',
+                                                            'persistent-hint': True
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        ]
                                     }
                                 ]
                             }
                         ]
                     },
-                                                {
-                                                    'component': 'VRow',
-                                                    'content': [
-                                                        {
-                                                            'component': 'VCol',
-                                                            'props': {
-                                    'cols': 12,
+                    {
+                        'component': 'VCard',
+                        'props': {
+                            'variant': 'outlined',
+                            'class': 'mb-4'
+                        },
+                        'content': [
+                            {
+                                'component': 'VCardTitle',
+                                'props': {
+                                    'class': 'text-h6'
+                                },
+                                'text': '📚 使用教程'
+                            },
+                            {
+                                'component': 'VCardText',
+                                'content': [
+                                    {
+                                        'component': 'VRow',
+                                        'content': [
+                                            {
+                                                'component': 'VCol',
+                                                'props': {
+                                                    'cols': 12
+                                                },
+                                                'content': [
+                                                    {
+                                                        'component': 'VExpansionPanels',
+                                                        'props': {
+                                                            'variant': 'accordion',
+                                                            'elevation': 0
+                                                        },
+                                                        'content': [
+                                                            {
+                                                                'component': 'VExpansionPanel',
+                                                                'props': {
+                                                                    'title': '1️⃣ 如何获取飞牛论坛Cookie?',
+                                                                    'text': '- 使用Chrome浏览器访问飞牛论坛官网并登录\n- 按F12打开开发者工具，选择"应用程序"或"Application"选项卡\n- 在左侧找到"Cookies"，点击"https://club.fnnas.com"\n- 右键点击空白处，选择"复制全部"或"Copy all as string"\n- 粘贴到插件的Cookie输入框中即可'
+                                                                }
                                                             },
-                                                            'content': [
-                                                                {
-                                        'component': 'VAlert',
-                                                                    'props': {
-                                            'type': 'info',
+                                                            {
+                                                                'component': 'VExpansionPanel',
+                                                                'props': {
+                                                                    'title': '2️⃣ 如何设置签到时间?',
+                                                                    'text': '签到周期使用标准cron表达式设置，默认值"0 8 * * *"表示每天早上8点执行。\n\n常用设置示例：\n- 每天早上7点: 0 7 * * *\n- 每天中午12点: 0 12 * * *\n- 每小时执行一次: 0 * * * *\n- 每天0点和12点执行: 0 0,12 * * *'
+                                                                }
+                                                            },
+                                                            {
+                                                                'component': 'VExpansionPanel',
+                                                                'props': {
+                                                                    'title': '3️⃣ 如何判断签到是否成功?',
+                                                                    'text': '- 启用"开启通知"选项后，每次签到都会发送通知\n- 通知内容包括签到状态和积分信息\n- 在插件页面可以查看历史签到记录和详细数据\n- 绿色状态表示签到成功，红色表示失败'
+                                                                }
+                                                            },
+                                                            {
+                                                                'component': 'VExpansionPanel',
+                                                                'props': {
+                                                                    'title': '4️⃣ 签到失败怎么办?',
+                                                                    'text': '常见签到失败原因及解决方法：\n\n- Cookie无效或过期：重新获取最新的Cookie并更新\n- 网络连接问题：检查网络连接，或增加重试次数\n- 论坛改版或维护：等待插件更新或论坛恢复正常\n- 插件配置问题：检查Cookie格式是否正确完整'
+                                                                }
+                                                            },
+                                                            {
+                                                                'component': 'VExpansionPanel',
+                                                                'props': {
+                                                                    'title': '5️⃣ 高级功能说明',
+                                                                    'text': '- 最大重试次数：签到失败后自动重试的次数，建议设置为3-5\n- 重试间隔：每次重试之间的等待时间，单位为秒\n- 立即运行一次：不受签到周期限制，立即执行一次签到\n- 历史保留天数：签到记录的保存时间，避免数据过多占用空间'
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCardActions',
+                                'content': [
+                                    {
+                                        'component': 'VSpacer'
+                                    },
+                                    {
+                                        'component': 'VBtn',
+                                        'props': {
+                                            'color': 'primary',
                                             'variant': 'tonal',
-                                            'text': '飞牛论坛签到插件，支持自动签到、失败重试和通知。v1.2增强了错误处理和重试机制。'
+                                            'prepend-icon': 'mdi-github'
+                                        },
+                                        'text': '插件源码',
+                                        'events': {
+                                            'click': {
+                                                'action': 'link',
+                                                'link': 'https://github.com/madrays/MoviePilot-Plugins'
+                                            }
                                         }
                                     }
                                 ]
@@ -773,135 +959,516 @@ class fnossign(_PluginBase):
         }
 
     def get_page(self) -> List[dict]:
-        """
-        构建插件详情页面，展示签到历史
-        """
-        # 获取签到历史
-        historys = self.get_data('sign_history') or []
+        history = self.get_data('sign_history') or []
+        run_count = len(history)
+        success_count = sum(1 for record in history if "签到成功" in record.get("status", "") or "已签到" in record.get("status", ""))
+        fail_count = run_count - success_count
         
-        # 如果没有历史记录
-        if not historys:
-            return [
-                {
-                    'component': 'VAlert',
-                                                                    'props': {
-                        'type': 'info',
-                        'variant': 'tonal',
-                        'text': '暂无签到记录，请先配置Cookie并启用插件',
-                        'class': 'mb-2'
-                    }
-                }
-            ]
+        # 计算成功率
+        success_rate = 0
+        if run_count > 0:
+            success_rate = round((success_count / run_count) * 100, 2)
         
-        # 按时间倒序排列历史
-        historys = sorted(historys, key=lambda x: x.get("date", ""), reverse=True)
+        # 获取今日是否已签到
+        today = datetime.now().strftime('%Y-%m-%d')
+        today_signed = False
+        today_record = None
         
-        # 构建历史记录表格行
-        history_rows = []
-        for history in historys:
-            status_text = history.get("status", "未知")
-            status_color = "success" if status_text in ["签到成功", "已签到"] else "error"
-            
-            history_rows.append({
-                'component': 'tr',
+        for record in history:
+            record_date = record.get("date", "").split(' ')[0]
+            if record_date == today and ("签到成功" in record.get("status", "") or "已签到" in record.get("status", "")):
+                today_signed = True
+                today_record = record
+                break
+        
+        # 计算总积分
+        total_fnb = 0
+        for record in history:
+            if "签到成功" in record.get("status", "") or "已签到" in record.get("status", ""):
+                total_fnb += record.get("fnb", 0)
+        
+        return [
+            {
+                'component': 'VRow',
                 'content': [
-                    # 日期列
                     {
-                        'component': 'td',
-                                                            'props': {
-                            'class': 'text-caption'
-                                                            },
-                        'text': history.get("date", "")
-                    },
-                    # 状态列
-                    {
-                        'component': 'td',
-                                                            'content': [
-                                                                {
-                                'component': 'VChip',
-                                                                    'props': {
-                                    'color': status_color,
-                                    'size': 'small',
-                                    'variant': 'outlined'
-                                },
-                                'text': status_text
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12
+                        },
+                        'content': [
+                            {
+                                'component': 'VAlert',
+                                'props': {
+                                    'type': 'info',
+                                    'variant': 'tonal',
+                                    'icon': 'mdi-information',
+                                    'text': f'签到插件状态：{"✅ 已启用" if self._enabled else "❌ 未启用"}   |   执行周期：{self._cron or "未设置"}   |   最近{run_count}次签到中成功{success_count}次，成功率{success_rate}%',
+                                    'class': 'mb-4'
+                                }
                             }
                         ]
                     },
-                    # 飞牛币列
                     {
-                        'component': 'td',
-                        'text': f"{history.get('fnb', '—')} 💎" if "fnb" in history else "—"
-                    },
-                    # 牛值列
-                    {
-                        'component': 'td',
-                        'text': f"{history.get('nz', '—')} 🔥" if "nz" in history else "—"
-                    },
-                    # 积分列
-                    {
-                        'component': 'td',
-                        'text': f"{history.get('credit', '—')} ✨" if "credit" in history else "—"
-                    },
-                    # 登录天数列
-                    {
-                        'component': 'td',
-                        'text': f"{history.get('login_days', '—')} 📆" if "login_days" in history else "—"
-                    }
-                ]
-            })
-        
-        # 最终页面组装
-        return [
-            # 标题
-                {
-                    'component': 'VCard',
-                'props': {'variant': 'outlined', 'class': 'mb-4'},
-                'content': [
-                    {
-                        'component': 'VCardTitle',
-                        'props': {'class': 'text-h6'},
-                        'text': '📊 飞牛论坛签到历史'
-                    },
-                    {
-                        'component': 'VCardText',
-                    'content': [
-                        {
-                                'component': 'VTable',
-                            'props': {
-                                    'hover': True,
-                                    'density': 'compact'
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
+                        'content': [
+                            {
+                                'component': 'VCard',
+                                'props': {
+                                    'variant': 'outlined',
+                                    'class': 'mb-4',
+                                    'color': 'success' if today_signed else 'warning'
                                 },
                                 'content': [
-                                    # 表头
                                     {
-                                        'component': 'thead',
+                                        'component': 'VCardTitle',
+                                        'props': {
+                                            'class': 'text-h6'
+                                        },
+                                        'text': '今日签到状态'
+                                    },
+                                    {
+                                        'component': 'VCardText',
                                         'content': [
                                             {
-                                                'component': 'tr',
+                                                'component': 'VRow',
+                                                'props': {
+                                                    'align': 'center',
+                                                    'justify': 'center'
+                                                },
                                                 'content': [
-                                                    {'component': 'th', 'text': '时间'},
-                                                    {'component': 'th', 'text': '状态'},
-                                                    {'component': 'th', 'text': '飞牛币'},
-                                                    {'component': 'th', 'text': '牛值'},
-                                                    {'component': 'th', 'text': '积分'},
-                                                    {'component': 'th', 'text': '登录天数'}
+                                                    {
+                                                        'component': 'div',
+                                                        'props': {
+                                                            'class': 'text-center'
+                                                        },
+                                                        'content': [
+                                                            {
+                                                                'component': 'VIcon',
+                                                                'props': {
+                                                                    'size': 'x-large',
+                                                                    'color': 'success' if today_signed else 'warning'
+                                                                },
+                                                                'text': 'mdi-check-circle' if today_signed else 'mdi-alert'
+                                                            },
+                                                            {
+                                                                'component': 'div',
+                                                                'props': {
+                                                                    'class': 'text-h6 mt-2'
+                                                                },
+                                                                'text': '已完成签到' if today_signed else '尚未签到'
+                                                            },
+                                                            {
+                                                                'component': 'div',
+                                                                'props': {
+                                                                    'class': 'text-subtitle-2 mt-1'
+                                                                },
+                                                                'text': f'签到时间: {today_record.get("date", "").split(" ")[1]}' if today_signed and today_record else f'计划时间: {self._cron.replace("0 ", "") if self._cron else "未设置"}'
+                                                            }
+                                                        ]
+                                                    }
                                                 ]
                                             }
                                         ]
-                                    },
-                                    # 表内容
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
+                        'content': [
+                            {
+                                'component': 'VCard',
+                                'props': {
+                                    'variant': 'outlined',
+                                    'class': 'mb-4',
+                                    'color': 'primary'
+                                },
+                                'content': [
                                     {
-                                        'component': 'tbody',
-                                        'content': history_rows
+                                        'component': 'VCardTitle',
+                                        'props': {
+                                            'class': 'text-h6'
+                                        },
+                                        'text': '签到统计'
+                                    },
+                                    {
+                                        'component': 'VCardText',
+                                        'content': [
+                                            {
+                                                'component': 'VRow',
+                                                'props': {
+                                                    'align': 'center'
+                                                },
+                                                'content': [
+                                                    {
+                                                        'component': 'VCol',
+                                                        'props': {
+                                                            'cols': 6,
+                                                            'class': 'text-center'
+                                                        },
+                                                        'content': [
+                                                            {
+                                                                'component': 'div',
+                                                                'props': {
+                                                                    'class': 'text-h4 font-weight-bold'
+                                                                },
+                                                                'text': f'{success_count}'
+                                                            },
+                                                            {
+                                                                'component': 'div',
+                                                                'props': {
+                                                                    'class': 'text-caption'
+                                                                },
+                                                                'text': '成功次数'
+                                                            }
+                                                        ]
+                                                    },
+                                                    {
+                                                        'component': 'VCol',
+                                                        'props': {
+                                                            'cols': 6,
+                                                            'class': 'text-center'
+                                                        },
+                                                        'content': [
+                                                            {
+                                                                'component': 'div',
+                                                                'props': {
+                                                                    'class': 'text-h4 font-weight-bold'
+                                                                },
+                                                                'text': f'{fail_count}'
+                                                            },
+                                                            {
+                                                                'component': 'div',
+                                                                'props': {
+                                                                    'class': 'text-caption'
+                                                                },
+                                                                'text': '失败次数'
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                'component': 'div',
+                                                'props': {
+                                                    'class': 'mt-3 text-center'
+                                                },
+                                                'content': [
+                                                    {
+                                                        'component': 'VProgressLinear',
+                                                        'props': {
+                                                            'model-value': success_rate,
+                                                            'color': 'success',
+                                                            'height': '12',
+                                                            'striped': True
+                                                        }
+                                                    },
+                                                    {
+                                                        'component': 'div',
+                                                        'props': {
+                                                            'class': 'text-caption mt-1'
+                                                        },
+                                                        'text': f'成功率 {success_rate}%'
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
+                        'content': [
+                            {
+                                'component': 'VCard',
+                                'props': {
+                                    'variant': 'outlined',
+                                    'class': 'mb-4',
+                                    'color': 'info'
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VCardTitle',
+                                        'props': {
+                                            'class': 'text-h6'
+                                        },
+                                        'text': '积分情况'
+                                    },
+                                    {
+                                        'component': 'VCardText',
+                                        'content': [
+                                            {
+                                                'component': 'VRow',
+                                                'props': {
+                                                    'align': 'center',
+                                                    'justify': 'center'
+                                                },
+                                                'content': [
+                                                    {
+                                                        'component': 'div',
+                                                        'props': {
+                                                            'class': 'text-center'
+                                                        },
+                                                        'content': [
+                                                            {
+                                                                'component': 'div',
+                                                                'props': {
+                                                                    'class': 'text-h4 font-weight-bold'
+                                                                },
+                                                                'text': f'{history[0].get("fnb", "—") if history else "—"}'
+                                                            },
+                                                            {
+                                                                'component': 'div',
+                                                                'props': {
+                                                                    'class': 'text-caption'
+                                                                },
+                                                                'text': '当前飞牛币'
+                                                            },
+                                                            {
+                                                                'component': 'div',
+                                                                'props': {
+                                                                    'class': 'text-body-2 mt-3'
+                                                                },
+                                                                'text': f'当前牛值: {history[0].get("nz", "—") if history else "—"}'
+                                                            },
+                                                            {
+                                                                'component': 'div',
+                                                                'props': {
+                                                                    'class': 'text-body-2'
+                                                                },
+                                                                'text': f'登录天数: {history[0].get("login_days", "—") if history else "—"}'
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
+                        'content': [
+                            {
+                                'component': 'VCard',
+                                'props': {
+                                    'variant': 'outlined',
+                                    'class': 'mb-4',
+                                    'color': 'secondary'
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VCardTitle',
+                                        'props': {
+                                            'class': 'text-h6'
+                                        },
+                                        'text': '使用帮助'
+                                    },
+                                    {
+                                        'component': 'VCardText',
+                                        'content': [
+                                            {
+                                                'component': 'VList',
+                                                'props': {
+                                                    'lines': 'two',
+                                                    'density': 'compact'
+                                                },
+                                                'content': [
+                                                    {
+                                                        'component': 'VListItem',
+                                                        'props': {
+                                                            'prepend-icon': 'mdi-checkbox-marked-circle',
+                                                            'title': '绿色状态表示成功',
+                                                            'subtitle': '已成功完成签到任务'
+                                                        }
+                                                    },
+                                                    {
+                                                        'component': 'VListItem',
+                                                        'props': {
+                                                            'prepend-icon': 'mdi-alert-circle',
+                                                            'title': '红色状态表示失败',
+                                                            'subtitle': '签到失败，需检查原因'
+                                                        }
+                                                    },
+                                                    {
+                                                        'component': 'VListItem',
+                                                        'props': {
+                                                            'prepend-icon': 'mdi-refresh',
+                                                            'title': '点击立即运行',
+                                                            'subtitle': '可在设置中手动触发一次'
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        ]
                                     }
                                 ]
                             }
                         ]
                     }
                 ]
-                }
-            ]
+            },
+            {
+                'component': 'VCard',
+                'props': {
+                    'variant': 'outlined',
+                    'class': 'mt-4'
+                },
+                'content': [
+                    {
+                        'component': 'VCardTitle',
+                        'props': {
+                            'class': 'd-flex align-center'
+                        },
+                        'content': [
+                            {
+                                'component': 'span',
+                                'text': '📝 签到历史记录'
+                            },
+                            {
+                                'component': 'VSpacer'
+                            },
+                            {
+                                'component': 'VChip',
+                                'props': {
+                                    'color': 'primary',
+                                    'size': 'small',
+                                    'variant': 'outlined'
+                                },
+                                'text': f'共{run_count}条记录'
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VCardText',
+                        'content': [
+                            {
+                                'component': 'VTable',
+                                'props': {
+                                    'hover': True,
+                                    'density': 'compact'
+                                },
+                                'content': [
+                                    {
+                                        'component': 'thead',
+                                        'content': [
+                                            {
+                                                'component': 'tr',
+                                                'content': [
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '日期'
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '时间'
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '状态'
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '飞牛币'
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '牛值'
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '积分'
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'text': '登录天数'
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        'component': 'tbody',
+                                        'content': [
+                                            {
+                                                'component': 'tr',
+                                                'v-for': 'item in history',
+                                                'props': {
+                                                    ':key': 'item.date',
+                                                    ':class': '("签到成功" in item.status || "已签到" in item.status) ? "bg-success-subtle" : ("签到失败" in item.status ? "bg-error-subtle" : "")'
+                                                },
+                                                'content': [
+                                                    {
+                                                        'component': 'td',
+                                                        'text': 'item.date.split(" ")[0]'
+                                                    },
+                                                    {
+                                                        'component': 'td',
+                                                        'text': 'item.date.split(" ")[1]'
+                                                    },
+                                                    {
+                                                        'component': 'td',
+                                                        'content': [
+                                                            {
+                                                                'component': 'VChip',
+                                                                'props': {
+                                                                    'size': 'x-small',
+                                                                    ':color': '("签到成功" in item.status || "已签到" in item.status) ? "success" : ("签到失败" in item.status ? "error" : "warning")',
+                                                                    'variant': 'tonal'
+                                                                },
+                                                                'text': 'item.status'
+                                                            }
+                                                        ]
+                                                    },
+                                                    {
+                                                        'component': 'td',
+                                                        'text': 'item.fnb || "—"'
+                                                    },
+                                                    {
+                                                        'component': 'td',
+                                                        'text': 'item.nz || "—"'
+                                                    },
+                                                    {
+                                                        'component': 'td',
+                                                        'text': 'item.credit || "—"'
+                                                    },
+                                                    {
+                                                        'component': 'td',
+                                                        'text': 'item.login_days || "—"'
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
 
     def stop_service(self):
         try:
@@ -1010,3 +1577,72 @@ class fnossign(_PluginBase):
         except Exception as e:
             logger.error(f"解析Cookie时出错: {str(e)}")
             return None 
+
+    def _is_manual_trigger(self):
+        """
+        检查是否为手动触发的签到
+        手动触发的签到不应该被历史记录阻止
+        """
+        # 在调用堆栈中检查sign_in_api是否存在，若存在则为手动触发
+        import inspect
+        for frame in inspect.stack():
+            if frame.function == 'sign_in_api':
+                logger.info("检测到手动触发签到")
+                return True
+        
+        if hasattr(self, '_manual_trigger') and self._manual_trigger:
+            logger.info("检测到通过_onlyonce手动触发签到")
+            self._manual_trigger = False
+            return True
+            
+        return False
+
+    def _is_already_signed_today(self):
+        """
+        检查今天是否已经成功签到过
+        
+        考虑两种情况：
+        1. 通过查询历史记录判断今天是否已签到
+        2. 如果昨天的签到是在23:50之后，今天早上的定时任务应该仍然执行
+        """
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        # 获取历史记录
+        history = self.get_data('sign_history') or []
+        
+        # 获取最后一次成功签到的日期和时间
+        last_sign_date = self.get_data('last_sign_date')
+        if not last_sign_date:
+            logger.info("未找到最后一次签到记录")
+            return False
+            
+        # 解析最后一次签到的日期
+        try:
+            last_sign_datetime = datetime.strptime(last_sign_date, '%Y-%m-%d %H:%M:%S')
+            last_sign_day = last_sign_datetime.strftime('%Y-%m-%d')
+            
+            # 如果最后一次签到是今天，检查是否在今天
+            if last_sign_day == today:
+                logger.info(f"今日已成功签到，时间: {last_sign_datetime.strftime('%H:%M:%S')}")
+                return True
+                
+            # 如果最后一次签到是昨天，但时间太晚（例如23:50以后），今天也要签到
+            yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+            if last_sign_day == yesterday:
+                # 如果是昨天23:50以后签到的，今天也需要签到
+                if last_sign_datetime.hour >= 23 and last_sign_datetime.minute >= 50:
+                    logger.info(f"昨天深夜已签到 ({last_sign_datetime.strftime('%H:%M:%S')}), 但今天仍需要签到")
+                    return False
+        except Exception as e:
+            logger.error(f"解析最后签到日期时出错: {str(e)}")
+            return False
+            
+        return False
+        
+    def _save_last_sign_date(self):
+        """
+        保存最后一次成功签到的日期和时间
+        """
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        self.save_data('last_sign_date', now)
+        logger.info(f"记录签到成功时间: {now}") 
