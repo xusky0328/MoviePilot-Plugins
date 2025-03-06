@@ -7,7 +7,7 @@ import time
 import threading
 from urllib3.util.retry import Retry
 from requests.adapters import HTTPAdapter
-from app.core.event import EventManager, EventType
+from app.core.event import EventManager, EventType, Event
 from app.plugins import _PluginBase
 from app.schemas.types import NotificationType, MessageChannel
 from app.core.config import settings
@@ -45,12 +45,6 @@ class FnosSign(_PluginBase):
     plugin_order = 1
     # 可使用的用户级别
     auth_level = 2
-
-    def get_plugin_name(self):
-        """
-        获取插件名称
-        """
-        return "fnos_sign"
 
     # 站点URL
     _base_url = "https://club.fnnas.com"
