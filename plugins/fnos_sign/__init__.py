@@ -53,6 +53,7 @@ class FnosSign(_PluginBase):
         """
         初始化插件
         """
+        super().__init__()
         # 插件配置
         self._enabled = False
         self._cookie = None
@@ -90,6 +91,14 @@ class FnosSign(_PluginBase):
         # 添加处理器
         self.logger.addHandler(file_handler)
         self.logger.addHandler(console_handler)
+
+        # 检查版本兼容性
+        if hasattr(settings, 'VERSION_FLAG'):
+            self._version = settings.VERSION_FLAG  # V2
+            logger.info("飞牛论坛签到插件运行在 V2 版本")
+        else:
+            self._version = "v1"  # V1
+            logger.info("飞牛论坛签到插件运行在 V1 版本")
 
     def init_plugin(self, config: dict = None):
         """
