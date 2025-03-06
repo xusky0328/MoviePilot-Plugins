@@ -1,30 +1,34 @@
 # MoviePilot-Plugins
 
-这是一个用于 MoviePilot 的插件集合仓库。
+这是一个MoviePilot的**第三方插件库**，提供签到相关功能扩展。
 
 ## 插件列表
 
-### 飞牛论坛签到插件 (fnos_sign)
+### 飞牛论坛签到插件 (fnossign)
 - 支持飞牛论坛每日自动签到
-- 支持手动触发签到
-- 签到状态显示
+- 支持手动触发签到 
+- 签到状态显示和历史记录
 - 签到结果通知
 - 定时签到功能
 - 签到失败自动重试
-- 签到历史记录
-- 签到统计功能
+- 积分信息自动获取
 
 ## 安装说明
 
-1. 克隆本仓库到 MoviePilot 的 plugins 目录：
-```bash
-cd MoviePilot/plugins
-git clone https://github.com/madrays/MoviePilot-Plugins.git
-```
+**本仓库为第三方插件库，需在MoviePilot中添加仓库地址使用**
 
-2. 在 MoviePilot 的插件管理页面启用需要的插件
+1. 在MoviePilot的插件商店页面，点击"添加第三方仓库"
+2. 添加本仓库地址：`https://github.com/madrays/MoviePilot-Plugins`
+3. 添加成功后，在插件列表中找到"飞牛论坛签到"插件
+4. 安装并启用插件
+5. 配置Cookie及签到参数
 
-3. 配置插件参数
+## 使用说明
+
+1. 获取Cookie：登录飞牛论坛后，按F12打开开发者工具，在网络或应用程序选项卡中复制Cookie
+2. 在插件设置中填入Cookie
+3. 设置签到时间（推荐早上8点，cron表达式：`0 8 * * *`）
+4. 启用插件并保存
 
 ## 许可证
 
