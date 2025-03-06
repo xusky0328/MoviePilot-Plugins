@@ -23,7 +23,7 @@ class FnosSign(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico"
     # 插件版本
-    plugin_version = "1.3"
+    plugin_version = "1.0"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -48,38 +48,73 @@ class FnosSign(_PluginBase):
     _history_days = 30
     _scheduler = None
 
+    def __init__(self):
+        """
+        初始化插件
+        """
+        try:
+            logger.info("============= FnosSign插件初始化开始 =============")
+            logger.info(f"插件类名: FnosSign")
+            logger.info(f"目录名: fnos_sign")
+            logger.info(f"插件名称: {self.plugin_name}")
+            logger.info(f"插件版本: {self.plugin_version}")
+            super().__init__()
+            logger.info("FnosSign插件基类初始化完成")
+            # 初始化通知服务
+            if hasattr(settings, 'VERSION_FLAG'):
+                self._version = settings.VERSION_FLAG  # V2
+                logger.info(f"飞牛论坛签到插件运行在 V2 版本, VERSION_FLAG={settings.VERSION_FLAG}")
+            else:
+                self._version = "v1"  # V1
+                logger.info("飞牛论坛签到插件运行在 V1 版本")
+            logger.info("============= FnosSign插件初始化完成 =============")
+        except Exception as e:
+            logger.error(f"============= FnosSign插件初始化异常: {str(e)} =============")
+
     def init_plugin(self, config: dict = None):
-        # 停止现有任务
-        self.stop_service()
+        """
+        初始化插件
+        """
+        try:
+            logger.info("============= FnosSign init_plugin 开始 =============")
+            # 停止现有任务
+            self.stop_service()
 
-        if config:
-            self._enabled = config.get("enabled")
-            self._cookie = config.get("cookie")
-            self._notify = config.get("notify")
-            self._onlyonce = config.get("onlyonce")
-            self._history_days = config.get("history_days", 30)
+            if config:
+                logger.info(f"收到配置: {config}")
+                self._enabled = config.get("enabled")
+                self._cookie = config.get("cookie")
+                self._notify = config.get("notify")
+                self._onlyonce = config.get("onlyonce")
+                self._history_days = config.get("history_days", 30)
+                logger.info(f"加载配置完成: enabled={self._enabled}, notify={self._notify}, onlyonce={self._onlyonce}")
+            else:
+                logger.info("未收到配置")
 
-        if self._onlyonce:
-            # 定时服务
-            self._scheduler = BackgroundScheduler(timezone=settings.TZ)
-            logger.info(f"飞牛论坛签到服务启动，立即运行一次")
-            self._scheduler.add_job(func=self.__signin, trigger='date',
+            if self._onlyonce:
+                # 定时服务
+                self._scheduler = BackgroundScheduler(timezone=settings.TZ)
+                logger.info(f"飞牛论坛签到服务启动，立即运行一次")
+                self._scheduler.add_job(func=self.__signin, trigger='date',
                                     run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=3),
                                     name="飞牛论坛签到")
-            # 关闭一次性开关
-            self._onlyonce = False
-            self.update_config({
-                "onlyonce": False,
-                "enabled": self._enabled,
-                "cookie": self._cookie,
-                "notify": self._notify,
-                "history_days": self._history_days,
-            })
+                # 关闭一次性开关
+                self._onlyonce = False
+                self.update_config({
+                    "onlyonce": False,
+                    "enabled": self._enabled,
+                    "cookie": self._cookie,
+                    "notify": self._notify,
+                    "history_days": self._history_days,
+                })
 
-            # 启动任务
-            if self._scheduler.get_jobs():
-                self._scheduler.print_jobs()
-                self._scheduler.start()
+                # 启动任务
+                if self._scheduler.get_jobs():
+                    self._scheduler.print_jobs()
+                    self._scheduler.start()
+            logger.info("============= FnosSign init_plugin 完成 =============")
+        except Exception as e:
+            logger.error(f"============= FnosSign init_plugin 异常: {str(e)} =============")
 
     def __signin(self):
         """
@@ -264,20 +299,28 @@ class FnosSign(_PluginBase):
             }
 
     def get_state(self) -> bool:
+        """
+        获取插件状态
+        """
+        logger.info(f"============= FnosSign get_state 被调用，返回 {self._enabled} =============")
         return self._enabled
 
     @staticmethod
     def get_command() -> List[Dict[str, Any]]:
+        logger.info("============= FnosSign get_command 被调用 =============")
         pass
 
     def get_api(self) -> List[Dict[str, Any]]:
+        logger.info("============= FnosSign get_api 被调用 =============")
         pass
 
     def get_service(self) -> List[Dict[str, Any]]:
         """
         注册插件公共服务
         """
+        logger.info(f"============= FnosSign get_service 被调用，enabled={self._enabled} =============")
         if self._enabled:
+            logger.info("返回签到服务配置")
             return [{
                 "id": "FnosSign",
                 "name": "飞牛论坛签到",
@@ -285,6 +328,7 @@ class FnosSign(_PluginBase):
                 "func": self.__signin,
                 "kwargs": {}
             }]
+        logger.info("未启用服务，返回空")
         return []
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
@@ -571,10 +615,30 @@ class FnosSign(_PluginBase):
         退出插件
         """
         try:
+            logger.info("============= FnosSign stop_service 开始 =============")
             if self._scheduler:
+                logger.info("正在停止调度器...")
                 self._scheduler.remove_all_jobs()
                 if self._scheduler.running:
                     self._scheduler.shutdown()
                 self._scheduler = None
+                logger.info("调度器已停止")
+            logger.info("============= FnosSign stop_service 完成 =============")
+            return True
         except Exception as e:
-            logger.error("退出插件失败：%s" % str(e))
+            logger.error(f"============= FnosSign stop_service 异常: {str(e)} =============")
+            return False
+
+    def get_plugin_name(self):
+        """
+        获取插件名称
+        """
+        logger.info("============= FnosSign get_plugin_name 被调用，返回 飞牛论坛签到 =============")
+        return self.plugin_name
+
+    def get_plugin_id(self):
+        """
+        获取插件ID
+        """
+        logger.info("============= FnosSign get_plugin_id 被调用，返回 FnosSign =============")
+        return "FnosSign"
