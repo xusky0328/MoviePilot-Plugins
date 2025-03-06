@@ -1,23 +1,25 @@
 {
-  "name": "fnos_sign",
-  "description": "自动完成飞牛论坛每日签到",
-  "labels": "签到",
-  "version": "1.0",
-  "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico",
-  "author": "madrays",
-  "level": 2,
-  "v2": true,
-  "history": {
-    "v1.0": "初始版本：自动完成飞牛论坛每日签到，支持签到历史记录和统计"
-  },
-  "requirements": {
-    "python": ">=3.8",
-    "packages": [
-      "requests>=2.31.0",
-      "urllib3>=2.0.7",
-      "pytz>=2023.3"
-    ]
-  },
-  "repository": "https://github.com/madrays/MoviePilot-Plugins",
-  "homepage": "https://github.com/madrays/MoviePilot-Plugins"
+  "fnos_sign": {
+    "name": "飞牛论坛签到",
+    "description": "自动完成飞牛论坛每日签到",
+    "labels": "签到",
+    "version": "1.0",
+    "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico",
+    "author": "madrays",
+    "level": 2,
+    "v2": true,
+    "history": {
+      "v1.0": "初始版本：自动完成飞牛论坛每日签到，支持签到历史记录和统计"
+    },
+    "requirements": {
+      "python": ">=3.8",
+      "packages": [
+        "requests>=2.31.0",
+        "urllib3>=2.0.7",
+        "pytz>=2023.3"
+      ]
+    },
+    "repository": "https://github.com/madrays/MoviePilot-Plugins",
+    "homepage": "https://github.com/madrays/MoviePilot-Plugins"
+  }
 } 
