@@ -7,7 +7,9 @@
   "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico",
   "author": "madrays",
   "level": 2,
-  "v2": true,
+  "v2": {
+    "enabled": true
+  },
   "history": {
     "v1.0": "初始版本：自动完成飞牛论坛每日签到，支持签到历史记录和统计"
   },
