@@ -1,5 +1,6 @@
 {
   "name": "飞牛论坛签到",
+  "plugin_name": "fnos_sign",
   "description": "自动完成飞牛论坛每日签到",
   "labels": "签到",
   "version": "1.0",
