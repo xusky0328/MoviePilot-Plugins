@@ -1,17 +1,12 @@
 {
-  "plugins": [
-    {
-      "id": "fnos_sign",
-      "name": "飞牛论坛签到",
-      "desc": "自动完成飞牛论坛每日签到",
-      "version": "1.0",
-      "level": 2,
-      "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico",
-      "author": "madrays",
-      "repo": "https://github.com/madrays/MoviePilot-Plugins",
-      "history": {
-        "v1.0": "初始版本"
-      }
-    }
-  ]
+  "name": "fnos_sign",
+  "version": "1.0",
+  "description": "飞牛论坛自动签到插件",
+  "author": "madrays",
+  "author_url": "https://github.com/madrays",
+  "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico",
+  "requirements": [
+    "requests>=2.31.0"
+  ],
+  "version_flag": true
 } 
