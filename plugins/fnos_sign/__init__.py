@@ -46,6 +46,12 @@ class FnosSign(_PluginBase):
     # 可使用的用户级别
     auth_level = 2
 
+    def get_plugin_name(self):
+        """
+        获取插件名称
+        """
+        return "fnos_sign"
+
     # 站点URL
     _base_url = "https://club.fnnas.com"
     _sign_url = f"{_base_url}/plugin.php?id=dsu_paulsign:sign"
