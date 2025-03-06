@@ -1,12 +1,11 @@
 {
-  "FnosSign": {
-    "name": "飞牛论坛签到",
-    "description": "自动完成飞牛论坛每日签到",
-    "labels": "签到",
-    "version": "1.0",
-    "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico",
-    "author": "madrays",
-    "level": 2,
-    "v2": true
-  }
+  "name": "飞牛论坛签到",
+  "description": "自动完成飞牛论坛每日签到",
+  "labels": "签到",
+  "version": "1.0",
+  "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico",
+  "author": "madrays",
+  "level": 2,
+  "plugin_id": "FnosSign",
+  "v2": true
 }
