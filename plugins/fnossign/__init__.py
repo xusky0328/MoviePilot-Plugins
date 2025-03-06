@@ -14,7 +14,7 @@ from app.log import logger
 from app.schemas import NotificationType
 
 
-class Fnossign(_PluginBase):
+class fnossign(_PluginBase):
     # 插件名称
     plugin_name = "飞牛论坛签到"
     # 插件描述
@@ -43,7 +43,7 @@ class Fnossign(_PluginBase):
     _scheduler = None
 
     def init_plugin(self, config: dict = None):
-        logger.info("============= Fnossign 初始化 =============")
+        logger.info("============= fnossign 初始化 =============")
         try:
             if config:
                 self._enabled = config.get("enabled")
@@ -65,7 +65,7 @@ class Fnossign(_PluginBase):
                 })
                 self.sign()
         except Exception as e:
-            logger.error(f"Fnossign初始化错误: {str(e)}", exc_info=True)
+            logger.error(f"fnossign初始化错误: {str(e)}", exc_info=True)
 
     def sign(self):
         logger.info("============= 开始签到 =============")
@@ -81,14 +81,14 @@ class Fnossign(_PluginBase):
             logger.error(f"签到错误: {str(e)}", exc_info=True)
 
     def get_state(self) -> bool:
-        logger.info(f"Fnossign状态: {self._enabled}")
+        logger.info(f"fnossign状态: {self._enabled}")
         return self._enabled
 
     def get_service(self) -> List[Dict[str, Any]]:
         if self._enabled and self._cron:
             logger.info(f"注册定时服务: {self._cron}")
             return [{
-                "id": "Fnossign",
+                "id": "fnossign",
                 "name": "飞牛论坛签到",
                 "trigger": CronTrigger.from_crontab(self._cron),
                 "func": self.sign,
