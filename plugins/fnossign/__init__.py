@@ -36,7 +36,7 @@ class fnossign(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico"
     # 插件版本
-    plugin_version = "2.1"
+    plugin_version = "2.2"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -345,7 +345,7 @@ class fnossign(_PluginBase):
             "fnb": credit_info.get("fnb", 0),
             "nz": credit_info.get("nz", 0),
             "credit": credit_info.get("jf", 0),
-            "login_days": credit_info.get("login_days", 0)
+            "login_days": credit_info.get("ts", 0)
         }
         
         # 保存签到记录
