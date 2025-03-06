@@ -1,15 +1,13 @@
 {
-  "fnos_sign": {
-    "name": "飞牛论坛签到",
-    "description": "自动完成飞牛论坛每日签到",
-    "labels": "站点",
-    "version": "1.0",
-    "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico",
-    "author": "madrays",
-    "level": 2,
-    "v2": true,
-    "history": {
-      "v1.0": "初始版本"
-    }
+  "name": "fnos_sign",
+  "version": "1.0",
+  "description": "自动完成飞牛论坛每日签到",
+  "author": "madrays",
+  "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico",
+  "labels": "站点",
+  "level": 2,
+  "v2": true,
+  "history": {
+    "v1.0": "初始版本"
   }
 } 
