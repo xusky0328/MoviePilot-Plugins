@@ -1,3 +1,6 @@
+"""
+飞牛论坛签到插件
+"""
 from typing import Any, List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 import time
@@ -10,6 +13,7 @@ from app.schemas.types import NotificationType, MessageChannel
 from app.core.config import settings
 from app.log import logger
 from app.utils.http import RequestUtils
+from app.core.event import eventmanager
 import re
 import json
 import os
@@ -44,20 +48,22 @@ class FnosSign(_PluginBase):
         """
         return "fnos_sign"
 
-    # 私有属性
-    _enabled = False
-    _config = {}
-    _cookie = None
-    _sign_url = "https://club.fnnas.com/plugin.php?id=zqlj_sign"
-    _credit_url = "https://club.fnnas.com/home.php?mod=spacecp&ac=credit&showcredit=1"
-    _history_file = "plugins/fnos_sign/history.json"
-    _max_retries = 3
-    _retry_delay = 1  # 重试延迟（秒）
-    _lock = threading.Lock()
-    _running = False
-    _scheduler = None
-    _notify = False
-    _onlyonce = False
+    def __init__(self):
+        super().__init__()
+        # 私有属性
+        self._enabled = False
+        self._config = {}
+        self._cookie = None
+        self._sign_url = "https://club.fnnas.com/plugin.php?id=zqlj_sign"
+        self._credit_url = "https://club.fnnas.com/home.php?mod=spacecp&ac=credit&showcredit=1"
+        self._history_file = "plugins/fnos_sign/history.json"
+        self._max_retries = 3
+        self._retry_delay = 1  # 重试延迟（秒）
+        self._lock = threading.Lock()
+        self._running = False
+        self._scheduler = None
+        self._notify = False
+        self._onlyonce = False
 
     def init_plugin(self, config: dict = None):
         """
@@ -168,7 +174,7 @@ class FnosSign(_PluginBase):
             }]
         return []
 
-    def get_form(self) -> Tuple[List[dict], str]:
+    def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         """
         拼装插件配置页面，需要返回两块数据：1、页面配置；2、数据结构
         """
