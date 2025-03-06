@@ -36,7 +36,7 @@ class fnossign(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico"
     # 插件版本
-    plugin_version = "1.7"
+    plugin_version = "1.8"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -348,9 +348,6 @@ class fnossign(_PluginBase):
         获取积分信息并解析
         """
         try:
-            # 先尝试从签到成功页面解析积分变动
-            # 如果失败，再访问个人积分页面
-            
             # 访问个人积分页面
             credit_url = "https://club.fnnas.com/home.php?mod=spacecp&ac=credit&showcredit=1"
             response = session.get(credit_url)
@@ -361,27 +358,47 @@ class fnossign(_PluginBase):
                 logger.error("获取积分信息失败：需要登录")
                 return {}
             
+            # 保存完整HTML用于调试
+            html_content = response.text
+            
             # 记录调试信息
-            debug_content = response.text[:300]
+            debug_content = html_content[:500]
             logger.debug(f"积分页面内容预览: {debug_content}")
             
             credit_info = {}
             
-            # 尝试多种可能的格式匹配积分信息
+            # 提取积分表格内容
+            try:
+                # 尝试获取整个积分表格
+                table_match = re.search(r'<table[^>]*summary="积分"[^>]*>.*?</table>', html_content, re.DOTALL)
+                if table_match:
+                    table_content = table_match.group(0)
+                    logger.debug("找到积分表格内容")
+                else:
+                    logger.debug("未找到积分表格，将使用整个页面内容")
+                    table_content = html_content
+            except Exception as e:
+                logger.warning(f"提取积分表格出错: {str(e)}")
+                table_content = html_content
             
             # 解析飞牛币 - 多种可能的格式
             fnb_patterns = [
-                r'飞牛币</em>.*?(\d+)',
                 r'飞牛币.*?(\d+)',
-                r'extcredits1.*?(\d+)'
+                r'飞牛币</em>[^<]*?(\d+)',
+                r'extcredits1.*?(\d+)',
+                r'飞牛币:\s*(\d+)'
             ]
             
             for pattern in fnb_patterns:
-                fnb_match = re.search(pattern, response.text, re.DOTALL)
+                fnb_match = re.search(pattern, html_content, re.DOTALL)
                 if fnb_match:
-                    credit_info["fnb"] = int(fnb_match.group(1))
-                    logger.debug(f"找到飞牛币: {credit_info['fnb']} (匹配规则: '{pattern}')")
-                    break
+                    try:
+                        fnb_value = fnb_match.group(1).strip()
+                        credit_info["fnb"] = int(fnb_value)
+                        logger.debug(f"找到飞牛币: {credit_info['fnb']} (匹配规则: '{pattern}')")
+                        break
+                    except (ValueError, IndexError) as e:
+                        logger.warning(f"解析飞牛币值出错: {str(e)}")
             
             if "fnb" not in credit_info:
                 logger.warning("未找到飞牛币信息")
@@ -389,17 +406,22 @@ class fnossign(_PluginBase):
             
             # 解析牛值 - 多种可能的格式
             nz_patterns = [
-                r'牛值</em>.*?(\d+)',
                 r'牛值.*?(\d+)',
-                r'extcredits2.*?(\d+)'
+                r'牛值</em>[^<]*?(\d+)',
+                r'extcredits2.*?(\d+)',
+                r'牛值:\s*(\d+)'
             ]
             
             for pattern in nz_patterns:
-                nz_match = re.search(pattern, response.text, re.DOTALL)
+                nz_match = re.search(pattern, html_content, re.DOTALL)
                 if nz_match:
-                    credit_info["nz"] = int(nz_match.group(1))
-                    logger.debug(f"找到牛值: {credit_info['nz']} (匹配规则: '{pattern}')")
-                    break
+                    try:
+                        nz_value = nz_match.group(1).strip()
+                        credit_info["nz"] = int(nz_value)
+                        logger.debug(f"找到牛值: {credit_info['nz']} (匹配规则: '{pattern}')")
+                        break
+                    except (ValueError, IndexError) as e:
+                        logger.warning(f"解析牛值出错: {str(e)}")
                     
             if "nz" not in credit_info:
                 logger.warning("未找到牛值信息")
@@ -407,17 +429,22 @@ class fnossign(_PluginBase):
             
             # 解析积分 - 多种可能的格式
             credit_patterns = [
-                r'积分: (\d+)',
-                r'积分</em>.*?(\d+)',
-                r'总积分.*?(\d+)'
+                r'积分:\s*(\d+)',
+                r'积分</em>[^<]*?(\d+)',
+                r'总积分.*?(\d+)',
+                r'积分: (\d+)'
             ]
             
             for pattern in credit_patterns:
-                credit_match = re.search(pattern, response.text, re.DOTALL)
+                credit_match = re.search(pattern, html_content, re.DOTALL)
                 if credit_match:
-                    credit_info["jf"] = int(credit_match.group(1))
-                    logger.debug(f"找到积分: {credit_info['jf']} (匹配规则: '{pattern}')")
-                    break
+                    try:
+                        jf_value = credit_match.group(1).strip()
+                        credit_info["jf"] = int(jf_value)
+                        logger.debug(f"找到积分: {credit_info['jf']} (匹配规则: '{pattern}')")
+                        break
+                    except (ValueError, IndexError) as e:
+                        logger.warning(f"解析积分出错: {str(e)}")
                     
             if "jf" not in credit_info:
                 logger.warning("未找到积分信息")
@@ -425,23 +452,53 @@ class fnossign(_PluginBase):
             
             # 解析登录天数 - 多种可能的格式
             login_patterns = [
-                r'连续登录(\d+)天',
-                r'您已连续登录.*?(\d+).*?天',
-                r'已登录.*?(\d+).*?天',
-                r'登陆天数.*?(\d+)',
-                r'登陆天数</em>.*?(\d+)'
+                r'登[录陆]天数.*?(\d+)',
+                r'登[录陆]天数</em>[^<]*?(\d+)',
+                r'连续登[录陆].*?(\d+).*?天',
+                r'您已连续登[录陆].*?(\d+).*?天',
+                r'已登[录陆].*?(\d+).*?天'
             ]
             
             for pattern in login_patterns:
-                login_days_match = re.search(pattern, response.text, re.DOTALL)
+                login_days_match = re.search(pattern, html_content, re.DOTALL)
                 if login_days_match:
-                    credit_info["ts"] = int(login_days_match.group(1))
-                    logger.debug(f"找到登录天数: {credit_info['ts']} (匹配规则: '{pattern}')")
-                    break
+                    try:
+                        ts_value = login_days_match.group(1).strip()
+                        credit_info["ts"] = int(ts_value)
+                        logger.debug(f"找到登录天数: {credit_info['ts']} (匹配规则: '{pattern}')")
+                        break
+                    except (ValueError, IndexError) as e:
+                        logger.warning(f"解析登录天数出错: {str(e)}")
                     
             if "ts" not in credit_info:
                 logger.warning("未找到登录天数信息")
                 credit_info["ts"] = 0
+                
+            # 尝试直接从页面获取完整的积分信息文本
+            try:
+                # 提取可能包含积分信息的文本段落
+                points_section = re.search(r'飞牛币.*?牛值.*?登[录陆]天数.*?积分', html_content, re.DOTALL)
+                if points_section:
+                    points_text = points_section.group(0)
+                    logger.debug(f"找到积分信息段落: {points_text[:100]}...")
+                    
+                    # 尝试更精确的匹配
+                    fnb_exact = re.search(r'飞牛币[: ]*(\d+)', points_text)
+                    if fnb_exact and fnb_exact.group(1).isdigit():
+                        credit_info["fnb"] = int(fnb_exact.group(1))
+                        logger.debug(f"从段落中找到飞牛币: {credit_info['fnb']}")
+                    
+                    nz_exact = re.search(r'牛值[: ]*(\d+)', points_text)
+                    if nz_exact and nz_exact.group(1).isdigit():
+                        credit_info["nz"] = int(nz_exact.group(1))
+                        logger.debug(f"从段落中找到牛值: {credit_info['nz']}")
+                    
+                    login_exact = re.search(r'登[录陆]天数[: ]*(\d+)', points_text)
+                    if login_exact and login_exact.group(1).isdigit():
+                        credit_info["ts"] = int(login_exact.group(1))
+                        logger.debug(f"从段落中找到登录天数: {credit_info['ts']}")
+            except Exception as e:
+                logger.warning(f"从段落中提取积分信息失败: {str(e)}")
                 
             logger.info(f"获取到积分信息: 飞牛币={credit_info.get('fnb', 0)}, 牛值={credit_info.get('nz', 0)}, "
                        f"积分={credit_info.get('jf', 0)}, 登录天数={credit_info.get('ts', 0)}")
@@ -897,13 +954,44 @@ class fnossign(_PluginBase):
                 logger.error("Cookie无效或已过期")
                 return False
 
-            # 尝试获取用户名，确认已登录
-            username_match = re.search(r'title="访问我的空间">(.*?)</a>', response.text)
-            if username_match:
-                username = username_match.group(1)
+            # 尝试多种方式获取用户名
+            username_patterns = [
+                r'title="访问我的空间">(.*?)</a>',
+                r'class="user_name".*?>(.*?)</a>',
+                r'name="username".*?value="(.*?)"',
+                r'您好，(.*?)，欢迎回来',
+                r'uid=\d+.*?">(.*?)</a>',
+                r'class="vwmy.*?">(.*?)</a>',
+                r'<a[^>]*href="[^"]*uid[^"]*"[^>]*>(.*?)</a>'
+            ]
+            
+            username = None
+            for pattern in username_patterns:
+                match = re.search(pattern, response.text, re.DOTALL)
+                if match:
+                    username = match.group(1).strip()
+                    if username:
+                        break
+            
+            if username:
                 logger.info(f"Cookie有效，当前用户: {username}")
                 return True
             else:
+                # 尝试访问用户中心页面
+                try:
+                    center_url = "https://club.fnnas.com/home.php?mod=space"
+                    center_resp = session.get(center_url)
+                    
+                    for pattern in username_patterns:
+                        match = re.search(pattern, center_resp.text, re.DOTALL)
+                        if match:
+                            username = match.group(1).strip()
+                            if username:
+                                logger.info(f"从用户中心页面获取到用户名: {username}")
+                                return True
+                except Exception as e:
+                    logger.debug(f"访问用户中心页面出错: {str(e)}")
+                
                 logger.warning("Cookie可能有效，但未找到用户名")
                 return True  # 假设有效，因为没有明确的无效标志
                 
