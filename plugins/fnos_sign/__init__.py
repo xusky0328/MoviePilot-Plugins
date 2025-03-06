@@ -20,6 +20,7 @@ import os
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+import logging
 
 class FnosSign(_PluginBase):
     # 插件名称
@@ -49,27 +50,46 @@ class FnosSign(_PluginBase):
         return "fnos_sign"
 
     def __init__(self):
-        super().__init__()
-        # 私有属性
+        """
+        初始化插件
+        """
+        # 插件配置
         self._enabled = False
-        self._config = {}
         self._cookie = None
-        self._sign_url = "https://club.fnnas.com/plugin.php?id=zqlj_sign"
-        self._credit_url = "https://club.fnnas.com/home.php?mod=spacecp&ac=credit&showcredit=1"
-        self._history_file = "plugins/fnos_sign/history.json"
-        self._max_retries = 3
-        self._retry_delay = 1  # 重试延迟（秒）
-        self._lock = threading.Lock()
-        self._running = False
-        self._scheduler = None
         self._notify = False
         self._onlyonce = False
-        
-        # 检查版本兼容性
-        if hasattr(settings, 'VERSION_FLAG'):
-            self._version = settings.VERSION_FLAG  # V2
-        else:
-            self._version = "v1"  # V1
+        self._scheduler = None
+        self._lock = threading.Lock()
+        self._version = "v1"
+        self._history_file = os.path.join(settings.PLUGIN_DATA_PATH, "fnos_sign_history.json")
+        self._history = []
+        self._stats = {
+            "total_signs": 0,
+            "success_signs": 0,
+            "failed_signs": 0,
+            "last_sign_time": None
+        }
+
+        # 设置日志
+        self.logger = logging.getLogger("fnos_sign")
+        self.logger.setLevel(logging.INFO)
+        # 创建日志目录
+        log_dir = os.path.join(settings.PLUGIN_DATA_PATH, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        # 创建文件处理器
+        log_file = os.path.join(log_dir, "fnos_sign.log")
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setLevel(logging.INFO)
+        # 创建控制台处理器
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        # 创建格式化器
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(formatter)
+        console_handler.setFormatter(formatter)
+        # 添加处理器
+        self.logger.addHandler(file_handler)
+        self.logger.addHandler(console_handler)
 
     def init_plugin(self, config: dict = None):
         """
@@ -279,98 +299,136 @@ class FnosSign(_PluginBase):
             "onlyonce": False
         }
 
-    def get_page(self) -> List[dict]:
+    def get_page(self) -> Tuple[str, str, str]:
         """
-        拼装插件详情页面，需要返回页面配置，同时附带数据
+        拼装插件详情页面，需要返回页面标题、页面内容、页面脚本
         """
-        # 获取历史记录
+        # 获取签到历史
         history = self._load_history()
-        # 获取统计数据
-        stats = self._calculate_stats(history)
-        
-        return [
-            {
-                'component': 'VRow',
-                'content': [
-                    {
-                        'component': 'VCol',
-                        'props': {
-                            'cols': 12,
-                            'md': 6
-                        },
-                        'content': [
-                            {
-                                'component': 'VCard',
-                                'props': {
-                                    'title': '签到状态'
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VCardText',
-                                        'props': {
-                                            'text': '上次签到时间：' + (self._config.get("last_sign_time", "从未签到") or "从未签到")
-                                        }
-                                    }
-                                ]
-                            }
-                        ]
-                    },
-                    {
-                        'component': 'VCol',
-                        'props': {
-                            'cols': 12,
-                            'md': 6
-                        },
-                        'content': [
-                            {
-                                'component': 'VCard',
-                                'props': {
-                                    'title': '签到统计'
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VCardText',
-                                        'props': {
-                                            'text': f'总签到次数：{stats["total_signs"]}\n连续签到天数：{stats["continuous_days"]}\n最长连续签到：{stats["max_continuous_days"]}天'
-                                        }
-                                    }
-                                ]
-                            }
-                        ]
+        # 获取签到统计
+        stats = self._stats
+
+        # 拼装页面
+        template = """
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">签到状态</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-12">
+                                <div class="alert alert-info">
+                                    <i class="fas fa-info-circle"></i>
+                                    插件状态：<span class="badge badge-primary">%s</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-12">
+                                <button class="btn btn-primary" onclick="sign()">
+                                    <i class="fas fa-sign-in-alt"></i> 立即签到
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">签到统计</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-12">
+                                <table class="table table-bordered">
+                                    <tr>
+                                        <td>总签到次数</td>
+                                        <td>%d</td>
+                                    </tr>
+                                    <tr>
+                                        <td>成功次数</td>
+                                        <td>%d</td>
+                                    </tr>
+                                    <tr>
+                                        <td>失败次数</td>
+                                        <td>%d</td>
+                                    </tr>
+                                    <tr>
+                                        <td>最后签到时间</td>
+                                        <td>%s</td>
+                                    </tr>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">签到历史</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-12">
+                                <table class="table table-bordered">
+                                    <thead>
+                                        <tr>
+                                            <th>时间</th>
+                                            <th>状态</th>
+                                            <th>积分</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        %s
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """ % (
+            "已启用" if self._enabled else "未启用",
+            stats.get("total_signs", 0),
+            stats.get("success_signs", 0),
+            stats.get("failed_signs", 0),
+            stats.get("last_sign_time", "从未签到"),
+            "".join([
+                f"<tr><td>{item['time']}</td><td>{item['status']}</td><td>{item['points']}</td></tr>"
+                for item in history
+            ])
+        )
+
+        # 页面脚本
+        script = """
+        function sign() {
+            $.ajax({
+                url: '/api/v1/plugin/fnos_sign/sign',
+                type: 'post',
+                data: {},
+                success: function(res) {
+                    if (res.code === 0) {
+                        $.toast.success('签到成功');
+                        setTimeout(function() {
+                            window.location.reload();
+                        }, 1000);
+                    } else {
+                        $.toast.error(res.msg || '签到失败');
                     }
-                ]
-            },
-            {
-                'component': 'VRow',
-                'content': [
-                    {
-                        'component': 'VCol',
-                        'props': {
-                            'cols': 12
-                        },
-                        'content': [
-                            {
-                                'component': 'VCard',
-                                'props': {
-                                    'title': '签到历史'
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VList',
-                                        'props': {
-                                            'items': [{
-                                                'title': f"{record['date']} {record['time']}",
-                                                'subtitle': f"飞牛币: {record['fnb']} | 牛值: {record['nz']} | 登录天数: {record['ts']} | 积分: {record['jf']}"
-                                            } for record in history[-10:]]  # 只显示最近10条记录
-                                        }
-                                    }
-                                ]
-                            }
-                        ]
-                    }
-                ]
-            }
-        ]
+                }
+            });
+        }
+        """
+        return "飞牛论坛签到", template, script
 
     def stop_service(self):
         """
