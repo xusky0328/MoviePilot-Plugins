@@ -78,9 +78,12 @@ class FnosSign(_PluginBase):
                 self._notify = config.get("notify")
                 self._onlyonce = config.get("onlyonce")
                 self._history_days = config.get("history_days", 30)
-                logger.info(f"加载配置完成: enabled={self._enabled}, notify={self._notify}, onlyonce={self._onlyonce}")
+                logger.info(f"加载配置完成: enabled={self._enabled}, notify={self._notify}, onlyonce={self._onlyonce}, cron={self._cron}")
             else:
-                logger.info("未收到配置")
+                logger.info("未收到配置，使用默认值")
+
+            # 无论是否启用，都记录一条日志
+            logger.info(f"插件初始化完成，enabled={self._enabled}, cron={self._cron}")
 
             if self._onlyonce:
                 # 定时服务
@@ -104,9 +107,12 @@ class FnosSign(_PluginBase):
                 if self._scheduler.get_jobs():
                     self._scheduler.print_jobs()
                     self._scheduler.start()
+                    logger.info("一次性任务调度器已启动")
+                else:
+                    logger.warning("没有任务被添加到调度器")
             logger.info("============= FnosSign init_plugin 完成 =============")
         except Exception as e:
-            logger.error(f"============= FnosSign init_plugin 异常: {str(e)} =============")
+            logger.error(f"============= FnosSign init_plugin 异常: {str(e)} =============", exc_info=True)
 
     def __signin(self):
         """
@@ -307,7 +313,7 @@ class FnosSign(_PluginBase):
         """
         获取插件状态
         """
-        logger.info(f"============= FnosSign get_state 被调用，返回 {self._enabled} =============")
+        logger.info(f"============= FnosSign get_state 被调用，当前状态为 {self._enabled} =============")
         return self._enabled
 
     def get_service(self) -> List[Dict[str, Any]]:
@@ -648,10 +654,12 @@ class FnosSign(_PluginBase):
         """
         注册命令
         """
+        logger.info("============= FnosSign get_command 被调用 =============")
         return []
 
     def get_api(self) -> List[Dict[str, Any]]:
         """
         注册API
         """
+        logger.info("============= FnosSign get_api 被调用 =============")
         return []
