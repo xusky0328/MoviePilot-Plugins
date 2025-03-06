@@ -1,6 +1,6 @@
 """
 飞牛论坛签到插件
-版本: 1.5
+版本: 1.0
 作者: madrays
 功能:
 - 自动完成飞牛论坛每日签到
@@ -11,8 +11,6 @@
 
 修改记录:
 - v1.0: 初始版本，基本签到功能
-- v1.1: 添加重试机制和历史记录
-- v1.2: 增强错误处理，改进日志，优化签到逻辑
 """
 import time
 import requests
@@ -38,7 +36,7 @@ class fnossign(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico"
     # 插件版本
-    plugin_version = "1.6"
+    plugin_version = "1.0"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -425,11 +423,13 @@ class fnossign(_PluginBase):
                 logger.warning("未找到积分信息")
                 credit_info["jf"] = 0
             
-            # 解析连续登录天数 - 多种可能的格式
+            # 解析登录天数 - 多种可能的格式
             login_patterns = [
                 r'连续登录(\d+)天',
                 r'您已连续登录.*?(\d+).*?天',
-                r'已登录.*?(\d+).*?天'
+                r'已登录.*?(\d+).*?天',
+                r'登陆天数.*?(\d+)',
+                r'登陆天数</em>.*?(\d+)'
             ]
             
             for pattern in login_patterns:
@@ -447,9 +447,11 @@ class fnossign(_PluginBase):
                        f"积分={credit_info.get('jf', 0)}, 登录天数={credit_info.get('ts', 0)}")
             
             return credit_info
-        except requests.RequestException as re:
-            logger.error(f"获取积分信息网络错误: {str(re)}")
+            
+        except requests.RequestException as req_exc:
+            logger.error(f"获取积分信息网络错误: {str(req_exc)}")
             return {}
+            
         except Exception as e:
             logger.error(f"获取积分信息失败: {str(e)}", exc_info=True)
             return {}
