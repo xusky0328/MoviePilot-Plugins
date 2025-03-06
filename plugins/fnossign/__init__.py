@@ -64,6 +64,7 @@ class FnosSign(_PluginBase):
     _scheduler = None
     _lock = threading.Lock()
     _version = None
+    _history_file = os.path.join(settings.PLUGIN_DATA_PATH, "fnossign_history.json")
     _history = []
     _stats = {
         "total_signs": 0,
@@ -78,13 +79,34 @@ class FnosSign(_PluginBase):
         初始化插件
         """
         super().__init__()
+        # 设置日志
+        self._logger = logging.getLogger(self.plugin_name)
+        self._logger.setLevel(logging.INFO)
+        # 创建日志目录
+        log_dir = os.path.join(settings.PLUGIN_DATA_PATH, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        # 创建文件处理器
+        log_file = os.path.join(log_dir, "fnos_sign.log")
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setLevel(logging.INFO)
+        # 创建控制台处理器
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        # 创建格式化器
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(formatter)
+        console_handler.setFormatter(formatter)
+        # 添加处理器
+        self._logger.addHandler(file_handler)
+        self._logger.addHandler(console_handler)
+
         # 初始化通知服务
         if hasattr(settings, 'VERSION_FLAG'):
             self._version = settings.VERSION_FLAG  # V2
-            logger.info("飞牛论坛签到插件运行在 V2 版本")
+            self._logger.info("飞牛论坛签到插件运行在 V2 版本")
         else:
             self._version = "v1"  # V1
-            logger.info("飞牛论坛签到插件运行在 V1 版本")
+            self._logger.info("飞牛论坛签到插件运行在 V1 版本")
 
     def __update_config(self):
         """
@@ -98,9 +120,9 @@ class FnosSign(_PluginBase):
                 "onlyonce": self._onlyonce,
                 "last_sign_time": self._config.get("last_sign_time")
             })
-            logger.debug("配置更新成功")
+            self._logger.debug("配置更新成功")
         except Exception as e:
-            logger.error(f"配置更新失败: {str(e)}")
+            self._logger.error(f"配置更新失败: {str(e)}")
 
     def init_plugin(self, config: dict = None):
         """
@@ -117,28 +139,21 @@ class FnosSign(_PluginBase):
                 self._notify = config.get("notify")
                 self._onlyonce = config.get("onlyonce")
             
-            # 加载历史记录
-            self._history = self.get_data('history') or []
-            
-            # 加载统计数据
-            self._stats = self.get_data('stats') or {
-                "total_signs": 0,
-                "success_signs": 0,
-                "failed_signs": 0,
-                "last_sign_time": None,
-                "continuous_days": 0
-            }
+            # 确保历史记录文件存在
+            os.makedirs(os.path.dirname(self._history_file), exist_ok=True)
+            if not os.path.exists(self._history_file):
+                self._save_history([])
 
             # V2版本特定功能初始化
             if self._version == "v2":
                 # 注册模块重载事件监听
                 eventmanager.register(EventType.ModuleReload)(self.module_reload)
-                logger.info("飞牛论坛签到插件 V2 版本特定功能初始化完成")
+                self._logger.info("飞牛论坛签到插件 V2 版本特定功能初始化完成")
 
             if self._onlyonce:
                 # 定时服务
                 self._scheduler = BackgroundScheduler(timezone=settings.TZ)
-                logger.info("飞牛论坛签到服务启动，立即运行一次")
+                self._logger.info("飞牛论坛签到服务启动，立即运行一次")
                 self._scheduler.add_job(func=self.sign, trigger='date',
                                     run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=3),
                                     name="飞牛论坛签到")
@@ -152,9 +167,9 @@ class FnosSign(_PluginBase):
                     self._scheduler.print_jobs()
                     self._scheduler.start()
 
-            logger.info("飞牛论坛签到插件初始化完成")
+            self._logger.info("飞牛论坛签到插件初始化完成")
         except Exception as e:
-            logger.error(f"飞牛论坛签到插件初始化失败: {str(e)}")
+            self._logger.error(f"飞牛论坛签到插件初始化失败: {str(e)}")
             self._enabled = False
 
     def get_state(self) -> bool:
@@ -468,7 +483,7 @@ class FnosSign(_PluginBase):
                 }
             ]
         except Exception as e:
-            logger.error(f"生成页面失败: {str(e)}")
+            self._logger.error(f"生成页面失败: {str(e)}")
             return [
                 {
                     'component': 'div',
@@ -489,9 +504,9 @@ class FnosSign(_PluginBase):
                 if self._scheduler.running:
                     self._scheduler.shutdown()
                 self._scheduler = None
-            logger.info("飞牛论坛签到插件已停止")
+            self._logger.info("飞牛论坛签到插件已停止")
         except Exception as e:
-            logger.error(f"停止插件失败: {str(e)}")
+            self._logger.error(f"停止插件失败: {str(e)}")
 
     def get_credit_info(self, html_content: str) -> Dict[str, Any]:
         """
@@ -521,7 +536,7 @@ class FnosSign(_PluginBase):
                 "login_days": login_days
             }
         except Exception as e:
-            logger.error(f"提取积分信息失败: {str(e)}")
+            self._logger.error(f"提取积分信息失败: {str(e)}")
             return {
                 "fnb": 0,
                 "nz": 0,
@@ -534,15 +549,15 @@ class FnosSign(_PluginBase):
         执行签到
         """
         if not self._enabled:
-            logger.warning("飞牛论坛签到插件未启用")
+            self._logger.warning("飞牛论坛签到插件未启用")
             return
 
         if not self._cookie:
-            logger.error("未配置Cookie，无法签到")
+            self._logger.error("未配置Cookie，无法签到")
             return
 
         if not self._lock.acquire(blocking=False):
-            logger.warning("已有签到任务正在运行")
+            self._logger.warning("已有签到任务正在运行")
             return
 
         try:
@@ -567,17 +582,17 @@ class FnosSign(_PluginBase):
             session.mount('https://', adapter)
 
             # 访问签到页面
-            logger.info("正在访问签到页面...")
+            self._logger.info("正在访问签到页面...")
             response = session.get(self._sign_url, headers=headers)
             response.raise_for_status()
 
             # 发送签到请求
-            logger.info("正在发送签到请求...")
+            self._logger.info("正在发送签到请求...")
             response = session.post(self._sign_url, headers=headers)
             response.raise_for_status()
 
             # 获取积分信息
-            logger.info("正在获取积分信息...")
+            self._logger.info("正在获取积分信息...")
             response = session.get(self._credit_url, headers=headers)
             response.raise_for_status()
             credit_info = self.get_credit_info(response.text)
@@ -586,40 +601,44 @@ class FnosSign(_PluginBase):
             self._config["last_sign_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self.__update_config()
 
-            # 更新历史
-            self._history.append({
+            # 记录签到历史
+            history_item = {
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "status": "成功",
-                "fnb": credit_info.get("fnb", 0),
-                "nz": credit_info.get("nz", 0),
-                "credit": credit_info.get("credit", 0)
-            })
-
-            # 保存历史记录
-            self.save_data('history', self._history)
+                "status": "success",
+                "fnb": credit_info["fnb"],
+                "nz": credit_info["nz"],
+                "credit": credit_info["credit"]
+            }
+            self._history.append(history_item)
+            self._save_history(self._history)
 
             # 更新统计
             self._stats["total_signs"] += 1
             self._stats["success_signs"] += 1
-            self._stats["last_sign_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            self._stats["continuous_days"] += 1
+            self._stats["last_sign_time"] = datetime.now()
+            self._stats["last_sign_status"] = "success"
 
-            # 保存统计信息
-            self.save_data('stats', self._stats)
+            # 计算连续签到天数
+            if len(self._history) > 1:
+                last_sign = datetime.strptime(self._history[-2]["time"], "%Y-%m-%d %H:%M:%S")
+                current_sign = datetime.strptime(history_item["time"], "%Y-%m-%d %H:%M:%S")
+                if (current_sign - last_sign).days == 1:
+                    self._stats["continuous_days"] += 1
+                else:
+                    self._stats["continuous_days"] = 1
+            else:
+                self._stats["continuous_days"] = 1
 
-            # 如果有通知，发送通知
+            # 发送通知
             if self._notify:
                 self.send_notify(
-                    title="飞牛论坛签到成功",
-                    text=f"飞牛币: {credit_info.get('fnb', 0)}\n"
-                         f"牛值: {credit_info.get('nz', 0)}\n"
-                         f"积分: {credit_info.get('credit', 0)}\n"
-                         f"登录天数: {credit_info.get('login_days', 0)}"
+                    title="【飞牛论坛签到成功】",
+                    text=f"飞牛币: {credit_info['fnb']} | 牛值: {credit_info['nz']} | 登录天数: {credit_info['login_days']} | 积分: {credit_info['credit']}"
                 )
 
-            logger.info("签到成功")
+            self._logger.info("签到成功")
         except Exception as e:
-            logger.error(f"签到失败: {str(e)}")
+            self._logger.error(f"签到失败: {str(e)}")
             # 更新统计
             self._stats["total_signs"] += 1
             self._stats["failed_signs"] += 1
@@ -642,10 +661,13 @@ class FnosSign(_PluginBase):
         获取签到历史
         """
         try:
-            history = self.get_data('history') or []
+            if not os.path.exists(self._history_file):
+                return []
+            with open(self._history_file, 'r', encoding='utf-8') as f:
+                history = json.load(f)
             return history
         except Exception as e:
-            logger.error(f"获取签到历史失败: {str(e)}")
+            self._logger.error(f"获取签到历史失败: {str(e)}")
             return []
 
     def get_stats(self) -> Dict[str, Any]:
@@ -653,23 +675,61 @@ class FnosSign(_PluginBase):
         获取签到统计
         """
         try:
-            stats = self.get_data('stats') or {
-                "total_signs": 0,
-                "success_signs": 0,
-                "failed_signs": 0,
-                "last_sign_time": None,
-                "continuous_days": 0
-            }
-            return stats
+            # 计算连续签到天数
+            if len(self._history) > 1:
+                last_sign = datetime.strptime(self._history[-2]["time"], "%Y-%m-%d %H:%M:%S")
+                current_sign = datetime.strptime(self._history[-1]["time"], "%Y-%m-%d %H:%M:%S")
+                if (current_sign - last_sign).days == 1:
+                    self._stats["continuous_days"] += 1
+                else:
+                    self._stats["continuous_days"] = 1
+            else:
+                self._stats["continuous_days"] = 1
+
+            return self._stats
         except Exception as e:
-            logger.error(f"获取签到统计失败: {str(e)}")
+            self._logger.error(f"获取签到统计失败: {str(e)}")
             return {
                 "total_signs": 0,
                 "success_signs": 0,
                 "failed_signs": 0,
                 "last_sign_time": None,
+                "last_sign_status": "unknown",
                 "continuous_days": 0
             }
+
+    def _save_history(self, history: List[Dict[str, Any]]):
+        """
+        保存签到历史
+        """
+        try:
+            # 确保历史记录是列表
+            if not isinstance(history, list):
+                history = []
+            # 只保留最近30天的记录
+            history = history[-30:]
+            with open(self._history_file, 'w', encoding='utf-8') as f:
+                json.dump(history, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self._logger.error(f"保存签到历史失败: {str(e)}")
+
+    def _load_history(self):
+        """
+        加载签到历史
+        """
+        try:
+            if os.path.exists(self._history_file):
+                with open(self._history_file, 'r', encoding='utf-8') as f:
+                    history = json.load(f)
+                    if isinstance(history, list):
+                        self._history = history
+                    else:
+                        self._history = []
+            else:
+                self._history = []
+        except Exception as e:
+            self._logger.error(f"加载签到历史失败: {str(e)}")
+            self._history = []
 
     def send_notify(self, title: str, text: str = None):
         """
@@ -689,7 +749,7 @@ class FnosSign(_PluginBase):
         """
         模块重载事件处理
         """
-        logger.info("收到模块重载事件")
+        self._logger.info("收到模块重载事件")
         self.init_plugin(self._config)
 
     def sign(self, username: str, password: str) -> bool:
@@ -707,20 +767,20 @@ class FnosSign(_PluginBase):
             }
             login_res = RequestUtils().post(login_url, data=login_data)
             if not login_res or "succeedmessage" not in login_res.text:
-                logger.error("登录失败")
+                self._logger.error("登录失败")
                 return False
 
             # 签到
             sign_url = "https://www.fnw.cc/plugin.php?id=dsu_paulsign:sign&operation=qiandao&infloat=1&sign_as=1&inajax=1"
             sign_res = RequestUtils().get(sign_url)
             if not sign_res or "今日已经签到" not in sign_res.text:
-                logger.error("签到失败")
+                self._logger.error("签到失败")
                 return False
 
             # 获取积分信息
             credit_info = self.get_credit_info()
             if credit_info:
-                logger.info(f"签到成功，当前积分：{credit_info}")
+                self._logger.info(f"签到成功，当前积分：{credit_info}")
                 # 发送通知
                 if self._version == "v2":
                     self._notification.send(
@@ -735,7 +795,7 @@ class FnosSign(_PluginBase):
                     )
             return True
         except Exception as e:
-            logger.error(f"签到异常: {str(e)}")
+            self._logger.error(f"签到异常: {str(e)}")
             return False
 
     def get_credit_info(self) -> str:
@@ -755,5 +815,5 @@ class FnosSign(_PluginBase):
                 return credit_match.group(1)
             return None
         except Exception as e:
-            logger.error(f"获取积分信息失败: {str(e)}")
+            self._logger.error(f"获取积分信息失败: {str(e)}")
             return None 
