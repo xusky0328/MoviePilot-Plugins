@@ -63,7 +63,7 @@ class FnosSign(Plugin):
         """
         获取插件名称
         """
-        return "飞牛论坛签到"
+        return "fnos_sign"
 
     def __init__(self):
         """
