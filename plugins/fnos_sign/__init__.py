@@ -64,6 +64,12 @@ class FnosSign(_PluginBase):
         self._scheduler = None
         self._notify = False
         self._onlyonce = False
+        
+        # 检查版本兼容性
+        if hasattr(settings, 'VERSION_FLAG'):
+            self._version = settings.VERSION_FLAG  # V2
+        else:
+            self._version = "v1"  # V1
 
     def init_plugin(self, config: dict = None):
         """
@@ -84,6 +90,12 @@ class FnosSign(_PluginBase):
             os.makedirs(os.path.dirname(self._history_file), exist_ok=True)
             if not os.path.exists(self._history_file):
                 self._save_history([])
+
+            # V2版本特定功能初始化
+            if self._version == "v2":
+                # 注册模块重载事件监听
+                eventmanager.register(EventType.ModuleReload)(self.module_reload)
+                logger.info("飞牛论坛签到插件 V2 版本特定功能初始化完成")
 
             if self._onlyonce:
                 # 定时服务
@@ -543,4 +555,100 @@ class FnosSign(_PluginBase):
         """
         if not event.event_data or event.event_data.get("action") != "fnos_sign":
             return
-        self.sign() 
+        self.sign()
+
+    def get_dashboard_meta(self) -> Optional[List[Dict[str, str]]]:
+        """
+        获取插件仪表盘元信息
+        """
+        return [{
+            "key": "fnos_sign_dashboard",
+            "name": "飞牛论坛签到统计"
+        }]
+
+    def get_dashboard(self, key: str, **kwargs) -> Optional[Tuple[Dict[str, Any], Dict[str, Any], List[dict]]]:
+        """
+        获取插件仪表盘页面
+        """
+        if key != "fnos_sign_dashboard":
+            return None
+            
+        # 获取历史记录和统计数据
+        history = self._load_history()
+        stats = self._calculate_stats(history)
+        
+        # 仪表板配置
+        return {
+            "cols": 12,
+            "md": 6
+        }, {
+            "refresh": 300,  # 5分钟刷新一次
+            "border": True,
+            "title": "飞牛论坛签到统计"
+        }, [
+            {
+                'component': 'VRow',
+                'content': [
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 6
+                        },
+                        'content': [
+                            {
+                                'component': 'VCard',
+                                'props': {
+                                    'title': '签到状态'
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VCardText',
+                                        'props': {
+                                            'text': '上次签到时间：' + (self._config.get("last_sign_time", "从未签到") or "从未签到")
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 6
+                        },
+                        'content': [
+                            {
+                                'component': 'VCard',
+                                'props': {
+                                    'title': '签到统计'
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VCardText',
+                                        'props': {
+                                            'text': f'总签到次数：{stats["total_signs"]}\n连续签到天数：{stats["continuous_days"]}\n最长连续签到：{stats["max_continuous_days"]}天'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ] 
+
+    @eventmanager.register(EventType.ModuleReload)
+    def module_reload(self, event):
+        """
+        模块重载事件处理
+        """
+        if not event:
+            return
+        event_data = event.event_data or {}
+        module_id = event_data.get("module_id")
+        # 如果模块标识不存在，则说明所有模块均发生重载
+        if not module_id:
+            logger.info("检测到模块重载，重新初始化插件")
+            self.init_plugin(self._config) 
