@@ -1,21 +1,23 @@
 from typing import Any, List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
-import requests
 import time
 import threading
 from urllib3.util.retry import Retry
 from requests.adapters import HTTPAdapter
 from app.core.event import EventManager, EventType
-from app.core.plugin import Plugin, PluginManager
+from app.plugins import _PluginBase
 from app.schemas.types import NotificationType, MessageChannel
 from app.core.config import settings
 from app.log import logger
+from app.utils.http import RequestUtils
 import re
 import json
 import os
 import pytz
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
-class FnosSign(Plugin):
+class FnosSign(_PluginBase):
     # 插件名称
     plugin_name = "飞牛论坛签到"
     # 插件描述
@@ -32,6 +34,8 @@ class FnosSign(Plugin):
     plugin_config_prefix = "fnossign_"
     # 加载顺序
     plugin_order = 1
+    # 可使用的用户级别
+    auth_level = 2
 
     @staticmethod
     def get_plugin_name() -> str:
@@ -40,31 +44,67 @@ class FnosSign(Plugin):
         """
         return "fnos_sign"
 
-    def __init__(self):
-        super().__init__()
-        self._enabled = False
-        self._config = {}
-        self._cookie = None
-        self._sign_url = "https://club.fnnas.com/plugin.php?id=zqlj_sign"
-        self._credit_url = "https://club.fnnas.com/home.php?mod=spacecp&ac=credit&showcredit=1"
-        self._history_file = "plugins/fnos_sign/history.json"
-        self._max_retries = 3
-        self._retry_delay = 1  # 重试延迟（秒）
-        self._lock = threading.Lock()
-        self._running = False
+    # 私有属性
+    _enabled = False
+    _config = {}
+    _cookie = None
+    _sign_url = "https://club.fnnas.com/plugin.php?id=zqlj_sign"
+    _credit_url = "https://club.fnnas.com/home.php?mod=spacecp&ac=credit&showcredit=1"
+    _history_file = "plugins/fnos_sign/history.json"
+    _max_retries = 3
+    _retry_delay = 1  # 重试延迟（秒）
+    _lock = threading.Lock()
+    _running = False
+    _scheduler = None
+    _notify = False
+    _onlyonce = False
 
     def init_plugin(self, config: dict = None):
         """
         初始化插件
         """
-        if config:
-            self._config = config
-        self._enabled = self._config.get("enabled", False)
-        self._cookie = self._config.get("cookie", "")
-        # 确保历史记录文件存在
-        os.makedirs(os.path.dirname(self._history_file), exist_ok=True)
-        if not os.path.exists(self._history_file):
-            self._save_history([])
+        try:
+            # 停止现有任务
+            self.stop_service()
+
+            if config:
+                self._config = config
+                self._enabled = config.get("enabled")
+                self._cookie = config.get("cookie")
+                self._notify = config.get("notify")
+                self._onlyonce = config.get("onlyonce")
+            
+            # 确保历史记录文件存在
+            os.makedirs(os.path.dirname(self._history_file), exist_ok=True)
+            if not os.path.exists(self._history_file):
+                self._save_history([])
+
+            if self._onlyonce:
+                # 定时服务
+                self._scheduler = BackgroundScheduler(timezone=settings.TZ)
+                logger.info("飞牛论坛签到服务启动，立即运行一次")
+                self._scheduler.add_job(func=self.sign, trigger='date',
+                                    run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=3),
+                                    name="飞牛论坛签到")
+                
+                # 关闭一次性开关
+                self._onlyonce = False
+                self.update_config({
+                    "onlyonce": False,
+                    "enabled": self._enabled,
+                    "cookie": self._cookie,
+                    "notify": self._notify
+                })
+
+                # 启动任务
+                if self._scheduler.get_jobs():
+                    self._scheduler.print_jobs()
+                    self._scheduler.start()
+
+            logger.info("飞牛论坛签到插件初始化完成")
+        except Exception as e:
+            logger.error(f"飞牛论坛签到插件初始化失败: {str(e)}")
+            self._enabled = False
 
     def get_state(self) -> bool:
         """
@@ -119,20 +159,12 @@ class FnosSign(Plugin):
         注册插件服务
         """
         if self._enabled:
-            # 获取配置的签到时间，默认为0点0分0秒
-            sign_time = self._config.get("sign_time", "00:00:00")
-            hour, minute, second = map(int, sign_time.split(":"))
-            
             return [{
                 "id": "fnos_sign",
                 "name": "飞牛论坛自动签到",
-                "trigger": "cron",
+                "trigger": CronTrigger.from_crontab("0 0 * * *"),  # 每天0点执行
                 "func": self.sign,
-                "kwargs": {
-                    "hour": str(hour),
-                    "minute": str(minute),
-                    "second": str(second)
-                }
+                "kwargs": {}
             }]
         return []
 
@@ -151,7 +183,7 @@ class FnosSign(Plugin):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 6
+                                    'md': 4
                                 },
                                 'content': [
                                     {
@@ -159,6 +191,38 @@ class FnosSign(Plugin):
                                         'props': {
                                             'model': 'enabled',
                                             'label': '启用插件',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 4
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VSwitch',
+                                        'props': {
+                                            'model': 'notify',
+                                            'label': '开启通知',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 4
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VSwitch',
+                                        'props': {
+                                            'model': 'onlyonce',
+                                            'label': '立即运行一次',
                                         }
                                     }
                                 ]
@@ -187,38 +251,14 @@ class FnosSign(Plugin):
                                 ]
                             }
                         ]
-                    },
-                    {
-                        'component': 'VRow',
-                        'content': [
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12,
-                                    'md': 6
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VTextField',
-                                        'props': {
-                                            'model': 'sign_time',
-                                            'label': '签到时间',
-                                            'hint': '格式：HH:MM:SS，例如：00:00:00',
-                                            'rules': [
-                                                'v => /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/.test(v) || "请输入正确的时间格式"'
-                                            ]
-                                        }
-                                    }
-                                ]
-                            }
-                        ]
                     }
                 ]
             }
         ], {
             "enabled": False,
             "cookie": "",
-            "sign_time": "00:00:00"
+            "notify": False,
+            "onlyonce": False
         }
 
     def get_page(self) -> List[dict]:
@@ -318,7 +358,16 @@ class FnosSign(Plugin):
         """
         停止插件
         """
-        self._enabled = False
+        try:
+            if self._scheduler:
+                self._scheduler.remove_all_jobs()
+                if self._scheduler.running:
+                    self._scheduler.shutdown()
+                self._scheduler = None
+            self._enabled = False
+            logger.info("飞牛论坛签到插件已停止")
+        except Exception as e:
+            logger.error(f"停止飞牛论坛签到插件失败: {str(e)}")
 
     def _load_history(self) -> List[dict]:
         """
@@ -383,8 +432,8 @@ class FnosSign(Plugin):
         获取积分信息
         """
         try:
-            response = requests.get(self._credit_url, headers=headers)
-            if response.status_code == 200:
+            response = RequestUtils(headers=headers).get_res(self._credit_url)
+            if response and response.status_code == 200:
                 # 使用正则表达式提取积分信息
                 content = response.text
                 fnb = re.search(r'飞牛币:\s*(\d+)', content)
@@ -416,16 +465,6 @@ class FnosSign(Plugin):
         try:
             self._running = True
             
-            # 配置重试策略
-            retries = Retry(
-                total=self._max_retries,
-                backoff_factor=1,
-                status_forcelist=[403, 404, 500, 502, 503, 504],
-                allowed_methods=["GET"],
-                raise_on_status=False
-            )
-            adapter = HTTPAdapter(max_retries=retries)
-            
             headers = {
                 "Cookie": self._cookie,
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.95 Safari/537.36",
@@ -434,42 +473,42 @@ class FnosSign(Plugin):
                 "Accept-Language": "zh-CN,zh;q=0.9"
             }
             
-            # 使用 Session 对象复用
-            with requests.Session() as session:
-                session.headers.update(headers)
-                session.mount('https://', adapter)
-                
-                # 1. 访问签到页面
-                response = session.get(self._sign_url)
-                if response.status_code != 200:
-                    return {"code": 1, "msg": f"访问签到页面失败: {response.status_code}"}
+            # 1. 访问签到页面
+            response = RequestUtils(headers=headers).get_res(self._sign_url)
+            if not response or response.status_code != 200:
+                return {"code": 1, "msg": f"访问签到页面失败: {response.status_code if response else '无响应'}"}
 
-                # 2. 发送签到请求
-                sign_response = session.get(f"{self._sign_url}&sign=1")
-                if sign_response.status_code != 200:
-                    return {"code": 1, "msg": f"签到请求失败: {sign_response.status_code}"}
+            # 2. 发送签到请求
+            sign_response = RequestUtils(headers=headers).get_res(f"{self._sign_url}&sign=1")
+            if not sign_response or sign_response.status_code != 200:
+                return {"code": 1, "msg": f"签到请求失败: {sign_response.status_code if sign_response else '无响应'}"}
 
-                # 3. 获取积分信息
-                credit_info = self.get_credit_info(headers)
-                
-                # 4. 更新配置和发送通知
-                self._config["last_sign_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                self.save_config(self._config)
-                
-                # 5. 记录签到历史
-                history = self._load_history()
-                history.append({
-                    "date": datetime.now().strftime("%Y-%m-%d"),
-                    "time": datetime.now().strftime("%H:%M:%S"),
-                    **credit_info
-                })
-                self._save_history(history)
-                
-                # 6. 发送通知
+            # 3. 获取积分信息
+            credit_info = self.get_credit_info(headers)
+            
+            # 4. 更新配置和发送通知
+            self._config["last_sign_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.save_config(self._config)
+            
+            # 5. 记录签到历史
+            history = self._load_history()
+            history.append({
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "time": datetime.now().strftime("%H:%M:%S"),
+                **credit_info
+            })
+            self._save_history(history)
+            
+            # 6. 发送通知
+            if self._notify:
                 notify_msg = f"飞牛币: {credit_info['fnb']} | 牛值: {credit_info['nz']} | 登录天数: {credit_info['ts']} | 积分: {credit_info['jf']}"
-                self.send_notify("飞牛论坛签到成功", notify_msg)
-                
-                return {"code": 0, "msg": "签到成功", "data": credit_info}
+                self.post_message(
+                    mtype=NotificationType.SiteMessage,
+                    title="【飞牛论坛签到成功】",
+                    text=notify_msg
+                )
+            
+            return {"code": 0, "msg": "签到成功", "data": credit_info}
                     
         except Exception as e:
             logger.error(f"签到异常: {str(e)}")
