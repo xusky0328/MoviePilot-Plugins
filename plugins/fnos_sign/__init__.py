@@ -22,13 +22,11 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import logging
 import requests
-from app.core.plugin import Plugin
-from app.core.pluginmanager import PluginManager
 from app.helper.notification import NotificationHelper
 from app.schemas import NotificationConf
 from app.utils.time import TimeUtils
 
-class FnosSign(Plugin):
+class FnosSign(_PluginBase):
     # 插件名称
     plugin_name = "飞牛论坛签到"
     # 插件描述
@@ -58,36 +56,29 @@ class FnosSign(Plugin):
     _retry_backoff_factor = 1
     _retry_status_forcelist = [403, 404, 500, 502, 503, 504]
 
-    @staticmethod
-    def get_plugin_name() -> str:
-        """
-        获取插件名称
-        """
-        return "fnos_sign"
+    # 私有属性
+    _enabled = False
+    _cookie = None
+    _notify = False
+    _onlyonce = False
+    _scheduler = None
+    _lock = threading.Lock()
+    _version = None
+    _history_file = os.path.join(settings.PLUGIN_DATA_PATH, "fnos_sign_history.json")
+    _history = []
+    _stats = {
+        "total_signs": 0,
+        "success_signs": 0,
+        "failed_signs": 0,
+        "last_sign_time": None,
+        "continuous_days": 0
+    }
 
     def __init__(self):
         """
         初始化插件
         """
         super().__init__()
-        # 插件配置
-        self._enabled = False
-        self._cookie = None
-        self._notify = False
-        self._onlyonce = False
-        self._scheduler = None
-        self._lock = threading.Lock()
-        self._version = None
-        self._history_file = os.path.join(settings.PLUGIN_DATA_PATH, "fnos_sign_history.json")
-        self._history = []
-        self._stats = {
-            "total_signs": 0,
-            "success_signs": 0,
-            "failed_signs": 0,
-            "last_sign_time": None,
-            "continuous_days": 0
-        }
-
         # 设置日志
         self._logger = logging.getLogger(self.plugin_name)
         self._logger.setLevel(logging.INFO)
