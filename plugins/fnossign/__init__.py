@@ -33,48 +33,46 @@ from app.log import logger
 from app.schemas import NotificationType
 
 
-class FnossignSigner:
-    """
-    飞牛论坛签到插件
-    """
+class fnossign(_PluginBase):
     # 插件名称
     plugin_name = "飞牛论坛签到"
     # 插件描述
-    plugin_desc = "定时自动签到飞牛论坛"
+    plugin_desc = "自动完成飞牛论坛每日签到，支持失败重试和历史记录"
     # 插件图标
-    plugin_icon = "sign.png"
+    plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico"
     # 插件版本
     plugin_version = "1.3"
     # 插件作者
-    plugin_author = "thsrite"
+    plugin_author = "madrays"
     # 作者主页
-    author_url = "https://github.com/thsrite"
+    author_url = "https://github.com/madrays"
     # 插件配置项ID前缀
     plugin_config_prefix = "fnossign_"
     # 加载顺序
-    plugin_order = 31
+    plugin_order = 1
     # 可使用的用户级别
-    auth_level = 1
+    auth_level = 2
+
+    # 私有属性
+    _enabled = False
+    _cookie = None
+    _notify = False
+    _onlyonce = False
+    _cron = None
+    _scheduler = None
+    _max_retries = 3  # 最大重试次数
+    _retry_interval = 30  # 重试间隔(秒)
+    _history_days = 30  # 历史保留天数
 
     def __init__(self, app):
-        self.app = app
+        super().__init__(app)
         # 日志
         self._logger = None
         # 退出事件
         self.exit_event = Event()
-        # 调度器
-        self._scheduler = None
         # 配置
-        self._enabled = False
-        self._notify = False
-        self._cron = None
-        self._cookie = None
         self._cookie_ua = None
-        self._onlyonce = False
         self._sign_url = "https://club.fnnas.com"
-        self._max_retries = 1
-        self._retry_interval = 30
-        self._history_days = 30
         # 签到历史记录
         self._history_file = None
         self._history_data = {}
