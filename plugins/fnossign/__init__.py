@@ -1,6 +1,6 @@
 """
 飞牛论坛签到插件
-版本: 1.2
+版本: 1.3
 作者: madrays
 功能:
 - 自动完成飞牛论坛每日签到
@@ -28,6 +28,8 @@ from app.plugins import _PluginBase
 from typing import Any, List, Dict, Tuple, Optional
 from app.log import logger
 from app.schemas import NotificationType
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin
 
 
 class fnossign(_PluginBase):
@@ -38,7 +40,7 @@ class fnossign(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico"
     # 插件版本
-    plugin_version = "1.2"
+    plugin_version = "1.3"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -78,11 +80,11 @@ class fnossign(_PluginBase):
             if self._onlyonce:
                 logger.info("执行一次性签到")
                 self._onlyonce = False
-                self.update_config({
+            self.update_config({
                     "onlyonce": False,
-                    "enabled": self._enabled,
-                    "cookie": self._cookie,
-                    "notify": self._notify,
+                "enabled": self._enabled,
+                "cookie": self._cookie,
+                "notify": self._notify,
                     "cron": self._cron,
                     "max_retries": self._max_retries,
                     "retry_interval": self._retry_interval,
@@ -589,9 +591,9 @@ class fnossign(_PluginBase):
                                             'model': 'notify',
                                             'label': '开启通知',
                                         }
-                                    }
-                                ]
-                            },
+                            }
+                        ]
+                    },
                             {
                                 'component': 'VCol',
                                 'props': {
@@ -607,9 +609,9 @@ class fnossign(_PluginBase):
                                         }
                                     }
                                 ]
-                            }
-                        ]
-                    },
+                                    }
+                                ]
+                            },
                     {
                         'component': 'VRow',
                         'content': [
@@ -631,19 +633,19 @@ class fnossign(_PluginBase):
                             }
                         ]
                     },
-                    {
-                        'component': 'VRow',
-                        'content': [
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12,
+                {
+                    'component': 'VRow',
+                    'content': [
+                        {
+                            'component': 'VCol',
+                            'props': {
+                                'cols': 12,
                                     'md': 3
-                                },
-                                'content': [
-                                    {
+                            },
+                            'content': [
+                                {
                                         'component': 'VTextField',
-                                        'props': {
+                                    'props': {
                                             'model': 'cron',
                                             'label': '签到周期',
                                             'placeholder': '0 8 * * *'
@@ -653,14 +655,14 @@ class fnossign(_PluginBase):
                             },
                             {
                                 'component': 'VCol',
-                                'props': {
+                                            'props': {
                                     'cols': 12,
                                     'md': 3
-                                },
-                                'content': [
-                                    {
+                                            },
+                                            'content': [
+                                                {
                                         'component': 'VTextField',
-                                        'props': {
+                                                    'props': {
                                             'model': 'max_retries',
                                             'label': '最大重试次数',
                                             'type': 'number',
@@ -671,7 +673,7 @@ class fnossign(_PluginBase):
                             },
                             {
                                 'component': 'VCol',
-                                'props': {
+                                                    'props': {
                                     'cols': 12,
                                     'md': 3
                                 },
@@ -684,19 +686,19 @@ class fnossign(_PluginBase):
                                             'type': 'number',
                                             'placeholder': '30'
                                         }
-                                    }
-                                ]
-                            },
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12,
+                                }
+                            ]
+                        },
+                        {
+                            'component': 'VCol',
+                            'props': {
+                                'cols': 12,
                                     'md': 3
-                                },
-                                'content': [
-                                    {
+                            },
+                            'content': [
+                                {
                                         'component': 'VTextField',
-                                        'props': {
+                                    'props': {
                                             'model': 'history_days',
                                             'label': '历史保留天数',
                                             'type': 'number',
@@ -707,21 +709,21 @@ class fnossign(_PluginBase):
                             }
                         ]
                     },
-                    {
-                        'component': 'VRow',
-                        'content': [
-                            {
-                                'component': 'VCol',
-                                'props': {
+                                                {
+                                                    'component': 'VRow',
+                                                    'content': [
+                                                        {
+                                                            'component': 'VCol',
+                                                            'props': {
                                     'cols': 12,
-                                },
-                                'content': [
-                                    {
+                                                            },
+                                                            'content': [
+                                                                {
                                         'component': 'VAlert',
-                                        'props': {
+                                                                    'props': {
                                             'type': 'info',
                                             'variant': 'tonal',
-                                            'text': '飞牛论坛签到插件，支持自动签到、失败重试和通知。v1.2增强了错误处理和重试机制。'
+                                            'text': '飞牛论坛签到插件，支持自动签到、失败重试和通知。v1.3增强了错误处理和重试机制。'
                                         }
                                     }
                                 ]
@@ -753,7 +755,7 @@ class fnossign(_PluginBase):
             return [
                 {
                     'component': 'VAlert',
-                    'props': {
+                                                                    'props': {
                         'type': 'info',
                         'variant': 'tonal',
                         'text': '暂无签到记录，请先配置Cookie并启用插件',
@@ -777,18 +779,18 @@ class fnossign(_PluginBase):
                     # 日期列
                     {
                         'component': 'td',
-                        'props': {
+                                                            'props': {
                             'class': 'text-caption'
-                        },
+                                                            },
                         'text': history.get("date", "")
                     },
                     # 状态列
                     {
                         'component': 'td',
-                        'content': [
-                            {
+                                                            'content': [
+                                                                {
                                 'component': 'VChip',
-                                'props': {
+                                                                    'props': {
                                     'color': status_color,
                                     'size': 'small',
                                     'variant': 'outlined'
@@ -823,8 +825,8 @@ class fnossign(_PluginBase):
         # 最终页面组装
         return [
             # 标题
-            {
-                'component': 'VCard',
+                {
+                    'component': 'VCard',
                 'props': {'variant': 'outlined', 'class': 'mb-4'},
                 'content': [
                     {
@@ -834,10 +836,10 @@ class fnossign(_PluginBase):
                     },
                     {
                         'component': 'VCardText',
-                        'content': [
-                            {
+                    'content': [
+                        {
                                 'component': 'VTable',
-                                'props': {
+                            'props': {
                                     'hover': True,
                                     'density': 'compact'
                                 },
@@ -869,8 +871,8 @@ class fnossign(_PluginBase):
                         ]
                     }
                 ]
-            }
-        ]
+                }
+            ]
 
     def stop_service(self):
         try:
@@ -895,18 +897,18 @@ class fnossign(_PluginBase):
             profile_url = "https://club.fnnas.com/home.php?mod=space&do=profile"
             response = session.get(profile_url)
             response.raise_for_status()
-            
+
             # 检查是否需要登录
             if "请先登录后才能继续浏览" in response.text or "您需要登录后才能继续本操作" in response.text:
                 logger.error("Cookie无效或已过期")
                 return False
-                
+
             # 尝试获取用户名，确认已登录
             username_match = re.search(r'title="访问我的空间">(.*?)</a>', response.text)
             if username_match:
                 username = username_match.group(1)
                 logger.info(f"Cookie有效，当前用户: {username}")
-                return True
+            return True
             else:
                 logger.warning("Cookie可能有效，但未找到用户名")
                 return True  # 假设有效，因为没有明确的无效标志
@@ -914,3 +916,203 @@ class fnossign(_PluginBase):
         except Exception as e:
             logger.error(f"检查Cookie有效性时出错: {str(e)}")
             return False 
+
+    def _do_sign(self):
+        """
+        执行签到
+        """
+        try:
+            # 检查Cookie是否有效
+            if not self._check_cookie():
+                return False
+            
+            # 获取签到页面URL
+            sign_url = self._get_sign_url()
+            if not sign_url:
+                return False
+            
+            # 发送签到请求
+            self.info(f"正在执行签到...")
+            sign_response = self._request(sign_url)
+            if not sign_response or not sign_response.text:
+                self.error(f"签到请求失败")
+                return False
+            
+            # 检查签到结果
+            response_text = sign_response.text
+            self.debug(f"签到响应内容预览: {response_text[:500]}")
+            
+            # 检查签到结果
+            if '恭喜您，打卡成功！' in response_text:
+                self.info("签到成功！")
+                self._get_sign_info()
+                return True
+            elif '您今天已经打过卡了，请勿重复操作！' in response_text:
+                self.info("您今天已经打过卡了")
+                self._get_sign_info()
+                return True
+            else:
+                self.error(f"签到请求发送成功，但结果异常: {response_text[:500]}")
+                return False
+                
+        except Exception as err:
+            self.error(f"签到出错: {str(err)}")
+            return False
+
+    def _get_sign_info(self):
+        """
+        获取签到信息
+        """
+        try:
+            # 访问签到页面获取信息
+            sign_page_url = urljoin(self._base_url, "plugin.php?id=zqlj_sign")
+            response = self._request(sign_page_url)
+            if not response or not response.text:
+                self.error("获取签到信息失败")
+                return
+            
+            # 使用BeautifulSoup解析页面
+            soup = BeautifulSoup(response.text, 'html.parser')
+            content = []
+            
+            # 定义需要查找的信息
+            patterns = [
+                {'name': '最近打卡', 'selector': 'li:-soup-contains("最近打卡")'},
+                {'name': '本月打卡', 'selector': 'li:-soup-contains("本月打卡")'},
+                {'name': '连续打卡', 'selector': 'li:-soup-contains("连续打卡")'},
+                {'name': '累计打卡', 'selector': 'li:-soup-contains("累计打卡")'},
+                {'name': '累计奖励', 'selector': 'li:-soup-contains("累计奖励")'},
+                {'name': '最近奖励', 'selector': 'li:-soup-contains("最近奖励")'},
+                {'name': '当前打卡等级', 'selector': 'li:-soup-contains("当前打卡等级")'}
+            ]
+            
+            for pattern in patterns:
+                element = soup.select_one(pattern['selector'])
+                if element:
+                    # 提取文本并清洗
+                    text = element.get_text()
+                    try:
+                        info_value = text.split('：')[-1].strip()
+                        content.append(f"{pattern['name']}: {info_value}")
+                    except:
+                        content.append(f"{pattern['name']}: {text}")
+            
+            # 输出签到信息
+            if content:
+                content_text = '\n'.join(content)
+                self.info(f"签到信息:\n{content_text}")
+                
+                # 发送通知
+                if self._notify:
+                    self._send_message(
+                        title="飞牛论坛签到结果",
+                        text=f"飞牛论坛签到成功\n\n{content_text}",
+                        image=None
+                    )
+            else:
+                self.warning("未能获取到签到信息")
+                
+        except Exception as err:
+            self.error(f"获取签到信息出错: {str(err)}")
+
+    def _get_sign_url(self):
+        """
+        获取签到链接
+        """
+        try:
+            # 先尝试访问论坛首页
+            self.info("正在访问论坛首页...")
+            response = self._request(self._base_url)
+            if not response:
+                return None
+            
+            # 然后访问签到页面
+            self.info("正在访问签到页面...")
+            sign_page_url = urljoin(self._base_url, "plugin.php?id=zqlj_sign")
+            response = self._request(sign_page_url)
+            if not response or not response.text:
+                self.error("访问签到页面失败")
+                return None
+            
+            # 解析页面查找签到按钮/链接
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # 获取cookie中的sign值
+            sign_value = None
+            for cookie in self._cookie.split(';'):
+                cookie = cookie.strip()
+                if cookie.startswith('pvRK_2132_sign='):
+                    sign_value = cookie.split('=')[1]
+                    break
+            
+            if sign_value:
+                sign_url = f"{sign_page_url}&sign={sign_value}"
+                self.info("已从cookie中获取sign值构建签到URL")
+                return sign_url
+            
+            # 如果没有找到sign值，尝试从页面中找签到按钮
+            sign_btn = None
+            
+            # 尝试多种方式查找签到按钮
+            for selector in [
+                'a:-soup-contains("签到")',
+                'button:-soup-contains("签到")',
+                'input[value*="签到"]',
+                'a[href*="sign"]:-soup-contains("签到")'
+            ]:
+                sign_btn = soup.select_one(selector)
+                if sign_btn:
+                    break
+            
+            if sign_btn and sign_btn.has_attr('href'):
+                sign_url = urljoin(self._base_url, sign_btn['href'])
+                self.info(f"找到签到按钮 (匹配规则: '签到')")
+                return sign_url
+            else:
+                self.error("未找到签到按钮")
+                return None
+                
+        except Exception as err:
+            self.error(f"获取签到链接出错: {str(err)}")
+            return None
+
+    def _check_cookie(self):
+        """
+        检查Cookie是否有效
+        """
+        if not self._cookie:
+            self.error("未配置Cookie")
+            return False
+        
+        self.info(f"使用Cookie长度: {len(self._cookie)} 字符")
+        
+        # 检查cookie中是否包含必要的认证信息
+        required_cookies = ['pvRK_2132_saltkey', 'pvRK_2132_auth']
+        missing_cookies = []
+        
+        for cookie_name in required_cookies:
+            if cookie_name not in self._cookie:
+                missing_cookies.append(cookie_name)
+        
+        if missing_cookies:
+            self.error(f"Cookie中缺少必要的认证信息: {', '.join(missing_cookies)}")
+            return False
+        
+        # 尝试获取用户名，但不影响签到功能
+        try:
+            response = self._request(self._base_url)
+            if response and response.text:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                username_elem = soup.select_one('a.nav_user')
+                if username_elem:
+                    username = username_elem.text.strip()
+                    self.info(f"当前登录用户: {username}")
+                else:
+                    self.warning("Cookie可能有效，但未找到用户名")
+            else:
+                self.warning("无法访问论坛首页，Cookie可能无效")
+                return False
+        except Exception as e:
+            self.warning(f"检查用户名出错: {str(e)}")
+        
+        return True 
