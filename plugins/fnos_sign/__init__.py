@@ -106,7 +106,7 @@ class FnosSign(_PluginBase):
         # 检查版本兼容性
         try:
             if hasattr(settings, 'VERSION_FLAG'):
-                self._version = settings.VERSION_FLAG  # V2
+                self._version = "v2"  # V2
                 self.logger.info("飞牛论坛签到插件运行在 V2 版本")
             else:
                 self._version = "v1"  # V1
