@@ -38,7 +38,7 @@ class fnossign(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico"
     # 插件版本
-    plugin_version = "1.4"
+    plugin_version = "1.5"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -113,22 +113,40 @@ class fnossign(_PluginBase):
                     )
                 return sign_dict
             
-            # 访问首页获取cookie
+            logger.info(f"使用Cookie长度: {len(self._cookie)} 字符")
+            
+            # 从完整Cookie中提取关键值
+            cookies = self._extract_required_cookies(self._cookie)
+            if not cookies or 'pvRK_2132_saltkey' not in cookies or 'pvRK_2132_auth' not in cookies:
+                logger.error("签到失败：Cookie中缺少必要的认证信息")
+                sign_dict = {
+                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                    "status": "签到失败: Cookie中缺少必要的认证信息",
+                }
+                self._save_sign_history(sign_dict)
+                
+                if self._notify:
+                    self.post_message(
+                        mtype=NotificationType.SiteMessage, 
+                        title="【飞牛论坛签到失败】",
+                        text="❌ Cookie中缺少必要的认证信息，请更新Cookie"
+                    )
+                return sign_dict
+            
+            # 设置请求头和会话
             headers = {
-                "Cookie": self._cookie,
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.95 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
                 "Accept-Language": "zh-CN,zh;q=0.9",
                 "Connection": "keep-alive",
-                "Referer": "https://club.fnnas.com/",  # 添加Referer头
-                "DNT": "1"  # 添加DNT头
+                "Referer": "https://club.fnnas.com/",
+                "DNT": "1"
             }
             
-            logger.info(f"使用Cookie长度: {len(self._cookie)} 字符")
-            
-            # 创建session以复用连接
+            # 创建session并添加重试机制
             session = requests.Session()
             session.headers.update(headers)
+            session.cookies.update(cookies)
             
             # 添加重试机制
             retry = requests.adapters.Retry(
@@ -140,9 +158,8 @@ class fnossign(_PluginBase):
             session.mount('http://', adapter)
             session.mount('https://', adapter)
             
-            # 首先验证Cookie是否有效
+            # 验证Cookie是否有效
             if not self._check_cookie_valid(session):
-                # Cookie无效，记录失败
                 sign_dict = {
                     "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
                     "status": "签到失败: Cookie无效或已过期",
@@ -157,154 +174,111 @@ class fnossign(_PluginBase):
                     )
                 return sign_dict
             
-            # 第一步：访问论坛首页获取更新的Cookie
+            # 步骤1: 访问签到页面获取sign参数
             logger.info("正在访问论坛首页...")
-            response = session.get("https://club.fnnas.com/")
-            response.raise_for_status()
+            session.get("https://club.fnnas.com/")
             
-            # 第二步：访问签到页面
             logger.info("正在访问签到页面...")
             sign_page_url = "https://club.fnnas.com/plugin.php?id=zqlj_sign"
             response = session.get(sign_page_url)
-            response.raise_for_status()
+            html_content = response.text
             
-            # 多种已签到匹配模式
-            already_signed_patterns = [
-                "今天已经签到", 
-                "您今天已经签到过了", 
-                "已签过到了", 
-                "今日已签", 
-                "您已参与过本次活动"
-            ]
+            # 检查是否已经签到
+            if "您今天已经打过卡了" in html_content:
+                logger.info("今日已签到")
+                sign_dict = self._get_credit_info_and_create_record(session, "已签到")
+                
+                # 发送通知
+                if self._notify:
+                    self._send_sign_notification(sign_dict)
+                
+                return sign_dict
             
-            # 检查是否已签到
-            for pattern in already_signed_patterns:
-                if pattern in response.text:
-                    logger.info(f"今日已签到 (匹配规则: '{pattern}')")
-                    
-                    # 获取积分信息
-                    logger.info("正在获取积分信息...")
-                    credit_info = self._get_credit_info(session)
-                    
-                    # 记录已签到状态
-                    sign_dict = {
-                        "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-                        "status": "已签到",
-                        "fnb": credit_info.get("fnb", 0),
-                        "nz": credit_info.get("nz", 0),
-                        "credit": credit_info.get("jf", 0),
-                        "login_days": credit_info.get("ts", 0)
-                    }
-                    
-                    # 保存签到记录
-                    self._save_sign_history(sign_dict)
-                    
-                    # 发送通知
-                    if self._notify:
-                        self._send_sign_notification(sign_dict)
-                    
-                    return sign_dict
-            
-            # 检查是否包含签到按钮，如果没有可能是插件已更改
-            sign_button_patterns = ["签到领奖", "今日签到", "签到", "马上签到"]
-            has_sign_button = False
-            for pattern in sign_button_patterns:
-                if pattern in response.text:
-                    has_sign_button = True
-                    logger.info(f"找到签到按钮 (匹配规则: '{pattern}')")
-                    break
-                    
-            if not has_sign_button:
-                logger.warning("未找到签到按钮，可能签到插件已更改或需要特殊处理")
-                # 继续尝试签到，因为可能只是页面结构变了
-            
-            # 第三步：进行签到 - 直接访问包含sign参数的URL
-            logger.info("正在执行签到...")
-            sign_url = f"{sign_page_url}&sign=1"  # 根据请求格式直接添加sign=1参数
-            response = session.get(sign_url)
-            response.raise_for_status()
-            
-            # 储存响应以便调试
-            debug_resp = response.text[:500]
-            logger.info(f"签到响应内容预览: {debug_resp}")
-            
-            # 多种签到成功匹配模式
-            success_patterns = [
-                "签到成功", 
-                "已签到", 
-                "已经签到", 
-                "签到排名", 
-                "恭喜您签到成功",
-                "获得飞牛币",
-                "获得积分"
-            ]
-            
-            # 判断签到结果
-            for pattern in success_patterns:
-                if pattern in response.text:
-                    logger.info(f"签到成功 (匹配规则: '{pattern}')")
-                    
-                    # 获取积分信息
-                    logger.info("正在获取积分信息...")
-                    credit_info = self._get_credit_info(session)
-                    
-                    # 记录签到记录
-                    sign_dict = {
-                        "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-                        "status": "签到成功",
-                        "fnb": credit_info.get("fnb", 0),
-                        "nz": credit_info.get("nz", 0),
-                        "credit": credit_info.get("jf", 0),
-                        "login_days": credit_info.get("ts", 0)
-                    }
-                    
-                    # 保存签到记录
-                    self._save_sign_history(sign_dict)
-                    
-                    # 发送通知
-                    if self._notify:
-                        self._send_sign_notification(sign_dict)
-                    
-                    return sign_dict
-            
-            # 如果运行到这里，表示签到可能失败
-            # 检查多种错误模式
-            if "验证码" in response.text or "captcha" in response.text.lower():
-                logger.error("签到失败：需要验证码")
-                error_msg = "签到失败: 网站要求验证码"
-            elif "message_login" in response.text or "您需要先登录" in response.text:
-                logger.error("签到失败：Cookie已失效")
-                error_msg = "签到失败: Cookie已失效，请重新获取"
-            elif "权限不足" in response.text or "没有权限" in response.text:
-                logger.error("签到失败：权限不足")
-                error_msg = "签到失败: 账号权限不足"
-            else:
-                # 检查是否是重定向到登录页面
-                logger.error(f"签到请求发送成功，但结果异常: {debug_resp}")
-                error_msg = "签到失败: 响应内容异常，可能需要更新Cookie"
-            
-            # 尝试重试
-            if retry_count < self._max_retries:
-                logger.info(f"将在{self._retry_interval}秒后进行第{retry_count+1}次重试...")
-                time.sleep(self._retry_interval)
-                return self.sign(retry_count + 1)
-            else:
-                # 记录失败
+            # 从页面中提取sign参数
+            sign_match = re.search(r'sign&sign=(.+)" class="btna', html_content)
+            if not sign_match:
+                logger.error("未找到签到参数")
+                
+                # 尝试重试
+                if retry_count < self._max_retries:
+                    logger.info(f"将在{self._retry_interval}秒后进行第{retry_count+1}次重试...")
+                    time.sleep(self._retry_interval)
+                    return self.sign(retry_count + 1)
+                
                 sign_dict = {
                     "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-                    "status": error_msg,
+                    "status": "签到失败: 未找到签到参数",
                 }
                 self._save_sign_history(sign_dict)
                 
-                # 发送失败通知
                 if self._notify:
                     self.post_message(
                         mtype=NotificationType.SiteMessage,
                         title="【飞牛论坛签到失败】",
-                        text=f"❌ {error_msg}"
+                        text="❌ 签到失败: 未找到签到参数"
                     )
+                return sign_dict
+            
+            sign_param = sign_match.group(1)
+            logger.info(f"找到签到按钮 (匹配规则: '签到')")
+            
+            # 步骤2: 使用提取的sign参数执行签到
+            logger.info("正在执行签到...")
+            sign_url = f"https://club.fnnas.com/plugin.php?id=zqlj_sign&sign={sign_param}"
+            
+            # 更新Referer头
+            session.headers.update({"Referer": sign_page_url})
+            
+            response = session.get(sign_url)
+            html_content = response.text
+            
+            # 储存响应以便调试
+            debug_resp = html_content[:500]
+            logger.info(f"签到响应内容预览: {debug_resp}")
+            
+            # 检查签到结果
+            if "恭喜您，打卡成功" in html_content or "打卡成功" in html_content:
+                logger.info("签到成功")
+                sign_dict = self._get_credit_info_and_create_record(session, "签到成功")
+                
+                # 发送通知
+                if self._notify:
+                    self._send_sign_notification(sign_dict)
                 
                 return sign_dict
+            elif "您今天已经打过卡了" in html_content:
+                logger.info("今日已签到")
+                sign_dict = self._get_credit_info_and_create_record(session, "已签到")
+                
+                # 发送通知
+                if self._notify:
+                    self._send_sign_notification(sign_dict)
+                
+                return sign_dict
+            else:
+                # 签到可能失败
+                logger.error(f"签到请求发送成功，但结果异常: {debug_resp}")
+                
+                # 尝试重试
+                if retry_count < self._max_retries:
+                    logger.info(f"将在{self._retry_interval}秒后进行第{retry_count+1}次重试...")
+                    time.sleep(self._retry_interval)
+                    return self.sign(retry_count + 1)
+                
+                sign_dict = {
+                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                    "status": "签到失败: 响应内容异常",
+                }
+                self._save_sign_history(sign_dict)
+                
+                if self._notify:
+                    self.post_message(
+                        mtype=NotificationType.SiteMessage,
+                        title="【飞牛论坛签到失败】",
+                        text="❌ 签到失败: 响应内容异常"
+                    )
+                return sign_dict
+        
         except requests.RequestException as re:
             # 网络请求异常处理
             logger.error(f"网络请求异常: {str(re)}")
@@ -350,6 +324,26 @@ class fnossign(_PluginBase):
                 )
                 
             return sign_dict
+            
+    def _get_credit_info_and_create_record(self, session, status):
+        """获取积分信息并创建签到记录"""
+        # 步骤3: 获取积分信息
+        credit_info = self._get_credit_info(session)
+        
+        # 创建签到记录
+        sign_dict = {
+            "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+            "status": status,
+            "fnb": credit_info.get("fnb", 0),
+            "nz": credit_info.get("nz", 0),
+            "credit": credit_info.get("jf", 0),
+            "login_days": credit_info.get("ts", 0)
+        }
+        
+        # 保存签到记录
+        self._save_sign_history(sign_dict)
+        
+        return sign_dict
 
     def _get_credit_info(self, session):
         """
@@ -914,3 +908,38 @@ class fnossign(_PluginBase):
         except Exception as e:
             logger.error(f"检查Cookie有效性时出错: {str(e)}")
             return False 
+
+    def _extract_required_cookies(self, cookie_str):
+        """从完整Cookie字符串中提取必要的Cookie值"""
+        try:
+            cookies = {}
+            # 分割Cookie字符串
+            parts = cookie_str.split(';')
+            
+            # 提取必要的Cookie值
+            for part in parts:
+                part = part.strip()
+                if '=' not in part:
+                    continue
+                    
+                name, value = part.split('=', 1)
+                name = name.strip()
+                
+                # 只保留需要的Cookie
+                if name in ['pvRK_2132_saltkey', 'pvRK_2132_auth']:
+                    cookies[name] = value
+            
+            # 检查是否获取到必要的Cookie
+            required_cookies = ['pvRK_2132_saltkey', 'pvRK_2132_auth']
+            missing = [c for c in required_cookies if c not in cookies]
+            
+            if missing:
+                logger.error(f"Cookie中缺少必要的值: {', '.join(missing)}")
+                return None
+                
+            logger.info(f"成功提取必要的Cookie值: {', '.join(cookies.keys())}")
+            return cookies
+            
+        except Exception as e:
+            logger.error(f"解析Cookie时出错: {str(e)}")
+            return None 
