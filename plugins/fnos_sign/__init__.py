@@ -21,6 +21,7 @@ import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import logging
+import requests
 
 class FnosSign(_PluginBase):
     # 插件名称
@@ -41,6 +42,16 @@ class FnosSign(_PluginBase):
     plugin_order = 1
     # 可使用的用户级别
     auth_level = 2
+
+    # 站点URL
+    _base_url = "https://club.fnnas.com"
+    _sign_url = f"{_base_url}/plugin.php?id=dsu_paulsign:sign"
+    _credit_url = f"{_base_url}/home.php?mod=spacecp&ac=credit&op=base"
+
+    # 重试配置
+    _retry_times = 3
+    _retry_backoff_factor = 1
+    _retry_status_forcelist = [403, 404, 500, 502, 503, 504]
 
     @staticmethod
     def get_plugin_name() -> str:
@@ -93,12 +104,32 @@ class FnosSign(_PluginBase):
         self.logger.addHandler(console_handler)
 
         # 检查版本兼容性
-        if hasattr(settings, 'VERSION_FLAG'):
-            self._version = settings.VERSION_FLAG  # V2
-            logger.info("飞牛论坛签到插件运行在 V2 版本")
-        else:
-            self._version = "v1"  # V1
-            logger.info("飞牛论坛签到插件运行在 V1 版本")
+        try:
+            if hasattr(settings, 'VERSION_FLAG'):
+                self._version = settings.VERSION_FLAG  # V2
+                self.logger.info("飞牛论坛签到插件运行在 V2 版本")
+            else:
+                self._version = "v1"  # V1
+                self.logger.info("飞牛论坛签到插件运行在 V1 版本")
+        except Exception as e:
+            self.logger.error(f"版本检查失败: {str(e)}")
+            self._version = "v1"  # 默认使用 V1 版本
+
+    def __update_config(self):
+        """
+        更新配置
+        """
+        try:
+            self.update_config({
+                "enabled": self._enabled,
+                "cookie": self._cookie,
+                "notify": self._notify,
+                "onlyonce": self._onlyonce,
+                "last_sign_time": self._config.get("last_sign_time")
+            })
+            self.logger.debug("配置更新成功")
+        except Exception as e:
+            self.logger.error(f"配置更新失败: {str(e)}")
 
     def init_plugin(self, config: dict = None):
         """
@@ -124,33 +155,28 @@ class FnosSign(_PluginBase):
             if self._version == "v2":
                 # 注册模块重载事件监听
                 eventmanager.register(EventType.ModuleReload)(self.module_reload)
-                logger.info("飞牛论坛签到插件 V2 版本特定功能初始化完成")
+                self.logger.info("飞牛论坛签到插件 V2 版本特定功能初始化完成")
 
             if self._onlyonce:
                 # 定时服务
                 self._scheduler = BackgroundScheduler(timezone=settings.TZ)
-                logger.info("飞牛论坛签到服务启动，立即运行一次")
+                self.logger.info("飞牛论坛签到服务启动，立即运行一次")
                 self._scheduler.add_job(func=self.sign, trigger='date',
                                     run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=3),
                                     name="飞牛论坛签到")
                 
                 # 关闭一次性开关
                 self._onlyonce = False
-                self.update_config({
-                    "onlyonce": False,
-                    "enabled": self._enabled,
-                    "cookie": self._cookie,
-                    "notify": self._notify
-                })
+                self.__update_config()
 
                 # 启动任务
                 if self._scheduler.get_jobs():
                     self._scheduler.print_jobs()
                     self._scheduler.start()
 
-            logger.info("飞牛论坛签到插件初始化完成")
+            self.logger.info("飞牛论坛签到插件初始化完成")
         except Exception as e:
-            logger.error(f"飞牛论坛签到插件初始化失败: {str(e)}")
+            self.logger.error(f"飞牛论坛签到插件初始化失败: {str(e)}")
             self._enabled = False
 
     def get_state(self) -> bool:
@@ -308,136 +334,196 @@ class FnosSign(_PluginBase):
             "onlyonce": False
         }
 
-    def get_page(self) -> Tuple[str, str, str]:
+    def get_page(self) -> List[dict]:
         """
-        拼装插件详情页面，需要返回页面标题、页面内容、页面脚本
+        拼装插件详情页面
         """
-        # 获取签到历史
-        history = self._load_history()
-        # 获取签到统计
-        stats = self._stats
+        try:
+            # 获取签到历史
+            history = self._load_history()
+            # 获取签到统计
+            stats = self._calculate_stats(history)
 
-        # 拼装页面
-        template = """
-        <div class="row">
-            <div class="col-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h3 class="card-title">签到状态</h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-12">
-                                <div class="alert alert-info">
-                                    <i class="fas fa-info-circle"></i>
-                                    插件状态：<span class="badge badge-primary">%s</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-12">
-                                <button class="btn btn-primary" onclick="sign()">
-                                    <i class="fas fa-sign-in-alt"></i> 立即签到
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="row">
-            <div class="col-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h3 class="card-title">签到统计</h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-12">
-                                <table class="table table-bordered">
-                                    <tr>
-                                        <td>总签到次数</td>
-                                        <td>%d</td>
-                                    </tr>
-                                    <tr>
-                                        <td>成功次数</td>
-                                        <td>%d</td>
-                                    </tr>
-                                    <tr>
-                                        <td>失败次数</td>
-                                        <td>%d</td>
-                                    </tr>
-                                    <tr>
-                                        <td>最后签到时间</td>
-                                        <td>%s</td>
-                                    </tr>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="row">
-            <div class="col-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h3 class="card-title">签到历史</h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-12">
-                                <table class="table table-bordered">
-                                    <thead>
-                                        <tr>
-                                            <th>时间</th>
-                                            <th>状态</th>
-                                            <th>积分</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        %s
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        """ % (
-            "已启用" if self._enabled else "未启用",
-            stats.get("total_signs", 0),
-            stats.get("success_signs", 0),
-            stats.get("failed_signs", 0),
-            stats.get("last_sign_time", "从未签到"),
-            "".join([
-                f"<tr><td>{item['time']}</td><td>{item['status']}</td><td>{item['points']}</td></tr>"
-                for item in history
-            ])
-        )
-
-        # 页面脚本
-        script = """
-        function sign() {
-            $.ajax({
-                url: '/api/v1/plugin/fnos_sign/sign',
-                type: 'post',
-                data: {},
-                success: function(res) {
-                    if (res.code === 0) {
-                        $.toast.success('签到成功');
-                        setTimeout(function() {
-                            window.location.reload();
-                        }, 1000);
-                    } else {
-                        $.toast.error(res.msg || '签到失败');
+            # 拼装页面
+            return [
+                {
+                    'component': 'VRow',
+                    'content': [
+                        {
+                            'component': 'VCol',
+                            'props': {
+                                'cols': 12,
+                                'md': 6
+                            },
+                            'content': [
+                                {
+                                    'component': 'VCard',
+                                    'props': {
+                                        'title': '签到状态'
+                                    },
+                                    'content': [
+                                        {
+                                            'component': 'VCardText',
+                                            'props': {
+                                                'text': f'插件状态：{"已启用" if self._enabled else "未启用"}'
+                                            }
+                                        },
+                                        {
+                                            'component': 'VCardText',
+                                            'props': {
+                                                'text': f'上次签到时间：{stats["last_sign_time"] or "从未签到"}'
+                                            }
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            'component': 'VCol',
+                            'props': {
+                                'cols': 12,
+                                'md': 6
+                            },
+                            'content': [
+                                {
+                                    'component': 'VCard',
+                                    'props': {
+                                        'title': '签到统计'
+                                    },
+                                    'content': [
+                                        {
+                                            'component': 'VCardText',
+                                            'props': {
+                                                'text': f'总签到次数：{stats["total_signs"]}\n'
+                                                       f'成功次数：{stats["success_signs"]}\n'
+                                                       f'失败次数：{stats["failed_signs"]}\n'
+                                                       f'连续签到天数：{stats["continuous_days"]}\n'
+                                                       f'最长连续签到：{stats["max_continuous_days"]}天'
+                                            }
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    'component': 'VRow',
+                    'content': [
+                        {
+                            'component': 'VCol',
+                            'props': {
+                                'cols': 12
+                            },
+                            'content': [
+                                {
+                                    'component': 'VCard',
+                                    'props': {
+                                        'title': '签到历史'
+                                    },
+                                    'content': [
+                                        {
+                                            'component': 'VTable',
+                                            'props': {
+                                                'hover': True
+                                            },
+                                            'content': [
+                                                {
+                                                    'component': 'thead',
+                                                    'content': [
+                                                        {
+                                                            'component': 'th',
+                                                            'props': {
+                                                                'class': 'text-start ps-4'
+                                                            },
+                                                            'text': '时间'
+                                                        },
+                                                        {
+                                                            'component': 'th',
+                                                            'props': {
+                                                                'class': 'text-start ps-4'
+                                                            },
+                                                            'text': '状态'
+                                                        },
+                                                        {
+                                                            'component': 'th',
+                                                            'props': {
+                                                                'class': 'text-start ps-4'
+                                                            },
+                                                            'text': '飞牛币'
+                                                        },
+                                                        {
+                                                            'component': 'th',
+                                                            'props': {
+                                                                'class': 'text-start ps-4'
+                                                            },
+                                                            'text': '牛值'
+                                                        },
+                                                        {
+                                                            'component': 'th',
+                                                            'props': {
+                                                                'class': 'text-start ps-4'
+                                                            },
+                                                            'text': '积分'
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    'component': 'tbody',
+                                                    'content': [
+                                                        {
+                                                            'component': 'tr',
+                                                            'props': {
+                                                                'class': 'text-sm'
+                                                            },
+                                                            'content': [
+                                                                {
+                                                                    'component': 'td',
+                                                                    'props': {
+                                                                        'class': 'whitespace-nowrap break-keep text-high-emphasis'
+                                                                    },
+                                                                    'text': f"{item['date']} {item['time']}"
+                                                                },
+                                                                {
+                                                                    'component': 'td',
+                                                                    'text': item.get('status', '未知')
+                                                                },
+                                                                {
+                                                                    'component': 'td',
+                                                                    'text': item.get('fnb', '0')
+                                                                },
+                                                                {
+                                                                    'component': 'td',
+                                                                    'text': item.get('nz', '0')
+                                                                },
+                                                                {
+                                                                    'component': 'td',
+                                                                    'text': item.get('jf', '0')
+                                                                }
+                                                            ]
+                                                        } for item in history
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        except Exception as e:
+            self.logger.error(f"生成页面失败: {str(e)}")
+            return [
+                {
+                    'component': 'div',
+                    'text': '页面生成失败，请检查日志以获取更多信息。',
+                    'props': {
+                        'class': 'text-center',
                     }
                 }
-            });
-        }
-        """
-        return "飞牛论坛签到", template, script
+            ]
 
     def stop_service(self):
         """
@@ -461,9 +547,14 @@ class FnosSign(_PluginBase):
         try:
             if os.path.exists(self._history_file):
                 with open(self._history_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                    history = json.load(f)
+                    # 确保历史记录格式正确
+                    if not isinstance(history, list):
+                        self.logger.warning("历史记录格式不正确，重置为空列表")
+                        return []
+                    return history
         except Exception as e:
-            logger.error(f"加载历史记录失败: {str(e)}")
+            self.logger.error(f"加载历史记录失败: {str(e)}")
         return []
 
     def _save_history(self, history: List[dict]):
@@ -471,54 +562,99 @@ class FnosSign(_PluginBase):
         保存签到历史记录
         """
         try:
+            # 确保历史记录是列表类型
+            if not isinstance(history, list):
+                self.logger.warning("历史记录格式不正确，重置为空列表")
+                history = []
+            
+            # 限制历史记录数量，只保留最近30天的记录
+            thirty_days_ago = datetime.now() - timedelta(days=30)
+            history = [
+                record for record in history
+                if datetime.strptime(record['date'], '%Y-%m-%d') >= thirty_days_ago
+            ]
+            
             with open(self._history_file, 'w', encoding='utf-8') as f:
                 json.dump(history, f, ensure_ascii=False, indent=2)
+            self.logger.debug("历史记录保存成功")
         except Exception as e:
-            logger.error(f"保存历史记录失败: {str(e)}")
+            self.logger.error(f"保存历史记录失败: {str(e)}")
 
     def _calculate_stats(self, history: List[dict]) -> dict:
         """
         计算签到统计数据
         """
-        stats = {
-            "total_signs": len(history),
-            "continuous_days": 0,
-            "max_continuous_days": 0
-        }
-        
-        if not history:
-            return stats
+        try:
+            stats = {
+                "total_signs": len(history),
+                "success_signs": len([h for h in history if h.get("status") == "成功"]),
+                "failed_signs": len([h for h in history if h.get("status") == "失败"]),
+                "continuous_days": 0,
+                "max_continuous_days": 0,
+                "last_sign_time": None
+            }
             
-        # 计算连续签到天数
-        today = datetime.now().date()
-        last_sign_date = datetime.strptime(history[-1]['date'], '%Y-%m-%d').date()
-        if last_sign_date == today:
-            stats["continuous_days"] = 1
-        elif last_sign_date == today - timedelta(days=1):
-            stats["continuous_days"] = 1
-            
-        # 计算最长连续签到天数
-        max_continuous = 1
-        current_continuous = 1
-        for i in range(len(history)-1, 0, -1):
-            current_date = datetime.strptime(history[i]['date'], '%Y-%m-%d').date()
-            prev_date = datetime.strptime(history[i-1]['date'], '%Y-%m-%d').date()
-            if (current_date - prev_date).days == 1:
-                current_continuous += 1
-                max_continuous = max(max_continuous, current_continuous)
-            else:
-                current_continuous = 1
+            if not history:
+                return stats
                 
-        stats["max_continuous_days"] = max_continuous
-        return stats
+            # 计算连续签到天数
+            today = datetime.now().date()
+            last_sign_date = datetime.strptime(history[-1]['date'], '%Y-%m-%d').date()
+            if last_sign_date == today:
+                stats["continuous_days"] = 1
+            elif last_sign_date == today - timedelta(days=1):
+                stats["continuous_days"] = 1
+                
+            # 计算最长连续签到天数
+            max_continuous = 1
+            current_continuous = 1
+            for i in range(len(history)-1, 0, -1):
+                current_date = datetime.strptime(history[i]['date'], '%Y-%m-%d').date()
+                prev_date = datetime.strptime(history[i-1]['date'], '%Y-%m-%d').date()
+                if (current_date - prev_date).days == 1:
+                    current_continuous += 1
+                    max_continuous = max(max_continuous, current_continuous)
+                else:
+                    current_continuous = 1
+                    
+            stats["max_continuous_days"] = max_continuous
+            stats["last_sign_time"] = history[-1].get("time")
+            
+            return stats
+        except Exception as e:
+            self.logger.error(f"计算统计数据失败: {str(e)}")
+            return {
+                "total_signs": 0,
+                "success_signs": 0,
+                "failed_signs": 0,
+                "continuous_days": 0,
+                "max_continuous_days": 0,
+                "last_sign_time": None
+            }
 
     def get_credit_info(self, headers: dict) -> dict:
         """
         获取积分信息
         """
         try:
-            response = RequestUtils(headers=headers).get_res(self._credit_url)
-            if response and response.status_code == 200:
+            # 配置重试策略
+            retries = Retry(
+                total=self._retry_times,
+                backoff_factor=self._retry_backoff_factor,
+                status_forcelist=self._retry_status_forcelist,
+                allowed_methods=["GET"],
+                raise_on_status=False
+            )
+            adapter = HTTPAdapter(max_retries=retries)
+            
+            # 使用 Session 对象复用连接
+            with requests.Session() as session:
+                session.headers.update(headers)
+                session.mount('https://', adapter)
+                
+                response = session.get(self._credit_url, timeout=(3.05, 10))
+                response.raise_for_status()
+                
                 # 使用正则表达式提取积分信息
                 content = response.text
                 fnb = re.search(r'飞牛币:\s*(\d+)', content)
@@ -533,7 +669,7 @@ class FnosSign(_PluginBase):
                     "jf": jf.group(1) if jf else "0"
                 }
         except Exception as e:
-            logger.error(f"获取积分信息失败: {str(e)}")
+            self.logger.error(f"获取积分信息失败: {str(e)}")
         return {"fnb": "0", "nz": "0", "ts": "0", "jf": "0"}
 
     def sign(self):
@@ -541,67 +677,99 @@ class FnosSign(_PluginBase):
         执行签到
         """
         if not self._cookie:
+            self.logger.error("未配置Cookie")
             return {"code": 1, "msg": "未配置Cookie"}
             
         if not self._lock.acquire(blocking=False):
-            logger.warning("已有任务正在执行，本次调度跳过！")
+            self.logger.warning("已有任务正在执行，本次调度跳过！")
             return {"code": 1, "msg": "已有任务正在执行"}
             
         try:
             self._running = True
             
+            # 配置请求头
             headers = {
                 "Cookie": self._cookie,
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.95 Safari/537.36",
-                "Referer": "https://club.fnnas.com/",
+                "Referer": self._base_url,
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
                 "Accept-Language": "zh-CN,zh;q=0.9"
             }
-            
-            # 1. 访问签到页面
-            response = RequestUtils(headers=headers).get_res(self._sign_url)
-            if not response or response.status_code != 200:
-                return {"code": 1, "msg": f"访问签到页面失败: {response.status_code if response else '无响应'}"}
 
-            # 2. 发送签到请求
-            sign_response = RequestUtils(headers=headers).get_res(f"{self._sign_url}&sign=1")
-            if not sign_response or sign_response.status_code != 200:
-                return {"code": 1, "msg": f"签到请求失败: {sign_response.status_code if sign_response else '无响应'}"}
+            # 配置重试策略
+            retries = Retry(
+                total=self._retry_times,
+                backoff_factor=self._retry_backoff_factor,
+                status_forcelist=self._retry_status_forcelist,
+                allowed_methods=["GET"],
+                raise_on_status=False
+            )
+            adapter = HTTPAdapter(max_retries=retries)
+            
+            # 使用 Session 对象复用连接
+            with requests.Session() as session:
+                session.headers.update(headers)
+                session.mount('https://', adapter)
+                
+                # 1. 访问签到页面
+                try:
+                    response = session.get(self._sign_url, timeout=(3.05, 10))
+                    response.raise_for_status()
+                except Exception as e:
+                    self.logger.error(f"访问签到页面失败: {str(e)}")
+                    return {"code": 1, "msg": f"访问签到页面失败: {str(e)}"}
 
-            # 3. 获取积分信息
-            credit_info = self.get_credit_info(headers)
-            
-            # 4. 更新配置和发送通知
-            self._config["last_sign_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            self.save_config(self._config)
-            
-            # 5. 记录签到历史
-            history = self._load_history()
-            history.append({
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "time": datetime.now().strftime("%H:%M:%S"),
-                **credit_info
-            })
-            self._save_history(history)
-            
-            # 6. 发送通知
-            if self._notify:
-                notify_msg = f"飞牛币: {credit_info['fnb']} | 牛值: {credit_info['nz']} | 登录天数: {credit_info['ts']} | 积分: {credit_info['jf']}"
-                self.post_message(
-                    mtype=NotificationType.SiteMessage,
-                    title="【飞牛论坛签到成功】",
-                    text=notify_msg
-                )
-            
-            return {"code": 0, "msg": "签到成功", "data": credit_info}
+                # 2. 发送签到请求
+                try:
+                    sign_response = session.get(f"{self._sign_url}&sign=1", timeout=(3.05, 10))
+                    sign_response.raise_for_status()
+                except Exception as e:
+                    self.logger.error(f"签到请求失败: {str(e)}")
+                    return {"code": 1, "msg": f"签到请求失败: {str(e)}"}
+
+                # 3. 获取积分信息
+                credit_info = self.get_credit_info(headers)
+                
+                # 4. 更新配置和发送通知
+                self._config["last_sign_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self.__update_config()
+                
+                # 5. 记录签到历史
+                history = self._load_history()
+                history.append({
+                    "date": datetime.now().strftime("%Y-%m-%d"),
+                    "time": datetime.now().strftime("%H:%M:%S"),
+                    "status": "成功",
+                    "points": credit_info.get("jf", "0"),
+                    **credit_info
+                })
+                self._save_history(history)
+                
+                # 6. 更新统计数据
+                self._stats["total_signs"] += 1
+                self._stats["success_signs"] += 1
+                self._stats["last_sign_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                # 7. 发送通知
+                if self._notify:
+                    notify_msg = f"飞牛币: {credit_info['fnb']} | 牛值: {credit_info['nz']} | 登录天数: {credit_info['ts']} | 积分: {credit_info['jf']}"
+                    self.post_message(
+                        mtype=NotificationType.SiteMessage,
+                        title="【飞牛论坛签到成功】",
+                        text=notify_msg
+                    )
+                
+                self.logger.info("签到成功")
+                return {"code": 0, "msg": "签到成功", "data": credit_info}
                     
         except Exception as e:
-            logger.error(f"签到异常: {str(e)}")
+            self.logger.error(f"签到异常: {str(e)}")
+            self._stats["failed_signs"] += 1
             return {"code": 1, "msg": f"签到异常: {str(e)}"}
         finally:
             self._running = False
             self._lock.release()
-            logger.debug("任务执行完成，锁已释放")
+            self.logger.debug("任务执行完成，锁已释放")
 
     def get_history(self):
         """
