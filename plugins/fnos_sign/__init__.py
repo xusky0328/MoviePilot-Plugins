@@ -2,13 +2,18 @@ from typing import Any, List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 import requests
 import time
+import threading
+from urllib3.util.retry import Retry
+from requests.adapters import HTTPAdapter
 from app.core.event import EventManager, EventType
 from app.core.plugin import Plugin, PluginManager
 from app.schemas.types import NotificationType, MessageChannel
 from app.core.config import settings
+from app.log import logger
 import re
 import json
 import os
+import pytz
 
 class FnosSign(Plugin):
     # 插件名称
@@ -28,6 +33,13 @@ class FnosSign(Plugin):
     # 加载顺序
     plugin_order = 1
 
+    @staticmethod
+    def get_plugin_name() -> str:
+        """
+        获取插件名称
+        """
+        return "fnos_sign"
+
     def __init__(self):
         super().__init__()
         self._enabled = False
@@ -38,6 +50,8 @@ class FnosSign(Plugin):
         self._history_file = "plugins/fnos_sign/history.json"
         self._max_retries = 3
         self._retry_delay = 1  # 重试延迟（秒）
+        self._lock = threading.Lock()
+        self._running = False
 
     def init_plugin(self, config: dict = None):
         """
@@ -104,21 +118,23 @@ class FnosSign(Plugin):
         """
         注册插件服务
         """
-        # 获取配置的签到时间，默认为0点0分0秒
-        sign_time = self._config.get("sign_time", "00:00:00")
-        hour, minute, second = map(int, sign_time.split(":"))
-        
-        return [{
-            "id": "fnos_sign",
-            "name": "飞牛论坛自动签到",
-            "trigger": "cron",
-            "func": self.sign,
-            "kwargs": {
-                "hour": str(hour),
-                "minute": str(minute),
-                "second": str(second)
-            }
-        }]
+        if self._enabled:
+            # 获取配置的签到时间，默认为0点0分0秒
+            sign_time = self._config.get("sign_time", "00:00:00")
+            hour, minute, second = map(int, sign_time.split(":"))
+            
+            return [{
+                "id": "fnos_sign",
+                "name": "飞牛论坛自动签到",
+                "trigger": "cron",
+                "func": self.sign,
+                "kwargs": {
+                    "hour": str(hour),
+                    "minute": str(minute),
+                    "second": str(second)
+                }
+            }]
+        return []
 
     def get_form(self) -> Tuple[List[dict], str]:
         """
@@ -313,7 +329,7 @@ class FnosSign(Plugin):
                 with open(self._history_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
         except Exception as e:
-            print(f"加载历史记录失败: {str(e)}")
+            logger.error(f"加载历史记录失败: {str(e)}")
         return []
 
     def _save_history(self, history: List[dict]):
@@ -324,7 +340,7 @@ class FnosSign(Plugin):
             with open(self._history_file, 'w', encoding='utf-8') as f:
                 json.dump(history, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"保存历史记录失败: {str(e)}")
+            logger.error(f"保存历史记录失败: {str(e)}")
 
     def _calculate_stats(self, history: List[dict]) -> dict:
         """
@@ -383,7 +399,7 @@ class FnosSign(Plugin):
                     "jf": jf.group(1) if jf else "0"
                 }
         except Exception as e:
-            print(f"获取积分信息失败: {str(e)}")
+            logger.error(f"获取积分信息失败: {str(e)}")
         return {"fnb": "0", "nz": "0", "ts": "0", "jf": "0"}
 
     def sign(self):
@@ -392,32 +408,45 @@ class FnosSign(Plugin):
         """
         if not self._cookie:
             return {"code": 1, "msg": "未配置Cookie"}
-        
-        # 重试机制
-        for retry in range(self._max_retries):
-            try:
-                headers = {
-                    "Cookie": self._cookie,
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.95 Safari/537.36",
-                    "Referer": "https://club.fnnas.com/",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-                    "Accept-Language": "zh-CN,zh;q=0.9"
-                }
+            
+        if not self._lock.acquire(blocking=False):
+            logger.warning("已有任务正在执行，本次调度跳过！")
+            return {"code": 1, "msg": "已有任务正在执行"}
+            
+        try:
+            self._running = True
+            
+            # 配置重试策略
+            retries = Retry(
+                total=self._max_retries,
+                backoff_factor=1,
+                status_forcelist=[403, 404, 500, 502, 503, 504],
+                allowed_methods=["GET"],
+                raise_on_status=False
+            )
+            adapter = HTTPAdapter(max_retries=retries)
+            
+            headers = {
+                "Cookie": self._cookie,
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.95 Safari/537.36",
+                "Referer": "https://club.fnnas.com/",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                "Accept-Language": "zh-CN,zh;q=0.9"
+            }
+            
+            # 使用 Session 对象复用
+            with requests.Session() as session:
+                session.headers.update(headers)
+                session.mount('https://', adapter)
                 
                 # 1. 访问签到页面
-                response = requests.get(self._sign_url, headers=headers)
+                response = session.get(self._sign_url)
                 if response.status_code != 200:
-                    if retry < self._max_retries - 1:
-                        time.sleep(self._retry_delay)
-                        continue
                     return {"code": 1, "msg": f"访问签到页面失败: {response.status_code}"}
 
                 # 2. 发送签到请求
-                sign_response = requests.get(f"{self._sign_url}&sign=1", headers=headers)
+                sign_response = session.get(f"{self._sign_url}&sign=1")
                 if sign_response.status_code != 200:
-                    if retry < self._max_retries - 1:
-                        time.sleep(self._retry_delay)
-                        continue
                     return {"code": 1, "msg": f"签到请求失败: {sign_response.status_code}"}
 
                 # 3. 获取积分信息
@@ -442,13 +471,13 @@ class FnosSign(Plugin):
                 
                 return {"code": 0, "msg": "签到成功", "data": credit_info}
                     
-            except Exception as e:
-                if retry < self._max_retries - 1:
-                    time.sleep(self._retry_delay)
-                    continue
-                return {"code": 1, "msg": f"签到异常: {str(e)}"}
-                
-        return {"code": 1, "msg": "签到失败，已达到最大重试次数"}
+        except Exception as e:
+            logger.error(f"签到异常: {str(e)}")
+            return {"code": 1, "msg": f"签到异常: {str(e)}"}
+        finally:
+            self._running = False
+            self._lock.release()
+            logger.debug("任务执行完成，锁已释放")
 
     def get_history(self):
         """
