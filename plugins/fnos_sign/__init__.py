@@ -342,153 +342,165 @@ class FnosSign(_PluginBase):
         """
         拼装插件详情页面，需要返回页面配置，同时为数据请求提供接口
         """
-        # 获取统计数据
-        stats = self.get_stats()
-        # 获取历史记录
-        history = self.get_history()
-        
-        return [
-            {
-                'component': 'VRow',
-                'content': [
-                    {
-                        'component': 'VCol',
-                        'props': {
-                            'cols': 12,
-                            'md': 6
-                        },
-                        'content': [
-                            {
-                                'component': 'VCard',
-                                'props': {
-                                    'title': '签到状态'
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VCardText',
-                                        'props': {
-                                            'class': 'text-center'
-                                        },
-                                        'content': [
-                                            {
-                                                'component': 'VIcon',
-                                                'props': {
-                                                    'icon': 'mdi-check-circle' if stats.get('last_sign_status') == 'success' else 'mdi-close-circle',
-                                                    'color': 'success' if stats.get('last_sign_status') == 'success' else 'error',
-                                                    'size': 48
-                                                }
+        try:
+            # 获取统计数据
+            stats = self.get_stats()
+            # 获取历史记录
+            history = self.get_history()
+            
+            return [
+                {
+                    'component': 'VRow',
+                    'content': [
+                        {
+                            'component': 'VCol',
+                            'props': {
+                                'cols': 12,
+                                'md': 6
+                            },
+                            'content': [
+                                {
+                                    'component': 'VCard',
+                                    'props': {
+                                        'title': '签到状态'
+                                    },
+                                    'content': [
+                                        {
+                                            'component': 'VCardText',
+                                            'props': {
+                                                'class': 'text-center'
                                             },
-                                            {
-                                                'component': 'div',
-                                                'props': {
-                                                    'class': 'text-h6 mt-2'
-                                                },
-                                                'text': '今日已签到' if stats.get('last_sign_status') == 'success' else '今日未签到'
-                                            }
-                                        ]
-                                    }
-                                ]
-                            }
-                        ]
-                    },
-                    {
-                        'component': 'VCol',
-                        'props': {
-                            'cols': 12,
-                            'md': 6
-                        },
-                        'content': [
-                            {
-                                'component': 'VCard',
-                                'props': {
-                                    'title': '签到统计'
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VCardText',
-                                        'content': [
-                                            {
-                                                'component': 'VRow',
-                                                'content': [
-                                                    {
-                                                        'component': 'VCol',
-                                                        'props': {
-                                                            'cols': 6
-                                                        },
-                                                        'content': [
-                                                            {
-                                                                'component': 'div',
-                                                                'props': {
-                                                                    'class': 'text-subtitle-2'
-                                                                },
-                                                                'text': '总签到次数'
-                                                            },
-                                                            {
-                                                                'component': 'div',
-                                                                'props': {
-                                                                    'class': 'text-h6'
-                                                                },
-                                                                'text': str(stats.get('total_signs', 0))
-                                                            }
-                                                        ]
-                                                    },
-                                                    {
-                                                        'component': 'VCol',
-                                                        'props': {
-                                                            'cols': 6
-                                                        },
-                                                        'content': [
-                                                            {
-                                                                'component': 'div',
-                                                                'props': {
-                                                                    'class': 'text-subtitle-2'
-                                                                },
-                                                                'text': '连续签到天数'
-                                                            },
-                                                            {
-                                                                'component': 'div',
-                                                                'props': {
-                                                                    'class': 'text-h6'
-                                                                },
-                                                                'text': str(stats.get('continuous_days', 0))
-                                                            }
-                                                        ]
+                                            'content': [
+                                                {
+                                                    'component': 'VIcon',
+                                                    'props': {
+                                                        'icon': 'mdi-check-circle' if stats.get('last_sign_status') == 'success' else 'mdi-close-circle',
+                                                        'color': 'success' if stats.get('last_sign_status') == 'success' else 'error',
+                                                        'size': 48
                                                     }
-                                                ]
-                                            }
-                                        ]
-                                    }
-                                ]
-                            }
-                        ]
-                    }
-                ]
-            },
-            {
-                'component': 'VCard',
-                'props': {
-                    'title': '签到历史'
-                },
-                'content': [
-                    {
-                        'component': 'VDataTable',
-                        'props': {
-                            'headers': [
-                                {'text': '时间', 'value': 'time'},
-                                {'text': '状态', 'value': 'status'},
-                                {'text': '飞牛币', 'value': 'fnb'},
-                                {'text': '牛值', 'value': 'nz'},
-                                {'text': '积分', 'value': 'credit'}
-                            ],
-                            'items': history,
-                            'items-per-page': 10,
-                            'sort-by': ['time'],
-                            'sort-desc': True
+                                                },
+                                                {
+                                                    'component': 'div',
+                                                    'props': {
+                                                        'class': 'text-h6 mt-2'
+                                                    },
+                                                    'text': '今日已签到' if stats.get('last_sign_status') == 'success' else '今日未签到'
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            'component': 'VCol',
+                            'props': {
+                                'cols': 12,
+                                'md': 6
+                            },
+                            'content': [
+                                {
+                                    'component': 'VCard',
+                                    'props': {
+                                        'title': '签到统计'
+                                    },
+                                    'content': [
+                                        {
+                                            'component': 'VCardText',
+                                            'content': [
+                                                {
+                                                    'component': 'VRow',
+                                                    'content': [
+                                                        {
+                                                            'component': 'VCol',
+                                                            'props': {
+                                                                'cols': 6
+                                                            },
+                                                            'content': [
+                                                                {
+                                                                    'component': 'div',
+                                                                    'props': {
+                                                                        'class': 'text-subtitle-2'
+                                                                    },
+                                                                    'text': '总签到次数'
+                                                                },
+                                                                {
+                                                                    'component': 'div',
+                                                                    'props': {
+                                                                        'class': 'text-h6'
+                                                                    },
+                                                                    'text': str(stats.get('total_signs', 0))
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            'component': 'VCol',
+                                                            'props': {
+                                                                'cols': 6
+                                                            },
+                                                            'content': [
+                                                                {
+                                                                    'component': 'div',
+                                                                    'props': {
+                                                                        'class': 'text-subtitle-2'
+                                                                    },
+                                                                    'text': '连续签到天数'
+                                                                },
+                                                                {
+                                                                    'component': 'div',
+                                                                    'props': {
+                                                                        'class': 'text-h6'
+                                                                    },
+                                                                    'text': str(stats.get('continuous_days', 0))
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
                         }
+                    ]
+                },
+                {
+                    'component': 'VCard',
+                    'props': {
+                        'title': '签到历史'
+                    },
+                    'content': [
+                        {
+                            'component': 'VDataTable',
+                            'props': {
+                                'headers': [
+                                    {'text': '时间', 'value': 'time'},
+                                    {'text': '状态', 'value': 'status'},
+                                    {'text': '飞牛币', 'value': 'fnb'},
+                                    {'text': '牛值', 'value': 'nz'},
+                                    {'text': '积分', 'value': 'credit'}
+                                ],
+                                'items': history,
+                                'items-per-page': 10,
+                                'sort-by': ['time'],
+                                'sort-desc': True
+                            }
+                        }
+                    ]
+                }
+            ]
+        except Exception as e:
+            self.logger.error(f"生成页面失败: {str(e)}")
+            return [
+                {
+                    'component': 'div',
+                    'text': '页面生成失败，请检查日志以获取更多信息。',
+                    'props': {
+                        'class': 'text-center',
                     }
-                ]
-            }
-        ]
+                }
+            ]
 
     def stop_service(self):
         """
