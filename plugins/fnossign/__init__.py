@@ -18,9 +18,6 @@ import time
 import requests
 import re
 from datetime import datetime, timedelta
-import os
-from pathlib import Path
-from threading import Event
 
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -28,7 +25,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.core.config import settings
 from app.plugins import _PluginBase
-from typing import Any, List, Dict, Tuple, Optional, Union
+from typing import Any, List, Dict, Tuple, Optional
 from app.log import logger
 from app.schemas import NotificationType
 
@@ -41,7 +38,7 @@ class fnossign(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico"
     # 插件版本
-    plugin_version = "1.3"
+    plugin_version = "1.4"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -64,296 +61,295 @@ class fnossign(_PluginBase):
     _retry_interval = 30  # 重试间隔(秒)
     _history_days = 30  # 历史保留天数
 
-    def __init__(self, app):
-        super().__init__(app)
-        # 日志
-        self._logger = None
-        # 退出事件
-        self.exit_event = Event()
-        # 配置
-        self._cookie_ua = None
-        self._sign_url = "https://club.fnnas.com"
-        # 签到历史记录
-        self._history_file = None
-        self._history_data = {}
-        self._failed_history_data = {}
-        # 签到结果
-        self._sign_result = {}
-        self._user_status = {}
-
     def init_plugin(self, config: dict = None):
-        # 停止现有任务
-        self.stop_service()
-
-        # 获取配置
-        if config:
-            self._enabled = config.get("enabled", False)
-            self._notify = config.get("notify", False)
-            self._cron = config.get("cron")
-            self._cookie = config.get("cookie")
-            self._cookie_ua = config.get("cookie_ua")
-            self._onlyonce = config.get("onlyonce")
-            self._sign_url = config.get("sign_url") or "https://club.fnnas.com"
-            self._max_retries = int(config.get("max_retries", 1))
-            self._retry_interval = int(config.get("retry_interval", 30))
-            self._history_days = int(config.get("history_days", 30))
-        else:
-            self._enabled = self.get_config("enabled")
-            self._notify = self.get_config("notify")
-            self._cron = self.get_config("cron")
-            self._cookie = self.get_config("cookie")
-            self._cookie_ua = self.get_config("cookie_ua")
-            self._onlyonce = self.get_config("onlyonce")
-            self._sign_url = self.get_config("sign_url") or "https://club.fnnas.com"
-            self._max_retries = int(self.get_config("max_retries") or 1)
-            self._retry_interval = int(self.get_config("retry_interval") or 30)
-            self._history_days = int(self.get_config("history_days") or 30)
-
-        # 加载历史记录
-        self.init_history()
-
-        # 通知
-        self.post_message(
-            channel=self.plugin_name,
-            title="飞牛论坛签到",
-            text=f"插件已{"启用" if self._enabled else "禁用"}"
-        )
-
-        if self._enabled or self._onlyonce:
-            # 立即运行一次
-            if self._onlyonce:
-                self.info(f"执行一次性签到")
-                self.set_config("onlyonce", False)
-                self.__sign()
-
-            # 启动定时任务
-            if self._scheduler and self._cron and self._enabled:
-                self.info(f"签到任务已启动，计划 {self._cron}")
-                try:
-                    self._scheduler = BackgroundScheduler(timezone=pytz.timezone('Asia/Shanghai'))
-                    self._scheduler.add_job(
-                        func=self.__sign,
-                        trigger=CronTrigger.from_crontab(self._cron),
-                        name="飞牛论坛自动签到"
-                    )
-                    self._scheduler.print_jobs()
-                    self._scheduler.start()
-                except Exception as err:
-                    self.error(f"签到任务启动失败：{str(err)}")
-
-    def __sign(self):
-        """
-        签到
-        """
-        if not self._cookie:
-            self.error(f"未配置Cookie，无法签到")
-            return False
-
-        # 签到开始
-        self.info(f"============= 开始签到 =============")
-        self.info(f"使用Cookie长度: {len(self._cookie)} 字符")
-
-        # 检查Cookie格式
-        if not self.__check_cookie():
-            self.error(f"Cookie格式不正确，无法签到，请检查Cookie")
-            return False
-
-        # 记录签到结果
-        self._sign_result = {}
-        success_count = 0
-        failed_count = 0
-        try_count = 0
-        
-        # 签到主流程
-        success = False
-        
-        while try_count <= self._max_retries:
-            try:
-                try_count += 1
-                
-                # 访问论坛首页，获取签到页面链接
-                self.info(f"正在访问论坛首页...")
-                headers = self.__get_headers()
-                main_page = self.request_get(url=self._sign_url, 
-                                            headers=headers,
-                                            cookies=self.__get_cookies())
-                
-                if not main_page or main_page.status_code != 200:
-                    self.error(f"访问论坛首页失败，HTTP状态码：{main_page.status_code if main_page else '未知'}")
-                    continue
-                
-                # 访问签到页面，获取签到参数
-                self.info(f"正在访问签到页面...")
-                sign_page_url = f"{self._sign_url}/plugin.php?id=zqlj_sign"
-                sign_page = self.request_get(url=sign_page_url,
-                                           headers=headers,
-                                           cookies=self.__get_cookies())
-                
-                if not sign_page or sign_page.status_code != 200:
-                    self.error(f"访问签到页面失败，HTTP状态码：{sign_page.status_code if sign_page else '未知'}")
-                    continue
-                
-                # 提取签到所需的sign参数
-                sign_param_match = re.search(r'sign&sign=(.+)" class="btna', sign_page.text)
-                if not sign_param_match:
-                    # 检查是否今天已经签到
-                    if "您今天已经打过卡了" in sign_page.text:
-                        self.info(f"今天已经签到过了，获取积分信息...")
-                        success = True
-                        self._sign_result["message"] = "今天已经签到过了"
-                        self._sign_result["status"] = "success"
-                        break
-                    else:
-                        self.error(f"无法找到签到参数，可能签到页面格式已变更")
-                        continue
-                
-                sign_param = sign_param_match.group(1)
-                self.info(f"找到签到按钮 (匹配规则: '签到')")
-                
-                # 执行签到请求
-                self.info(f"正在执行签到...")
-                sign_url = f"{self._sign_url}/plugin.php?id=zqlj_sign&sign={sign_param}"
-                sign_response = self.request_get(url=sign_url,
-                                               headers=headers,
-                                               cookies=self.__get_cookies())
-                
-                if not sign_response or sign_response.status_code != 200:
-                    self.error(f"签到请求失败，HTTP状态码：{sign_response.status_code if sign_response else '未知'}")
-                    continue
-                
-                # 检查签到结果
-                if "恭喜您，打卡成功" in sign_response.text:
-                    self.info(f"签到成功")
-                    success = True
-                    self._sign_result["message"] = "签到成功"
-                    self._sign_result["status"] = "success"
-                    break
-                elif "您今天已经打过卡了" in sign_response.text:
-                    self.info(f"今天已经签到过了")
-                    success = True
-                    self._sign_result["message"] = "今天已经签到过了"
-                    self._sign_result["status"] = "success"
-                    break
-                else:
-                    # 记录部分响应内容以便调试
-                    preview = sign_response.text[:500] + "..." if len(sign_response.text) > 500 else sign_response.text
-                    self.error(f"签到请求发送成功，但结果异常: {preview}")
-                    continue
-                
-            except Exception as e:
-                self.error(f"签到过程出错: {str(e)}")
-                continue
+        logger.info("============= fnossign 初始化 =============")
+        try:
+            if config:
+                self._enabled = config.get("enabled")
+                self._cookie = config.get("cookie")
+                self._notify = config.get("notify")
+                self._cron = config.get("cron")
+                self._onlyonce = config.get("onlyonce")
+                self._max_retries = int(config.get("max_retries", 3))
+                self._retry_interval = int(config.get("retry_interval", 30))
+                self._history_days = int(config.get("history_days", 30))
+                logger.info(f"配置: enabled={self._enabled}, notify={self._notify}, cron={self._cron}, max_retries={self._max_retries}, retry_interval={self._retry_interval}, history_days={self._history_days}")
             
-            finally:
-                if try_count <= self._max_retries and not success:
-                    self.info(f"将在{self._retry_interval}秒后进行第{try_count}次重试...")
-                    time.sleep(self._retry_interval)
-        
-        # 如果签到成功，获取用户积分信息
-        if success:
-            try:
-                self.info(f"获取用户积分信息...")
-                credit_url = f"{self._sign_url}/home.php?mod=spacecp&ac=credit&showcredit=1"
-                credit_response = self.request_get(url=credit_url,
-                                                 headers=headers,
-                                                 cookies=self.__get_cookies())
+            if self._onlyonce:
+                logger.info("执行一次性签到")
+                self._onlyonce = False
+                self.update_config({
+                    "onlyonce": False,
+                    "enabled": self._enabled,
+                    "cookie": self._cookie,
+                    "notify": self._notify,
+                    "cron": self._cron,
+                    "max_retries": self._max_retries,
+                    "retry_interval": self._retry_interval,
+                    "history_days": self._history_days
+                })
+                self.sign()
+        except Exception as e:
+            logger.error(f"fnossign初始化错误: {str(e)}", exc_info=True)
+
+    def sign(self, retry_count=0):
+        """执行签到，支持失败重试"""
+        logger.info("============= 开始签到 =============")
+        try:
+            # 检查先决条件
+            if not self._cookie:
+                logger.error("签到失败：未配置Cookie")
+                sign_dict = {
+                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                    "status": "签到失败: 未配置Cookie",
+                }
+                self._save_sign_history(sign_dict)
                 
-                if credit_response and credit_response.status_code == 200:
-                    # 提取积分信息
-                    fnb_match = re.search(r'飞牛币: </em>(\d+)', credit_response.text)
-                    nz_match = re.search(r'牛值: </em>(\d+)', credit_response.text)
-                    ts_match = re.search(r'登陆天数: </em>(\d+)', credit_response.text)
-                    jf_match = re.search(r'积分: </em>(\d+)', credit_response.text)
+                if self._notify:
+                    self.post_message(
+                        mtype=NotificationType.SiteMessage, 
+                        title="【飞牛论坛签到失败】",
+                        text="❌ 未配置Cookie，请在插件设置中添加Cookie"
+                    )
+                return sign_dict
+            
+            # 访问首页获取cookie
+            headers = {
+                "Cookie": self._cookie,
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.95 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                "Accept-Language": "zh-CN,zh;q=0.9",
+                "Connection": "keep-alive",
+                "Referer": "https://club.fnnas.com/",  # 添加Referer头
+                "DNT": "1"  # 添加DNT头
+            }
+            
+            logger.info(f"使用Cookie长度: {len(self._cookie)} 字符")
+            
+            # 创建session以复用连接
+            session = requests.Session()
+            session.headers.update(headers)
+            
+            # 添加重试机制
+            retry = requests.adapters.Retry(
+                total=3,
+                backoff_factor=1,
+                status_forcelist=[500, 502, 503, 504]
+            )
+            adapter = requests.adapters.HTTPAdapter(max_retries=retry)
+            session.mount('http://', adapter)
+            session.mount('https://', adapter)
+            
+            # 首先验证Cookie是否有效
+            if not self._check_cookie_valid(session):
+                # Cookie无效，记录失败
+                sign_dict = {
+                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                    "status": "签到失败: Cookie无效或已过期",
+                }
+                self._save_sign_history(sign_dict)
+                
+                if self._notify:
+                    self.post_message(
+                        mtype=NotificationType.SiteMessage,
+                        title="【飞牛论坛签到失败】",
+                        text="❌ Cookie无效或已过期，请更新Cookie"
+                    )
+                return sign_dict
+            
+            # 第一步：访问论坛首页获取更新的Cookie
+            logger.info("正在访问论坛首页...")
+            response = session.get("https://club.fnnas.com/")
+            response.raise_for_status()
+            
+            # 第二步：访问签到页面
+            logger.info("正在访问签到页面...")
+            sign_page_url = "https://club.fnnas.com/plugin.php?id=zqlj_sign"
+            response = session.get(sign_page_url)
+            response.raise_for_status()
+            
+            # 多种已签到匹配模式
+            already_signed_patterns = [
+                "今天已经签到", 
+                "您今天已经签到过了", 
+                "已签过到了", 
+                "今日已签", 
+                "您已参与过本次活动"
+            ]
+            
+            # 检查是否已签到
+            for pattern in already_signed_patterns:
+                if pattern in response.text:
+                    logger.info(f"今日已签到 (匹配规则: '{pattern}')")
                     
-                    self._user_status = {
-                        "飞牛币": fnb_match.group(1) if fnb_match else "未知",
-                        "牛值": nz_match.group(1) if nz_match else "未知",
-                        "登陆天数": ts_match.group(1) if ts_match else "未知",
-                        "积分": jf_match.group(1) if jf_match else "未知"
+                    # 获取积分信息
+                    logger.info("正在获取积分信息...")
+                    credit_info = self._get_credit_info(session)
+                    
+                    # 记录已签到状态
+                    sign_dict = {
+                        "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                        "status": "已签到",
+                        "fnb": credit_info.get("fnb", 0),
+                        "nz": credit_info.get("nz", 0),
+                        "credit": credit_info.get("jf", 0),
+                        "login_days": credit_info.get("ts", 0)
                     }
                     
-                    status_text = " | ".join([f"{k}:{v}" for k, v in self._user_status.items()])
-                    self.info(f"用户信息: {status_text}")
-                    self._sign_result["user_info"] = self._user_status
-            except Exception as e:
-                self.error(f"获取用户积分信息失败: {str(e)}")
-        
-        # 记录签到历史
-        self.add_history(success)
-        
-        # 发送通知
-        if self._notify:
-            if success:
-                title = f"飞牛论坛签到成功"
-                text = f"{self._sign_result.get('message', '签到成功')}\n"
-                if self._user_status:
-                    text += "\n".join([f"{k}: {v}" for k, v in self._user_status.items()])
+                    # 保存签到记录
+                    self._save_sign_history(sign_dict)
+                    
+                    # 发送通知
+                    if self._notify:
+                        self._send_sign_notification(sign_dict)
+                    
+                    return sign_dict
+            
+            # 检查是否包含签到按钮，如果没有可能是插件已更改
+            sign_button_patterns = ["签到领奖", "今日签到", "签到", "马上签到"]
+            has_sign_button = False
+            for pattern in sign_button_patterns:
+                if pattern in response.text:
+                    has_sign_button = True
+                    logger.info(f"找到签到按钮 (匹配规则: '{pattern}')")
+                    break
+                    
+            if not has_sign_button:
+                logger.warning("未找到签到按钮，可能签到插件已更改或需要特殊处理")
+                # 继续尝试签到，因为可能只是页面结构变了
+            
+            # 第三步：进行签到 - 直接访问包含sign参数的URL
+            logger.info("正在执行签到...")
+            sign_url = f"{sign_page_url}&sign=1"  # 根据请求格式直接添加sign=1参数
+            response = session.get(sign_url)
+            response.raise_for_status()
+            
+            # 储存响应以便调试
+            debug_resp = response.text[:500]
+            logger.info(f"签到响应内容预览: {debug_resp}")
+            
+            # 多种签到成功匹配模式
+            success_patterns = [
+                "签到成功", 
+                "已签到", 
+                "已经签到", 
+                "签到排名", 
+                "恭喜您签到成功",
+                "获得飞牛币",
+                "获得积分"
+            ]
+            
+            # 判断签到结果
+            for pattern in success_patterns:
+                if pattern in response.text:
+                    logger.info(f"签到成功 (匹配规则: '{pattern}')")
+                    
+                    # 获取积分信息
+                    logger.info("正在获取积分信息...")
+                    credit_info = self._get_credit_info(session)
+                    
+                    # 记录签到记录
+                    sign_dict = {
+                        "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                        "status": "签到成功",
+                        "fnb": credit_info.get("fnb", 0),
+                        "nz": credit_info.get("nz", 0),
+                        "credit": credit_info.get("jf", 0),
+                        "login_days": credit_info.get("ts", 0)
+                    }
+                    
+                    # 保存签到记录
+                    self._save_sign_history(sign_dict)
+                    
+                    # 发送通知
+                    if self._notify:
+                        self._send_sign_notification(sign_dict)
+                    
+                    return sign_dict
+            
+            # 如果运行到这里，表示签到可能失败
+            # 检查多种错误模式
+            if "验证码" in response.text or "captcha" in response.text.lower():
+                logger.error("签到失败：需要验证码")
+                error_msg = "签到失败: 网站要求验证码"
+            elif "message_login" in response.text or "您需要先登录" in response.text:
+                logger.error("签到失败：Cookie已失效")
+                error_msg = "签到失败: Cookie已失效，请重新获取"
+            elif "权限不足" in response.text or "没有权限" in response.text:
+                logger.error("签到失败：权限不足")
+                error_msg = "签到失败: 账号权限不足"
             else:
-                title = f"飞牛论坛签到失败"
-                text = f"尝试{try_count}次后仍然失败，请检查Cookie或网站访问情况"
+                # 检查是否是重定向到登录页面
+                logger.error(f"签到请求发送成功，但结果异常: {debug_resp}")
+                error_msg = "签到失败: 响应内容异常，可能需要更新Cookie"
             
-            self.post_message(channel=self.plugin_name, title=title, text=text)
-        
-        return success
-
-    def __check_cookie(self):
-        """
-        检查Cookie是否合法
-        """
-        if not self._cookie:
-            return False
-        
-        # 这里可以添加更多的Cookie检查逻辑，如格式检查等
-        if len(self._cookie) < 10:
-            self.warning(f"Cookie长度异常，可能无效")
-            return False
-            
-        # 检查是否含有用户名
-        username_match = re.search(r'(?:username|memberName)=([^;]+)', self._cookie)
-        if not username_match:
-            self.warning(f"Cookie可能有效，但未找到用户名")
-        
-        return True
-
-    def __get_cookies(self):
-        """
-        将Cookie字符串转换为字典
-        """
-        cookies = {}
-        if not self._cookie:
-            return cookies
-            
-        try:
-            # 分割Cookie字符串并转换为字典
-            for item in self._cookie.split(';'):
-                if not item.strip():
-                    continue
-                if '=' in item:
-                    key, value = item.strip().split('=', 1)
-                    cookies[key.strip()] = value.strip()
+            # 尝试重试
+            if retry_count < self._max_retries:
+                logger.info(f"将在{self._retry_interval}秒后进行第{retry_count+1}次重试...")
+                time.sleep(self._retry_interval)
+                return self.sign(retry_count + 1)
+            else:
+                # 记录失败
+                sign_dict = {
+                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                    "status": error_msg,
+                }
+                self._save_sign_history(sign_dict)
+                
+                # 发送失败通知
+                if self._notify:
+                    self.post_message(
+                        mtype=NotificationType.SiteMessage,
+                        title="【飞牛论坛签到失败】",
+                        text=f"❌ {error_msg}"
+                    )
+                
+                return sign_dict
+        except requests.RequestException as re:
+            # 网络请求异常处理
+            logger.error(f"网络请求异常: {str(re)}")
+            if retry_count < self._max_retries:
+                logger.info(f"将在{self._retry_interval}秒后进行第{retry_count+1}次重试...")
+                time.sleep(self._retry_interval)
+                return self.sign(retry_count + 1)
+            else:
+                # 记录失败
+                sign_dict = {
+                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                    "status": f"签到失败: 网络请求异常 - {str(re)}",
+                }
+                self._save_sign_history(sign_dict)
+                
+                # 发送失败通知
+                if self._notify:
+                    self.post_message(
+                        mtype=NotificationType.SiteMessage,
+                        title="【飞牛论坛签到失败】",
+                        text=f"❌ 网络请求异常: {str(re)}"
+                    )
+                
+                return sign_dict
+                
         except Exception as e:
-            self.error(f"Cookie转换出错: {str(e)}")
+            # 签到过程中的异常
+            logger.error(f"签到过程异常: {str(e)}", exc_info=True)
             
-        return cookies
-
-    def __get_headers(self):
-        """
-        获取请求头
-        """
-        headers = {
-            'User-Agent': self._cookie_ua or 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.95 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'Accept-Language': 'zh-CN,zh;q=0.9',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'DNT': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'same-origin',
-            'Sec-Fetch-User': '?1',
-        }
-        
-        return headers
+            # 记录失败
+            sign_dict = {
+                "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                "status": f"签到失败: {str(e)}",
+            }
+            self._save_sign_history(sign_dict)
+            
+            # 发送失败通知
+            if self._notify:
+                self.post_message(
+                    mtype=NotificationType.SiteMessage,
+                    title="【飞牛论坛签到失败】",
+                    text=f"❌ 签到过程发生异常: {str(e)}"
+                )
+                
+            return sign_dict
 
     def _get_credit_info(self, session):
         """
@@ -551,7 +547,7 @@ class fnossign(_PluginBase):
                 "id": "fnossign",
                 "name": "飞牛论坛签到",
                 "trigger": CronTrigger.from_crontab(self._cron),
-                "func": self.__sign,
+                "func": self.sign,
                 "kwargs": {}
             }]
         return []
@@ -593,9 +589,9 @@ class fnossign(_PluginBase):
                                             'model': 'notify',
                                             'label': '开启通知',
                                         }
-                            }
-                        ]
-                    },
+                                    }
+                                ]
+                            },
                             {
                                 'component': 'VCol',
                                 'props': {
@@ -611,9 +607,9 @@ class fnossign(_PluginBase):
                                         }
                                     }
                                 ]
-                                    }
-                                ]
-                            },
+                            }
+                        ]
+                    },
                     {
                         'component': 'VRow',
                         'content': [
