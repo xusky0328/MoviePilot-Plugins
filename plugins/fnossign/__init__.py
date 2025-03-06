@@ -14,7 +14,7 @@ from app.log import logger
 from app.schemas import NotificationType
 
 
-class FnosSign(_PluginBase):
+class Fnossign(_PluginBase):
     # 插件名称
     plugin_name = "飞牛论坛签到"
     # 插件描述
