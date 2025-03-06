@@ -1,6 +1,6 @@
 """
 飞牛论坛签到插件
-版本: 1.2
+版本: 1.5
 作者: madrays
 功能:
 - 自动完成飞牛论坛每日签到
@@ -38,7 +38,7 @@ class fnossign(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico"
     # 插件版本
-    plugin_version = "1.5"
+    plugin_version = "1.6"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -279,9 +279,9 @@ class fnossign(_PluginBase):
                     )
                 return sign_dict
         
-        except requests.RequestException as re:
+        except requests.RequestException as req_exc:
             # 网络请求异常处理
-            logger.error(f"网络请求异常: {str(re)}")
+            logger.error(f"网络请求异常: {str(req_exc)}")
             if retry_count < self._max_retries:
                 logger.info(f"将在{self._retry_interval}秒后进行第{retry_count+1}次重试...")
                 time.sleep(self._retry_interval)
@@ -290,7 +290,7 @@ class fnossign(_PluginBase):
                 # 记录失败
                 sign_dict = {
                     "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-                    "status": f"签到失败: 网络请求异常 - {str(re)}",
+                    "status": f"签到失败: 网络请求异常 - {str(req_exc)}",
                 }
                 self._save_sign_history(sign_dict)
                 
@@ -299,7 +299,7 @@ class fnossign(_PluginBase):
                     self.post_message(
                         mtype=NotificationType.SiteMessage,
                         title="【飞牛论坛签到失败】",
-                        text=f"❌ 网络请求异常: {str(re)}"
+                        text=f"❌ 网络请求异常: {str(req_exc)}"
                     )
                 
                 return sign_dict
