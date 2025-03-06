@@ -45,6 +45,7 @@ class FnosSign(_PluginBase):
     _cookie = None
     _notify = False
     _onlyonce = False
+    _cron = None
     _history_days = 30
     _scheduler = None
 
@@ -72,6 +73,7 @@ class FnosSign(_PluginBase):
             if config:
                 logger.info(f"收到配置: {config}")
                 self._enabled = config.get("enabled")
+                self._cron = config.get("cron")
                 self._cookie = config.get("cookie")
                 self._notify = config.get("notify")
                 self._onlyonce = config.get("onlyonce")
@@ -91,6 +93,7 @@ class FnosSign(_PluginBase):
                 self._onlyonce = False
                 self.update_config({
                     "onlyonce": False,
+                    "cron": self._cron,
                     "enabled": self._enabled,
                     "cookie": self._cookie,
                     "notify": self._notify,
@@ -312,12 +315,12 @@ class FnosSign(_PluginBase):
         注册插件公共服务
         """
         logger.info(f"============= FnosSign get_service 被调用，enabled={self._enabled} =============")
-        if self._enabled:
+        if self._enabled and self._cron:
             logger.info("返回签到服务配置")
             return [{
                 "id": "FnosSign",
                 "name": "飞牛论坛签到",
-                "trigger": CronTrigger.from_crontab("0 0 * * *"),  # 每天0点执行
+                "trigger": CronTrigger.from_crontab(self._cron),
                 "func": self.__signin,
                 "kwargs": {}
             }]
@@ -339,7 +342,7 @@ class FnosSign(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 4
+                                    'md': 3
                                 },
                                 'content': [
                                     {
@@ -355,7 +358,7 @@ class FnosSign(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 4
+                                    'md': 3
                                 },
                                 'content': [
                                     {
@@ -371,7 +374,7 @@ class FnosSign(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
-                                    'md': 4
+                                    'md': 3
                                 },
                                 'content': [
                                     {
@@ -392,14 +395,32 @@ class FnosSign(_PluginBase):
                                 'component': 'VCol',
                                 'props': {
                                     'cols': 12,
+                                    'md': 6
                                 },
                                 'content': [
                                     {
                                         'component': 'VTextField',
                                         'props': {
                                             'model': 'cookie',
-                                            'label': '站点cookie',
-                                            'placeholder': '请输入飞牛论坛cookie'
+                                            'label': '站点Cookie',
+                                            'placeholder': '请输入站点Cookie值'
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 6
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'cron',
+                                            'label': '签到周期',
+                                            'placeholder': '0 8 * * *'
                                         }
                                     }
                                 ]
@@ -419,8 +440,8 @@ class FnosSign(_PluginBase):
                                         'component': 'VTextField',
                                         'props': {
                                             'model': 'history_days',
-                                            'label': '保留历史天数',
-                                            'placeholder': '默认保留30天的签到记录'
+                                            'label': '历史保留天数',
+                                            'placeholder': '30'
                                         }
                                     }
                                 ]
@@ -441,7 +462,7 @@ class FnosSign(_PluginBase):
                                         'props': {
                                             'type': 'info',
                                             'variant': 'tonal',
-                                            'text': '飞牛论坛签到插件，每天自动签到并获取积分信息'
+                                            'text': '请填写有效的Cookie信息，签到周期使用Cron表达式，默认为：每天8点执行一次。'
                                         }
                                     }
                                 ]
@@ -452,9 +473,10 @@ class FnosSign(_PluginBase):
             }
         ], {
             "enabled": False,
+            "notify": True,
             "onlyonce": False,
-            "notify": False,
             "cookie": "",
+            "cron": "0 8 * * *",
             "history_days": 30
         }
 
