@@ -29,7 +29,7 @@ class lemonshengyou(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/lemon.ico"
     # 插件版本
-    plugin_version = "1.0.2"
+    plugin_version = "1.0.3"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -512,20 +512,86 @@ class lemonshengyou(_PluginBase):
             # 获取用户名
             username = self.__get_username(session, site_info)
             if not username:
-                logger.warning("无法获取用户名,可能影响神游记录匹配")
+                logger.error("无法获取用户名，请检查站点Cookie是否有效")
+                return False, "无法获取用户名", []
+            
+            logger.info(f"获取到用户名: {username}")
+            
+            # 获取今天的日期，用于查找当天的记录
+            today = datetime.now().strftime('%Y-%m-%d')
             
             # 1. 访问神游页面
             lottery_url = urljoin(site_url, "lottery.php")
-            response = session.get(lottery_url, timeout=(3.05, 10))
+            logger.info(f"访问神游页面: {lottery_url}")
+            response = session.get(lottery_url, timeout=(5, 15))
             response.raise_for_status()
             
             # 使用BeautifulSoup解析页面
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # 查找神游按钮
+            # 函数：查找用户的神游记录，检查前MAX_RECORDS条记录
+            def find_user_lottery_records(soup_obj, max_records=50):
+                records = []
+                lottery_list = soup_obj.find('div', class_='lottery_list')
+                if not lottery_list:
+                    logger.warning("页面中未找到神游记录列表")
+                    return records
+                
+                items = lottery_list.find_all('div', class_='item')
+                logger.info(f"找到 {len(items)} 条神游记录")
+                
+                # 只检查前max_records条记录
+                check_items = items[:max_records] if len(items) > max_records else items
+                
+                for item in check_items:
+                    # 查找日期
+                    date_span = item.find('span', class_='date')
+                    item_date = date_span.get_text().strip() if date_span else ""
+                    
+                    # 查找用户链接
+                    user_link = item.find('a', class_=['User_Name', 'PowerUser_Name', 'EliteUser_Name', 'CrazyUser_Name', 'InsaneUser_Name', 'VIP_Name', 'Uploader_Name'])
+                    
+                    # 尝试多种方式匹配用户名
+                    is_user_record = False
+                    if user_link:
+                        # 方法1: 检查span的title属性
+                        span = user_link.find('span', title=username)
+                        if span:
+                            is_user_record = True
+                        
+                        # 方法2: 检查用户链接文本
+                        elif username in user_link.get_text():
+                            is_user_record = True
+                            
+                        # 方法3: 检查userdetails.php链接
+                        elif user_link.has_attr('href') and 'userdetails.php' in user_link['href']:
+                            # 可能需要进一步确认用户ID
+                            is_user_record = True
+                    
+                    if is_user_record:
+                        # 找到用户记录
+                        reward_text = item.get_text(strip=True)
+                        # 提取奖励部分，格式通常是: [日期] [用户名] - [奖励内容]
+                        reward_parts = reward_text.split('-')[-1].strip() if '-' in reward_text else reward_text
+                        
+                        # 只保留包含神游关键词的记录
+                        if '【神游' in reward_parts:
+                            logger.info(f"找到用户神游记录: {reward_parts} ({item_date})")
+                            records.append((reward_parts, item_date))
+                
+                return records
+            
+            # 先查找已有的神游记录
+            user_records = find_user_lottery_records(soup)
+            
+            # 查找今日记录
+            today_records = [record for record, date in user_records if today in date]
+            
+            # 查找按钮状态
             free_button = None
             button_disabled = False
+            
             for form in soup.find_all('form', {'action': '?', 'method': 'post'}):
                 type_input = form.find('input', {'name': 'type', 'value': '0'})
                 if type_input:
@@ -533,66 +599,103 @@ class lemonshengyou(_PluginBase):
                     if button and '免费' in button.get_text():
                         free_button = form
                         button_disabled = button.has_attr('disabled')
+                        logger.info(f"找到免费神游按钮，状态: {'禁用' if button_disabled else '可用'}")
                         break
             
-            # 查找神游记录
-            lottery_list = soup.find('div', class_='lottery_list')
-            if lottery_list and username:
-                # 先检查最新的神游记录
-                first_item = lottery_list.find('div', class_='item')
-                if first_item:
-                    user_link = first_item.find('a', class_=['User_Name', 'PowerUser_Name', 'EliteUser_Name', 'CrazyUser_Name', 'InsaneUser_Name', 'VIP_Name', 'Uploader_Name'])
-                    if user_link and user_link.find('span', title=username):
-                        reward_text = first_item.get_text(strip=True)
-                        if '【神游' in reward_text:
-                            reward_parts = reward_text.split('-')[-1].strip()
-                            if button_disabled:
-                                return False, "今天已经神游过", [reward_parts]
-                            else:
-                                logger.info(f"找到最近一次神游记录: {reward_parts}")
-            
-            # 如果按钮被禁用但没找到记录
+            # 如果按钮被禁用，说明今天已经参与过了
             if button_disabled:
-                return False, "今天已经神游过", []
-                
-            # 如果没有免费按钮
+                logger.info("今天已经神游过")
+                # 如果找到了今天的记录，返回记录内容
+                if today_records:
+                    reward = today_records[0][0]
+                    return False, "今天已经神游过", [reward]
+                # 如果有历史记录，至少返回最近的一条
+                elif user_records:
+                    reward = user_records[0][0]
+                    return False, "今天已经神游过", [reward]
+                # 没有找到任何记录
+                else:
+                    return False, "今天已经神游过，但未找到奖励记录", []
+            
+            # 如果没有找到免费按钮
             if not free_button:
+                logger.error("未找到免费神游按钮")
                 return False, "未找到神游按钮", []
-                
+            
             # 2. 执行神游
             logger.info("执行神游操作...")
             shenyou_data = {
                 "type": "0"  # 0 表示免费神游
             }
             
-            response = session.post(lottery_url, data=shenyou_data, timeout=(3.05, 10))
+            response = session.post(lottery_url, data=shenyou_data, timeout=(5, 15))
             response.raise_for_status()
             
-            # 等待1秒让记录更新
-            time.sleep(1)
+            # 等待服务器处理，确保记录已更新
+            time.sleep(2)
             
-            # 重新获取页面检查结果
-            response = session.get(lottery_url, timeout=(3.05, 10))
+            # 重新获取页面，查看最新结果
+            logger.info("重新获取神游页面，查找结果...")
+            response = session.get(lottery_url, timeout=(5, 15))
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
             
             # 查找最新的神游记录
-            lottery_list = soup.find('div', class_='lottery_list')
-            if lottery_list:
-                first_item = lottery_list.find('div', class_='item')
-                if first_item:
-                    user_link = first_item.find('a', class_=['User_Name', 'PowerUser_Name', 'EliteUser_Name', 'CrazyUser_Name', 'InsaneUser_Name', 'VIP_Name', 'Uploader_Name'])
-                    if user_link and user_link.find('span', title=username):
-                        reward_text = first_item.get_text(strip=True)
-                        if '【神游' in reward_text:
-                            reward_parts = reward_text.split('-')[-1].strip()
-                            return True, None, [reward_parts]
+            new_user_records = find_user_lottery_records(soup)
             
+            # 查找今日新记录
+            new_today_records = [record for record, date in new_user_records if today in date]
+            
+            # 检查神游是否成功
+            # 1. 如果新增了今日记录，表示神游成功
+            if len(new_today_records) > len(today_records):
+                reward = new_today_records[0][0]
+                logger.info(f"神游成功，获得奖励: {reward}")
+                return True, None, [reward]
+            
+            # 2. 如果已有今日记录且按钮变为禁用，也表示成功
+            button_now_disabled = False
+            for form in soup.find_all('form', {'action': '?', 'method': 'post'}):
+                type_input = form.find('input', {'name': 'type', 'value': '0'})
+                if type_input:
+                    button = form.find('button')
+                    if button and '免费' in button.get_text():
+                        button_now_disabled = button.has_attr('disabled')
+                        break
+            
+            if not button_disabled and button_now_disabled and new_today_records:
+                reward = new_today_records[0][0]
+                logger.info(f"神游成功，按钮已禁用，获得奖励: {reward}")
+                return True, None, [reward]
+            
+            # 3. 检查页面中是否有成功提示
+            success_msg = soup.find('div', class_='success')
+            if success_msg and new_user_records:
+                reward = new_user_records[0][0]
+                logger.info(f"神游成功，页面有成功提示，获得奖励: {reward}")
+                return True, None, [reward]
+            
+            # 如果所有检查都失败，但有今日记录，也返回记录
+            if new_today_records:
+                reward = new_today_records[0][0]
+                logger.warning(f"神游可能成功，但无法确认，获得奖励: {reward}")
+                return True, None, [reward]
+            
+            # 最后，如果有任何用户记录，至少返回最近的一条
+            if new_user_records:
+                reward = new_user_records[0][0]
+                logger.warning(f"神游状态未知，返回最近记录: {reward}")
+                return False, "神游状态未知", [reward]
+            
+            # 真的找不到任何奖励记录
+            logger.error("神游后未找到任何奖励记录")
             return False, "无法获取神游结果", []
                 
         except requests.exceptions.RequestException as e:
+            logger.error(f"请求失败: {str(e)}")
             return False, f"请求失败: {str(e)}", []
         except Exception as e:
+            logger.error(f"神游失败: {str(e)}")
             return False, f"神游失败: {str(e)}", []
         finally:
             session.close()
