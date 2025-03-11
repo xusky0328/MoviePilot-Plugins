@@ -36,7 +36,7 @@ class fnossign(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico"
     # 插件版本
-    plugin_version = "2.3"
+    plugin_version = "2.4"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -562,30 +562,90 @@ class fnossign(_PluginBase):
         nz = sign_dict.get("nz", "—")
         credit = sign_dict.get("credit", "—")
         login_days = sign_dict.get("login_days", "—")
+        sign_time = sign_dict.get("date", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         
         # 检查积分信息是否为空
         credits_missing = fnb == "—" and nz == "—" and credit == "—" and login_days == "—"
         
+        # 获取触发方式
+        trigger_type = "手动触发" if self._is_manual_trigger() else "定时触发"
+        
         # 构建通知文本
-        if "签到成功" in status or "已签到" in status:
-            title = "【飞牛论坛签到成功】"
+        if "签到成功" in status:
+            title = "【✅ 飞牛论坛签到成功】"
             
             if credits_missing:
-                text = f"✅ 状态: {status}\n\n" \
-                       f"⚠️ 积分信息获取失败，请手动登录网站查看"
+                text = (
+                    f"📢 执行结果\n"
+                    f"━━━━━━━━━━\n"
+                    f"🕐 时间：{sign_time}\n"
+                    f"📍 方式：{trigger_type}\n"
+                    f"✨ 状态：{status}\n"
+                    f"⚠️ 积分信息获取失败，请手动查看\n"
+                    f"━━━━━━━━━━"
+                )
             else:
-                text = f"✅ 状态: {status}\n" \
-                       f"💎 飞牛币: {fnb}\n" \
-                       f"🔥 牛值: {nz}\n" \
-                       f"✨ 积分: {credit}\n" \
-                       f"📆 登录天数: {login_days}"
+                text = (
+                    f"📢 执行结果\n"
+                    f"━━━━━━━━━━\n"
+                    f"🕐 时间：{sign_time}\n"
+                    f"📍 方式：{trigger_type}\n"
+                    f"✨ 状态：{status}\n"
+                    f"━━━━━━━━━━\n"
+                    f"📊 积分统计\n"
+                    f"💎 飞牛币：{fnb}\n"
+                    f"🔥 牛  值：{nz}\n"
+                    f"✨ 积  分：{credit}\n"
+                    f"📆 签到天数：{login_days}\n"
+                    f"━━━━━━━━━━"
+                )
+        elif "已签到" in status:
+            title = "【ℹ️ 飞牛论坛重复签到】"
+            
+            if credits_missing:
+                text = (
+                    f"📢 执行结果\n"
+                    f"━━━━━━━━━━\n"
+                    f"🕐 时间：{sign_time}\n"
+                    f"📍 方式：{trigger_type}\n"
+                    f"✨ 状态：{status}\n"
+                    f"ℹ️ 说明：今日已完成签到\n"
+                    f"⚠️ 积分信息获取失败，请手动查看\n"
+                    f"━━━━━━━━━━"
+                )
+            else:
+                text = (
+                    f"📢 执行结果\n"
+                    f"━━━━━━━━━━\n"
+                    f"🕐 时间：{sign_time}\n"
+                    f"📍 方式：{trigger_type}\n"
+                    f"✨ 状态：{status}\n"
+                    f"ℹ️ 说明：今日已完成签到\n"
+                    f"━━━━━━━━━━\n"
+                    f"📊 积分统计\n"
+                    f"💎 飞牛币：{fnb}\n"
+                    f"🔥 牛  值：{nz}\n"
+                    f"✨ 积  分：{credit}\n"
+                    f"📆 签到天数：{login_days}\n"
+                    f"━━━━━━━━━━"
+                )
         else:
-            title = "【飞牛论坛签到失败】"
-            text = f"❌ 状态: {status}\n\n" \
-                   f"⚠️ 可能的解决方法:\n" \
-                   f"• 检查Cookie是否过期\n" \
-                   f"• 确认站点是否可正常访问\n" \
-                   f"• 手动登录查看是否需要验证码"
+            title = "【❌ 飞牛论坛签到失败】"
+            text = (
+                f"📢 执行结果\n"
+                f"━━━━━━━━━━\n"
+                f"🕐 时间：{sign_time}\n"
+                f"📍 方式：{trigger_type}\n"
+                f"❌ 状态：{status}\n"
+                f"━━━━━━━━━━\n"
+                f"💡 可能的解决方法\n"
+                f"• 检查Cookie是否过期\n"
+                f"• 确认站点是否可访问\n"
+                f"• 检查是否需要验证码\n"
+                f"• 尝试手动登录网站\n"
+                f"━━━━━━━━━━\n"
+                f"⚡ 插件将在下次执行时重试"
+            )
             
         # 发送通知
         self.post_message(
@@ -1059,43 +1119,45 @@ class fnossign(_PluginBase):
     def _is_already_signed_today(self):
         """
         检查今天是否已经成功签到过
-        
-        考虑两种情况：
-        1. 通过查询历史记录判断今天是否已签到
-        2. 如果昨天的签到是在23:50之后，今天早上的定时任务应该仍然执行
+        只有当今天已经成功签到时才返回True
         """
         today = datetime.now().strftime('%Y-%m-%d')
         
         # 获取历史记录
         history = self.get_data('sign_history') or []
         
-        # 获取最后一次成功签到的日期和时间
+        # 检查今天的签到记录
+        today_records = [
+            record for record in history 
+            if record.get("date", "").startswith(today) 
+            and record.get("status") in ["签到成功", "已签到"]
+        ]
+        
+        if today_records:
+            last_success = max(today_records, key=lambda x: x.get("date", ""))
+            logger.info(f"今日已成功签到，时间: {last_success.get('date', '').split()[1]}")
+            return True
+            
+        # 获取最后一次签到的日期和时间
         last_sign_date = self.get_data('last_sign_date')
-        if not last_sign_date:
-            logger.info("未找到最后一次签到记录")
-            return False
-            
-        # 解析最后一次签到的日期
-        try:
-            last_sign_datetime = datetime.strptime(last_sign_date, '%Y-%m-%d %H:%M:%S')
-            last_sign_day = last_sign_datetime.strftime('%Y-%m-%d')
-            
-            # 如果最后一次签到是今天，检查是否在今天
-            if last_sign_day == today:
-                logger.info(f"今日已成功签到，时间: {last_sign_datetime.strftime('%H:%M:%S')}")
-                return True
+        if last_sign_date:
+            try:
+                last_sign_datetime = datetime.strptime(last_sign_date, '%Y-%m-%d %H:%M:%S')
+                last_sign_day = last_sign_datetime.strftime('%Y-%m-%d')
                 
-            # 如果最后一次签到是昨天，但时间太晚（例如23:50以后），今天也要签到
-            yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-            if last_sign_day == yesterday:
-                # 如果是昨天23:50以后签到的，今天也需要签到
-                if last_sign_datetime.hour >= 23 and last_sign_datetime.minute >= 50:
-                    logger.info(f"昨天深夜已签到 ({last_sign_datetime.strftime('%H:%M:%S')}), 但今天仍需要签到")
-                    return False
-        except Exception as e:
-            logger.error(f"解析最后签到日期时出错: {str(e)}")
-            return False
-            
+                # 如果最后一次签到是今天且是成功的
+                if last_sign_day == today:
+                    # 检查最后一条历史记录的状态
+                    if history and history[-1].get("status") in ["签到成功", "已签到"]:
+                        logger.info(f"今日已成功签到，时间: {last_sign_datetime.strftime('%H:%M:%S')}")
+                        return True
+                    else:
+                        logger.info("今日虽有签到记录但未成功，将重试签到")
+                        return False
+            except Exception as e:
+                logger.error(f"解析最后签到日期时出错: {str(e)}")
+        
+        logger.info("今日尚未成功签到")
         return False
         
     def _save_last_sign_date(self):
