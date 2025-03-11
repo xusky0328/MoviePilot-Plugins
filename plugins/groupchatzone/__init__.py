@@ -31,7 +31,7 @@ class GroupChatZone(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/GroupChat.png"
     # 插件版本
-    plugin_version = "11.99.999"
+    plugin_version = "12.99.999"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -820,47 +820,55 @@ class GroupChatZone(_PluginBase):
             # 添加反馈信息
             if self._get_feedback and all_feedback:
                 notification_text += "\n📋 喊话反馈:\n"
-                notification_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                
+                # 按站点整理反馈，而不是按时间顺序
+                site_feedback_dict = {}
                 for feedback in all_feedback:
                     site_name = feedback.get("site", "")
-                    message = feedback.get("message", "")
-                    rewards = feedback.get("rewards", [])
+                    if site_name not in site_feedback_dict:
+                        site_feedback_dict[site_name] = []
+                    site_feedback_dict[site_name].append(feedback)
+                
+                # 逐个站点显示反馈
+                for site_name, feedbacks in site_feedback_dict.items():
+                    notification_text += f"\n━━━━━━━━ {site_name} 站点反馈 ━━━━━━━━\n"
                     
-                    if rewards:
-                        notification_text += f"🔹 {site_name} (消息: \"{message}\")\n"
+                    for feedback in feedbacks:
+                        message = feedback.get("message", "")
+                        rewards = feedback.get("rewards", [])
                         
-                        # 根据不同类型显示不同图标
-                        for reward in rewards:
-                            reward_type = reward.get("type", "")
+                        if rewards:
+                            notification_text += f"🔹 消息: \"{message}\"\n"
                             
-                            # 图标映射
-                            icon_map = {
-                                "上传量": "⬆️",
-                                "下载量": "⬇️",
-                                "魔力值": "✨",
-                                "工分": "🔧",
-                                "电力": "⚡",
-                                "象草": "🐘",
-                                "VIP": "👑",
-                                "raw_feedback": "📝"
-                            }
-                            
-                            icon = icon_map.get(reward_type, "📌")
-                            
-                            if reward_type == "raw_feedback":
-                                # 直接显示原始反馈内容
-                                notification_text += f"  {icon} {reward.get('description', '')}\n"
-                            elif reward_type == "unknown":
-                                notification_text += f"  {icon} {reward.get('description', '')}\n"
-                            else:
-                                # 根据正负显示不同的表述
-                                if reward.get("is_negative", False):
-                                    notification_text += f"  {icon} 损失了 {reward.get('amount', '')} {reward.get('unit', '')} {reward_type}\n"
+                            # 根据不同类型显示不同图标
+                            for reward in rewards:
+                                reward_type = reward.get("type", "")
+                                
+                                # 图标映射
+                                icon_map = {
+                                    "上传量": "⬆️",
+                                    "下载量": "⬇️",
+                                    "魔力值": "✨",
+                                    "工分": "🔧",
+                                    "电力": "⚡",
+                                    "象草": "🐘",
+                                    "VIP": "👑",
+                                    "raw_feedback": "📝"
+                                }
+                                
+                                icon = icon_map.get(reward_type, "📌")
+                                
+                                if reward_type == "raw_feedback":
+                                    # 直接显示原始反馈内容
+                                    notification_text += f"  {icon} {reward.get('description', '')}\n"
+                                elif reward_type == "unknown":
+                                    notification_text += f"  {icon} {reward.get('description', '')}\n"
                                 else:
-                                    notification_text += f"  {icon} 获得了 {reward.get('amount', '')} {reward.get('unit', '')} {reward_type}\n"
-                        
-                        # 在每个站点反馈后添加分割线
-                        notification_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                                    # 根据正负显示不同的表述
+                                    if reward.get("is_negative", False):
+                                        notification_text += f"  {icon} 损失了 {reward.get('amount', '')} {reward.get('unit', '')} {reward_type}\n"
+                                    else:
+                                        notification_text += f"  {icon} 获得了 {reward.get('amount', '')} {reward.get('unit', '')} {reward_type}\n"
             
             notification_text += f"\n⏱️ {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
 
@@ -1373,30 +1381,27 @@ class GroupChatZone(_PluginBase):
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # 获取当前日期
-            today = datetime.now().strftime("%Y-%m-%d")
-            
             # 先查找未读消息，如果没有再查找所有消息
             all_rows = soup.select('tr:has(td > img[title="Unread"])')
             has_unread = len(all_rows) > 0
+            logger.info(f"织梦站点找到 {len(all_rows)} 条未读消息")
             
             if not all_rows:
                 # 如果没有未读消息，获取最新的邮件
                 all_rows = soup.select('tr:has(td > img)')
+                logger.info(f"织梦站点找到 {len(all_rows)} 条消息")
             
             if not all_rows:
-                return []
-            
-            # 遍历找到的消息行，查看最新的消息
-            for row in all_rows[:5]:  # 只看前5条消息
-                # 获取消息日期
-                date_cell = row.select_one('td:nth-child(4)')
-                if date_cell:
-                    date_text = date_cell.get_text(strip=True)
-                    # 检查是否是当天的消息
-                    if today not in date_text and "今天" not in date_text and "昨天" not in date_text:
-                        continue
+                # 如果仍然没有找到消息，尝试使用更宽松的选择器
+                all_rows = soup.select('table.main tr')
+                logger.info(f"织梦站点使用备用选择器找到 {len(all_rows)} 条消息")
                 
+            if not all_rows:
+                logger.error(f"织梦站点无法找到任何消息")
+                return []
+                
+            # 遍历找到的消息行，寻找包含电力关键词的消息
+            for row in all_rows[:5]:  # 只看前5条消息
                 # 如果是未读消息，标记为已读
                 if has_unread:
                     try:
@@ -1415,12 +1420,13 @@ class GroupChatZone(_PluginBase):
                 subject_cell = row.select_one('td:nth-child(2)')
                 if not subject_cell:
                     continue
-                
+                    
                 subject_text = subject_cell.get_text(strip=True)
+                logger.info(f"织梦站点消息标题: {subject_text}")
                 
-                # 检查是否包含电力相关的信息
+                # 电力奖励格式识别
                 if "电力" in subject_text:
-                    # 尝试提取电力变动
+                    # 尝试提取电力数量
                     power_match = re.search(r'(\d+).*?电力', subject_text)
                     amount = power_match.group(1) if power_match else "未知数量"
                     
@@ -1432,7 +1438,6 @@ class GroupChatZone(_PluginBase):
                         "is_negative": False
                     })
                     break
-                # 检查是否包含上传相关信息
                 elif "上传" in subject_text:
                     # 尝试提取上传量
                     upload_match = re.search(r'(\d+(?:\.\d+)?).*?(?:GB|MB|TB)', subject_text)
@@ -1461,6 +1466,47 @@ class GroupChatZone(_PluginBase):
                         "description": f"站内信: {subject_text[:100]}",
                         "is_negative": False
                     })
+                    break
+            
+            # 如果没有找到符合条件的消息，尝试打开邮箱页面读取最新消息详情
+            if not rewards:
+                try:
+                    # 尝试打开邮箱页面读取最新消息详情
+                    inbox_url = urljoin(site_url, "/messages.php?action=viewmailbox&box=1")
+                    inbox_response = session.get(inbox_url, timeout=(3.05, 10))
+                    inbox_soup = BeautifulSoup(inbox_response.text, 'html.parser')
+                    
+                    # 寻找最新的邮件
+                    messages = inbox_soup.select('tr')
+                    if messages:
+                        latest_message = messages[0]
+                        subject = latest_message.select_one('td:nth-child(2)')
+                        if subject:
+                            subject_text = subject.get_text(strip=True)
+                            logger.info(f"织梦站点收件箱消息标题: {subject_text}")
+                            
+                            if "电力" in subject_text:
+                                # 尝试提取电力数量
+                                power_match = re.search(r'(\d+).*?电力', subject_text)
+                                amount = power_match.group(1) if power_match else "未知数量"
+                                
+                                rewards.append({
+                                    "type": "电力",
+                                    "amount": amount,
+                                    "unit": "",
+                                    "description": f"收到电力奖励",
+                                    "is_negative": False
+                                })
+                            else:
+                                rewards.append({
+                                    "type": "raw_feedback",
+                                    "amount": 0,
+                                    "unit": "",
+                                    "description": f"织梦站点反馈: {subject_text}",
+                                    "is_negative": False
+                                })
+                except Exception as e:
+                    logger.error(f"获取织梦站点收件箱失败: {str(e)}")
             
             return rewards
         except Exception as e:
