@@ -31,7 +31,7 @@ class GroupChatZone(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/GroupChat.png"
     # 插件版本
-    plugin_version = "10.9.9"
+    plugin_version = "10.9.99"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -785,8 +785,7 @@ class GroupChatZone(_PluginBase):
         # 发送通知
         if self._notify:
             total_sites = len(selected_sites)
-            notification_text = "💬 站点喊话任务完成\n"
-            notification_text += "📢 站点喊话任务报告\n"
+            notification_text = "📢 站点喊话任务报告\n"
             notification_text += f"🌐 站点总数: {total_sites}\n"
             
             # 添加喊话基本信息
@@ -862,7 +861,7 @@ class GroupChatZone(_PluginBase):
 
             self.post_message(
                 mtype=NotificationType.SiteMessage,
-                title="💬 站点喊话任务完成",
+                title="📢 站点喊话任务报告",
                 text=notification_text
             )
 
@@ -1187,67 +1186,96 @@ class GroupChatZone(_PluginBase):
         site_name = site_info.get("name", "").strip()
         site_url = site_info.get("url", "").strip()
         
-        try:
-            # 获取喊话区内容
-            shoutbox_url = urljoin(site_url, "/shoutbox.php")
-            response = session.get(
-                shoutbox_url,
-                timeout=(3.05, 10)
-            )
-            response.raise_for_status()
-            
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # 获取用户名
-            username = self.get_username(session, site_info)
-            
-            # 查找包含用户名或ID的消息
-            shouts = soup.select('.shoutrow, .specialshoutrow')
-            
-            # 查找最新的反馈（最近几条消息）
-            for i in range(min(20, len(shouts))):
-                shout = shouts[i]
-                text = shout.get_text(strip=True)
+        # 最大重试次数
+        max_retries = 3
+        retry_count = 0
+        retry_interval = 2  # 重试间隔秒数
+        
+        while retry_count < max_retries:
+            try:
+                # 获取喊话区内容
+                shoutbox_url = urljoin(site_url, "/shoutbox.php")
+                response = session.get(
+                    shoutbox_url,
+                    timeout=(3.05, 10)
+                )
+                response.raise_for_status()
                 
-                # 检查是否包含用户名的@消息
-                if username and f"@{username}" in text:
-                    # 始终添加蛙总的回复，不管内容是什么
-                    clean_text = self._clean_shoutbox_text(text)
-                    rewards.append({
-                        "type": "raw_feedback",
-                        "amount": 0,
-                        "unit": "",
-                        "description": clean_text,
-                        "is_negative": False
-                    })
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # 青蛙站点的回复不使用@方式，直接查找最近的蛙总回复
+                shouts = soup.select('.shout, .specialshout, .shoutrow, .specialshoutrow')
+                
+                # 只检查最近的5条消息
+                for i in range(min(5, len(shouts))):
+                    shout = shouts[i]
+                    text = shout.get_text(strip=True)
+                    time_str = ""
                     
-                    # 如果包含"发了！"关键词，添加奖励信息
-                    if "发了！" in text:
-                        # 根据消息内容添加相应的奖励
-                        if '求上传' in message or '上传' in message:
-                            rewards.append({
-                                "type": "上传量",
-                                "amount": "10",
-                                "unit": "GB",
-                                "description": "青蛙站点求上传固定奖励",
-                                "is_negative": False
-                            })
-                        elif '求下载' in message or '下载' in message:
-                            rewards.append({
-                                "type": "下载量",
-                                "amount": "10",
-                                "unit": "GB",
-                                "description": "青蛙站点求下载固定奖励",
-                                "is_negative": False
-                            })
-                    break
-            
-            return rewards
-        except Exception as e:
-            logger.error(f"获取站点 {site_name} 的青蛙喊话区反馈失败: {str(e)}")
-            return []
-    
+                    # 提取发布时间
+                    time_match = re.search(r'发布于：(.+?)$', text)
+                    if time_match:
+                        time_str = time_match.group(1).strip()
+                        # 检查是否为最近1分钟内的消息
+                        if not ("< 1分钟前" in time_str or "刚刚" in time_str):
+                            continue
+                    
+                    # 蛙总的回复通常以"蛙总"开头或包含"蛙总"
+                    if "蛙总" in text and ("发了！" in text or "不要调戏蛙总" in text):
+                        clean_text = re.sub(r'发布于：.+$', '', text)
+                        content_match = re.match(r'^([^蛙总]+)', clean_text)
+                        clean_content = content_match.group(1).strip() if content_match else clean_text
+                        
+                        # 添加蛙总的回复
+                        rewards.append({
+                            "type": "raw_feedback",
+                            "amount": 0,
+                            "unit": "",
+                            "description": f"[{time_str}] {clean_content}",
+                            "is_negative": "不要调戏蛙总" in text
+                        })
+                        
+                        # 如果是"发了！"的回复，添加奖励信息
+                        if "发了！" in text:
+                            if '求上传' in message or '上传' in message:
+                                rewards.append({
+                                    "type": "上传量",
+                                    "amount": "10",
+                                    "unit": "GB",
+                                    "description": "青蛙站点求上传奖励",
+                                    "is_negative": False
+                                })
+                            elif '求下载' in message or '下载' in message:
+                                rewards.append({
+                                    "type": "下载量",
+                                    "amount": "10",
+                                    "unit": "GB",
+                                    "description": "青蛙站点求下载奖励",
+                                    "is_negative": False
+                                })
+                        return rewards
+                
+                # 如果没有找到反馈，且未达到最大重试次数，则重试
+                if not rewards and retry_count < max_retries - 1:
+                    retry_count += 1
+                    logger.info(f"未找到青蛙站点反馈，{retry_interval}秒后进行第{retry_count + 1}次重试...")
+                    time.sleep(retry_interval)
+                    continue
+                
+                # 如果所有重试都未找到反馈，返回空列表
+                return rewards
+                
+            except Exception as e:
+                logger.error(f"获取站点 {site_name} 的青蛙喊话区反馈失败: {str(e)}")
+                retry_count += 1
+                if retry_count < max_retries:
+                    time.sleep(retry_interval)
+                    continue
+                return []
+                
+        return []
+
     def get_elephant_message_feedback(self, session, site_info: CommentedMap) -> List[dict]:
         """
         获取象站的站内信反馈
@@ -1372,100 +1400,115 @@ class GroupChatZone(_PluginBase):
         site_name = site_info.get("name", "").strip()
         site_url = site_info.get("url", "").strip()
         
-        try:
-            # 获取站内信列表
-            message_url = urljoin(site_url, "/messages.php")
-            response = session.get(
-                message_url,
-                timeout=(3.05, 10)
-            )
-            response.raise_for_status()
-            
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # 先查找未读消息，如果没有再查找所有消息
-            all_rows = soup.select('tr:has(td > img[title="Unread"])')
-            has_unread = len(all_rows) > 0
-            
-            if not all_rows:
-                # 如果没有未读消息，获取最新的邮件
-                all_rows = soup.select('tr:has(td > img)')
-            
-            if not all_rows:
-                return []
-            
-            # 遍历找到的消息行，查看最新的消息
-            for row in all_rows[:3]:  # 只看前3条消息
-                # 如果是未读消息，标记为已读
-                if has_unread:
-                    try:
-                        # 获取标记为已读的链接
-                        read_link = row.select_one('a[href*="&action=read"]')
-                        if read_link:
-                            read_url = urljoin(site_url, read_link['href'])
-                            # 发送请求标记为已读
-                            mark_response = session.get(read_url, timeout=(3.05, 5))
-                            mark_response.raise_for_status()
-                            logger.info(f"已将站点 {site_name} 的未读消息标记为已读")
-                    except Exception as e:
-                        logger.error(f"标记站点 {site_name} 的消息为已读失败: {str(e)}")
+        # 最大重试次数
+        max_retries = 3
+        retry_count = 0
+        retry_interval = 2  # 重试间隔秒数
+        
+        while retry_count < max_retries:
+            try:
+                # 获取站内信列表
+                message_url = urljoin(site_url, "/messages.php")
+                response = session.get(
+                    message_url,
+                    timeout=(3.05, 10)
+                )
+                response.raise_for_status()
                 
-                # 获取消息主题
-                subject_cell = row.select_one('td:nth-child(2)')
-                if not subject_cell:
-                    continue
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # 先查找未读消息，如果没有再查找所有消息
+                all_rows = soup.select('tr:has(td > img[title="Unread"])')
+                has_unread = len(all_rows) > 0
+                
+                if not all_rows:
+                    # 如果没有未读消息，获取最新的邮件
+                    all_rows = soup.select('tr:has(td > img)')
+                
+                if not all_rows:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        time.sleep(retry_interval)
+                        continue
+                    return []
+                
+                # 遍历找到的消息行，查看最新的消息
+                for row in all_rows[:3]:  # 只看前3条消息
+                    # 获取消息时间
+                    time_cell = row.select_one('td:nth-child(5)')
+                    if time_cell:
+                        time_text = time_cell.get_text(strip=True)
+                        # 只处理1分钟内的消息
+                        if not ("< 1分钟前" in time_text or "刚刚" in time_text):
+                            continue
                     
-                subject_text = subject_cell.get_text(strip=True)
+                    # 如果是未读消息，标记为已读
+                    if has_unread:
+                        try:
+                            read_link = row.select_one('a[href*="&action=read"]')
+                            if read_link:
+                                read_url = urljoin(site_url, read_link['href'])
+                                mark_response = session.get(read_url, timeout=(3.05, 5))
+                                mark_response.raise_for_status()
+                                logger.info(f"已将站点 {site_name} 的未读消息标记为已读")
+                        except Exception as e:
+                            logger.error(f"标记站点 {site_name} 的消息为已读失败: {str(e)}")
+                    
+                    # 获取消息主题
+                    subject_cell = row.select_one('td:nth-child(2)')
+                    if not subject_cell:
+                        continue
+                        
+                    subject_text = subject_cell.get_text(strip=True)
+                    
+                    # 电力奖励格式识别
+                    if "电力" in subject_text:
+                        # 检查是否是发给当前用户的消息
+                        if self._is_message_for_current_user(row, session, site_info):
+                            # 尝试提取电力数量
+                            power_match = re.search(r'(-?\d+)电力', subject_text)
+                            if power_match:
+                                amount = power_match.group(1)
+                                is_negative = amount.startswith('-')
+                                
+                                rewards.append({
+                                    "type": "电力",
+                                    "amount": amount[1:] if is_negative else amount,
+                                    "unit": "点",
+                                    "description": f"{'扣除' if is_negative else '获得'}电力",
+                                    "is_negative": is_negative
+                                })
+                                return rewards
+                            else:
+                                # 如果无法提取数量但确认是电力相关消息
+                                rewards.append({
+                                    "type": "raw_feedback",
+                                    "amount": 0,
+                                    "unit": "",
+                                    "description": f"电力变动: {subject_text}",
+                                    "is_negative": '-' in subject_text
+                                })
+                                return rewards
                 
-                # 电力奖励格式识别
-                if "电力" in subject_text:
-                    # 检查是否是发给当前用户的消息，避免读取其他用户的消息
-                    if self._is_message_for_current_user(row, session, site_info):
-                        # 尝试提取电力数量
-                        power_match = re.search(r'(-?\d+)电力', subject_text)
-                        if power_match:
-                            amount = power_match.group(1)
-                            is_negative = amount.startswith('-')
-                            
-                            rewards.append({
-                                "type": "电力",
-                                "amount": amount[1:] if is_negative else amount,
-                                "unit": "点",
-                                "description": f"{'扣除' if is_negative else '获得'}电力",
-                                "is_negative": is_negative
-                            })
-                            break
-                        else:
-                            # 如果无法提取数量但确认是电力相关消息
-                            rewards.append({
-                                "type": "raw_feedback",
-                                "amount": 0,
-                                "unit": "",
-                                "description": f"电力变动: {subject_text}",
-                                "is_negative": '-' in subject_text
-                            })
-                            break
-            
-            # 如果没有找到符合条件的消息，返回空列表
-            if not rewards:
-                # 尝试查找包含用户名的消息
-                for row in all_rows[:5]:  # 扩大范围到5条
-                    subject_text = row.select_one('td:nth-child(2)').get_text(strip=True) if row.select_one('td:nth-child(2)') else ""
-                    if username in subject_text and "电力" in subject_text:
-                        rewards.append({
-                            "type": "raw_feedback",
-                            "amount": 0,
-                            "unit": "",
-                            "description": f"电力相关: {subject_text}",
-                            "is_negative": '-' in subject_text
-                        })
-                        break
-            
-            return rewards
-        except Exception as e:
-            logger.error(f"获取站点 {site_name} 的织梦站内信反馈失败: {str(e)}")
-            return []
+                # 如果没有找到反馈，且未达到最大重试次数，则重试
+                if not rewards and retry_count < max_retries - 1:
+                    retry_count += 1
+                    logger.info(f"未找到织梦站点反馈，{retry_interval}秒后进行第{retry_count + 1}次重试...")
+                    time.sleep(retry_interval)
+                    continue
+                
+                return rewards
+                
+            except Exception as e:
+                logger.error(f"获取站点 {site_name} 的织梦站内信反馈失败: {str(e)}")
+                retry_count += 1
+                if retry_count < max_retries:
+                    time.sleep(retry_interval)
+                    continue
+                return []
+        
+        return []
             
     def get_message_feedback(self, session, site_info: CommentedMap) -> List[dict]:
         """
