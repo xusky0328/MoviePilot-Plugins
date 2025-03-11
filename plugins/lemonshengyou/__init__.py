@@ -21,15 +21,15 @@ from app.plugins import _PluginBase
 from app.schemas.types import EventType, NotificationType
 from app.utils.timer import TimerUtils
 
-class LemonShenYou(_PluginBase):
+class lemonshengyou(_PluginBase):
     # 插件名称
-    plugin_name = "柠檬神游"
+    plugin_name = "柠檬站点神游"
     # 插件描述
     plugin_desc = "自动完成柠檬站点每日免费神游三清天，获取奖励。"
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/lemon.ico"
     # 插件版本
-    plugin_version = "0.9.0"
+    plugin_version = "0.9.1"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -484,8 +484,9 @@ class LemonShenYou(_PluginBase):
             
         try:
             # 1. 访问神游页面
-            shenyou_url = urljoin(site_url, "shenyou.php")
-            response = session.get(shenyou_url, timeout=(3.05, 10))
+            lottery_url = urljoin(site_url, "lottery.php")
+            logger.info(f"访问神游页面: {lottery_url}")
+            response = session.get(lottery_url, timeout=(3.05, 10))
             response.raise_for_status()
             
             # 使用BeautifulSoup解析页面
@@ -504,14 +505,16 @@ class LemonShenYou(_PluginBase):
             
             # 如果没有免费按钮,说明今天已经神游过了
             if not free_button:
+                logger.warning("未找到免费神游按钮，可能今天已经神游过了")
                 return False, "今天已经神游过或无法找到免费神游按钮", []
                 
             # 2. 执行神游 - 使用免费神游选项
+            logger.info("找到免费神游按钮，执行神游操作")
             shenyou_data = {
                 "type": "0"  # 0 表示免费神游
             }
             
-            response = session.post(shenyou_url, data=shenyou_data, timeout=(3.05, 10))
+            response = session.post(lottery_url, data=shenyou_data, timeout=(3.05, 10))
             response.raise_for_status()
             
             # 3. 解析结果
@@ -524,9 +527,11 @@ class LemonShenYou(_PluginBase):
                 result_msg = soup.find(['div', 'p'], text=lambda t: t and any(word in str(t) for word in ['神游成功', '获得奖励', '神游失败']))
             
             if not result_msg:
+                logger.warning("无法从页面中获取神游结果")
                 return False, "无法获取神游结果", []
                 
             result_text = result_msg.get_text(strip=True)
+            logger.info(f"神游结果: {result_text}")
             
             # 判断是否成功
             if any(keyword in result_text for keyword in ["成功", "获得", "奖励"]):
@@ -544,13 +549,17 @@ class LemonShenYou(_PluginBase):
                     # 如果没有找到具体奖励元素，直接使用结果文本
                     rewards = [result_text]
                     
+                logger.info(f"神游成功，奖励: {rewards}")
                 return True, None, rewards
             else:
+                logger.warning(f"神游未成功: {result_text}")
                 return False, result_text, []
                 
         except requests.exceptions.RequestException as e:
+            logger.error(f"请求失败: {str(e)}")
             return False, f"请求失败: {str(e)}", []
         except Exception as e:
+            logger.error(f"神游失败: {str(e)}")
             return False, f"神游失败: {str(e)}", []
         finally:
             session.close() 
