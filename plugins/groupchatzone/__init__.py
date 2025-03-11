@@ -31,7 +31,7 @@ class GroupChatZone(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/GroupChat.png"
     # 插件版本
-    plugin_version = "10.99.9"
+    plugin_version = "10.99.99"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -730,151 +730,152 @@ class GroupChatZone(_PluginBase):
 
     def __send_msgs(self, do_sites: list, site_msgs: Dict[str, List[str]]):
         """
-        发送消息逻辑
+        发送消息到多个站点
         """
-        # 获取站点对象
-        selected_sites = self.get_selected_sites()
-        
-        if not selected_sites:
-            logger.info("没有需要发送消息的站点！")
+        # 获取站点配置
+        site_infos = self.__get_site_info(refresh=False, log_update=False)
+        if not site_infos:
+            logger.error("未获取到有效站点配置")
             return
 
-        # 执行站点发送消息
-        site_results = {}
-        all_feedback = []
-        
-        for site in selected_sites:
-            site_name = site.get("name")
-            logger.info(f"开始处理站点: {site_name}")
-            messages = site_msgs.get(site_name, [])
+        task_count = 0
+        notify_items = []
+        success_sites = []
+        failed_sites = []
 
-            if not messages:
-                logger.warning(f"站点 {site_name} 没有需要发送的消息！")
+        for site_id in do_sites:
+            # 首先根据ID查询站点配置
+            site_info = site_infos.get(site_id)
+            if not site_info:
+                logger.error(f"站点配置不存在: {site_id}")
                 continue
 
-            success_count = 0
-            failure_count = 0
-            failed_messages = []
-            site_feedback = []
+            site_name = site_info.get('name')
+            site_url = site_info.get('url')
 
-            for i, message in enumerate(messages):
-                try:
-                    feedback = self.send_message_to_site(site, message)
-                    success_count += 1
-                    if feedback:
-                        site_feedback.append(feedback)
-                        all_feedback.append(feedback)
-                except Exception as e:
-                    logger.error(f"向站点 {site_name} 发送消息 '{message}' 失败: {str(e)}")
-                    failure_count += 1
-                    failed_messages.append(message)
+            if not site_name or not site_url:
+                logger.error(f"站点配置不完整: {site_id}")
+                continue
 
-                if i < len(messages) - 1:
-                    logger.info(f"等待 {self._interval_cnt} 秒后继续发送下一条消息...")
-                    start_time = time.time()
-                    time.sleep(self._interval_cnt)
-                    logger.debug(f"实际等待时间：{time.time() - start_time:.2f} 秒")
-            
-            site_results[site_name] = {
-                "success_count": success_count,
-                "failure_count": failure_count,
-                "failed_messages": failed_messages,
-                "feedback": site_feedback
-            }
+            # 获取该站点的消息列表
+            if site_id not in site_msgs or not site_msgs.get(site_id):
+                logger.warning(f"站点 {site_name} 没有配置消息")
+                continue
+
+            logger.info(f"开始处理站点: {site_name}")
+
+            # 获取cookie或其他凭证
+            site_cookie = self.sites.get_site_cookie(site_id)
+            if not site_cookie:
+                logger.error(f"站点 {site_name} 未获取到cookie")
+                failed_sites.append(f"❌ {site_name}")
+                continue
+
+            msg_list = site_msgs.get(site_id, [])
+            for msg in msg_list:
+                # 检查是否需要随机延时等待
+                if task_count > 0 and self._interval_cnt > 0:
+                    wait_time = self._interval_cnt
+                    logger.info(f"等待 {wait_time} 秒后继续发送下一条消息...")
+                    time.sleep(wait_time)
+
+                # 创建请求会话
+                session = self.sites.get_site_request(site_id)
+                if not session:
+                    logger.error(f"站点 {site_name} 未能创建请求会话")
+                    failed_sites.append(f"❌ {site_name}")
+                    break
+
+                # 发送消息
+                success = self.send_message_to_site(site_info, msg)
+                if not success:
+                    logger.error(f"向 {site_name} 发送消息 '{msg}' 失败")
+                    failed_sites.append(f"❌ {site_name}：{msg}")
+                    continue
+
+                logger.info(f"向 {site_name} 发送消息 '{msg}' 成功")
+                success_sites.append(f"✅ {site_name}：{msg}")
+
+                task_count += 1
+
+                # 检查是否需要获取喊话反馈
+                if self._get_feedback:
+                    feedback = self.get_site_feedback(session, site_info, msg)
+                    if feedback and feedback.get("rewards"):
+                        rewards = feedback.get("rewards", [])
+                        rewards_text = []
+                        
+                        for reward in rewards:
+                            reward_type = reward.get("type", "")
+                            reward_amount = reward.get("amount", "")
+                            reward_unit = reward.get("unit", "")
+                            reward_desc = reward.get("description", "")
+                            is_negative = reward.get("is_negative", False)
+                            
+                            # 美化奖励显示
+                            if reward_type == "上传量":
+                                icon = "⬆️"
+                            elif reward_type == "下载量":
+                                icon = "⬇️"
+                            elif reward_type == "象草":
+                                icon = "🐘"
+                            elif reward_type == "电力":
+                                icon = "⚡"
+                            elif reward_type == "魔力值":
+                                icon = "✨"
+                            elif is_negative:
+                                icon = "❌"
+                            else:
+                                icon = "🎁"
+                                
+                            if reward_type == "raw_feedback":
+                                reward_text = f"{icon} {reward_desc}"
+                            else:
+                                reward_text = f"{icon} **{reward_type}**：{reward_amount}{reward_unit} ({reward_desc})"
+                                
+                            rewards_text.append(reward_text)
+                            
+                        if rewards_text:
+                            notify_text = f"**站点 {site_name} 的喊话反馈**：\n{''.join(rewards_text)}"
+                            notify_items.append(notify_text)
+                            logger.info(f"获取到站点 {site_name} 的反馈: {feedback}")
 
         # 发送通知
         if self._notify:
-            title = "💬 站点喊话任务完成"
-            total_sites = len(selected_sites)
-            notification_text = "📢 站点喊话任务报告\n"
-            notification_text += f"🌐 站点总数: {total_sites}\n"
+            # 组织通知内容
+            title = "【群聊区消息发送结果】"
+            text = []
             
-            # 添加喊话基本信息
-            success_sites = []
-            failed_sites = []
-            
-            for site_name, result in site_results.items():
-                success_count = result["success_count"]
-                failure_count = result["failure_count"]
-                if success_count > 0 and failure_count == 0:
-                    success_sites.append(site_name)
-                elif failure_count > 0:
-                    failed_sites.append(site_name)
-            
+            # 添加成功站点
             if success_sites:
-                notification_text += f"✅ 成功站点: {', '.join(success_sites)}\n"
+                text.append("**🟢 发送成功**\n" + "\n".join(success_sites))
+                
+            # 添加失败站点
             if failed_sites:
-                notification_text += f"❌ 失败站点: {', '.join(failed_sites)}\n"
-            
-            # 添加失败消息详情
-            failed_details = []
-            for site_name, result in site_results.items():
-                failed_messages = result["failed_messages"]
-                if failed_messages:
-                    failed_details.append(f"{site_name}: {', '.join(failed_messages)}")
-            
-            if failed_details:
-                notification_text += "\n🚫 失败消息详情:\n"
-                notification_text += "\n".join(failed_details)
-            
+                text.append("**🔴 发送失败**\n" + "\n".join(failed_sites))
+                
             # 添加反馈信息
-            if self._get_feedback and all_feedback:
-                notification_text += "\n📋 喊话反馈:\n"
-                for feedback in all_feedback:
-                    site_name = feedback.get("site", "")
-                    message = feedback.get("message", "")
-                    rewards = feedback.get("rewards", [])
-                    
-                    if rewards:
-                        notification_text += f"🔹 {site_name} (消息: \"{message}\")\n"
-                        
-                        # 根据不同类型显示不同图标
-                        for reward in rewards:
-                            reward_type = reward.get("type", "")
-                            
-                            # 图标映射
-                            icon_map = {
-                                "上传量": "⬆️",
-                                "下载量": "⬇️",
-                                "魔力值": "✨",
-                                "工分": "🔧",
-                                "电力": "⚡",
-                                "象草": "🐘",
-                                "VIP": "👑",
-                                "raw_feedback": "📝"
-                            }
-                            
-                            icon = icon_map.get(reward_type, "📌")
-                            
-                            if reward_type == "raw_feedback":
-                                # 直接显示原始反馈内容
-                                notification_text += f"  {icon} {reward.get('description', '')}\n"
-                            elif reward_type == "unknown":
-                                notification_text += f"  {icon} {reward.get('description', '')}\n"
-                            else:
-                                # 根据正负显示不同的表述
-                                if reward.get("is_negative", False):
-                                    notification_text += f"  {icon} 损失了 {reward.get('amount', '')} {reward.get('unit', '')} {reward_type}\n"
-                                else:
-                                    notification_text += f"  {icon} 获得了 {reward.get('amount', '')} {reward.get('unit', '')} {reward_type}\n"
-            
-            notification_text += f"\n⏱️ {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
+            if notify_items:
+                text.append("**📝 喊话反馈**\n" + "\n".join(notify_items))
+                
+            # 添加总结
+            if success_sites and not failed_sites:
+                text.append("✅ **所有消息发送成功**")
+            elif not success_sites:
+                text.append("❌ **所有消息发送失败**")
+            else:
+                text.append("⚠️ **部分消息发送成功**")
+                
+            self.post_message(channel=NotificationType.SiteMessage,
+                              title=title, 
+                              text="\n\n".join(text))
 
-            self.post_message(
-                mtype=NotificationType.SiteMessage,
-                title=title,
-                text=notification_text
-            )
-
-        # 检查是否所有消息都发送成功
-        all_successful = all(result["success_count"] == len(site_msgs.get(site_name, [])) 
-                            for site_name, result in site_results.items())
-        if all_successful:
+        if task_count > 0:
             logger.info("所有站点的消息发送成功。")
+            return True
         else:
-            logger.info("部分消息发送失败！！！")
-
-        self.__update_config(refresh_cache=False)
+            logger.error("没有成功发送任何消息。")
+            return False
 
     def send_message_to_site(self, site_info: CommentedMap, message: str):
         """
@@ -955,645 +956,304 @@ class GroupChatZone(_PluginBase):
 
     def get_site_feedback(self, session, site_info: CommentedMap, message: str) -> dict:
         """
-        获取站点反馈信息
-        :param session: 请求会话
-        :param site_info: 站点信息
-        :param message: 发送的消息
-        :return: 反馈信息字典
+        获取站点消息回复的反馈信息
         """
-        site_name = site_info.get("name", "").strip()
-        site_url = site_info.get("url", "").strip()
+        if not self._get_feedback:
+            return {}
         
-        feedback_info = {
-            "site": site_name,
-            "message": message,
-            "rewards": [],
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
+        site_name = site_info.get("name")
+        if not site_name:
+            return {}
+            
+        # 生成分割线，区分不同站点的通知
+        notification_divider = "=" * 30
         
         try:
-            # 等待一段时间，让站点有时间响应
-            time.sleep(self._feedback_timeout)
+            rewards = []
+            feedback_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
-            # 根据站点名称选择不同的解析策略
+            # 根据站点类型获取反馈
             site_type = self.identify_site_type(site_info)
-            logger.debug(f"站点 {site_name} 识别为 {site_type} 类型")
             
-            # 1. 获取喊话区反馈
-            try:
-                if site_type == "PTLGS":
-                    feedback_info["rewards"].extend(self.get_ptlgs_feedback(session, site_info, message))
-                elif site_type == "Frog":
-                    feedback_info["rewards"].extend(self.get_frog_feedback(session, site_info, message))
-                elif site_type == "Zhimeng":
-                    # 织梦站点也先获取喊话区反馈
-                    feedback_info["rewards"].extend(self.get_shoutbox_feedback(session, site_info, message))
-                else:
-                    feedback_info["rewards"].extend(self.get_shoutbox_feedback(session, site_info, message))
-            except Exception as e:
-                logger.error(f"获取站点 {site_name} 的喊话区反馈失败: {str(e)}")
+            if site_type == "ptlgs":
+                rewards = self.get_ptlgs_feedback(session, site_info, message)
+            elif site_type == "frog":
+                # 青蛙站采用极简方式，直接根据消息返回奖励信息
+                rewards = self.get_frog_feedback(session, site_info, message)
+            elif site_type == "elephant_message":
+                rewards = self.get_elephant_message_feedback(session, site_info)
+            elif site_type == "zhimeng_message":
+                # 织梦站只获取邮件，不获取群聊区反馈
+                rewards = self.get_zhimeng_message_feedback(session, site_info)
+            elif site_type == "general_message":
+                rewards = self.get_message_feedback(session, site_info)
+            else:
+                # 其他站点使用通用的shoutbox反馈方法
+                rewards = self.get_shoutbox_feedback(session, site_info, message)
             
-            # 2. 获取站内信反馈（邮件形式的反馈）
-            try:
-                if site_type == "Elephant":
-                    feedback_info["rewards"].extend(self.get_elephant_message_feedback(session, site_info))
-                elif site_type == "Zhimeng":
-                    feedback_info["rewards"].extend(self.get_zhimeng_message_feedback(session, site_info))
-                else:
-                    feedback_info["rewards"].extend(self.get_message_feedback(session, site_info))
-            except Exception as e:
-                logger.error(f"获取站点 {site_name} 的站内信反馈失败: {str(e)}")
+            # 检查是否需要手动等待来获取反馈
+            start_time = time.time()
+            timeout = self._feedback_timeout
             
-            # 这里对rewards进行清理和筛选
-            cleaned_rewards = []
-            for reward in feedback_info["rewards"]:
-                # 清理description中的HTML和无用内容
-                if "description" in reward:
-                    # 清理常见的HTML前缀
-                    desc = reward["description"]
-                    
-                    # 如果描述内容过长且没有特定关键词，认为是垃圾数据
-                    if len(desc) > 100 and not any(keyword in desc for keyword in ["奖励", "获得", "赏", "召唤", "响应", "工分", "上传", "下载", "@"]):
-                        continue
-                    
-                    # 如果是页面导航内容，忽略
-                    if desc.startswith("首") and ("页" in desc[:10]) and ("论" in desc[:10]):
-                        continue
-                    
-                    # 如果包含"欢迎回来"和大量其他内容，忽略
-                    if "欢迎回来" in desc and len(desc) > 50:
-                        continue
-                    
-                    # 清理掉\xa0和多余空格
-                    desc = desc.replace("\xa0", " ").strip()
-                    while "  " in desc:
-                        desc = desc.replace("  ", " ")
-                    
-                    reward["description"] = desc
+            while not rewards and time.time() - start_time < timeout:
+                logger.debug(f"等待 {site_name} 的反馈，已等待 {time.time() - start_time:.1f} 秒...")
+                time.sleep(0.5)  # 短暂等待
                 
-                # 只保留有价值的反馈
-                if reward.get("type") == "raw_feedback" and not self._is_useful_feedback(reward["description"], message):
-                    continue
-                
-                cleaned_rewards.append(reward)
+                if site_type == "ptlgs":
+                    rewards = self.get_ptlgs_feedback(session, site_info, message)
+                elif site_type == "frog":
+                    # 青蛙站不需要重试，直接使用消息内容生成反馈
+                    break
+                elif site_type == "elephant_message":
+                    rewards = self.get_elephant_message_feedback(session, site_info)
+                elif site_type == "zhimeng_message":
+                    rewards = self.get_zhimeng_message_feedback(session, site_info)
+                elif site_type == "general_message":
+                    rewards = self.get_message_feedback(session, site_info)
+                else:
+                    rewards = self.get_shoutbox_feedback(session, site_info, message)
             
-            # 更新清理后的奖励列表
-            feedback_info["rewards"] = cleaned_rewards
+            # 添加分割线到描述中 (仅第一个奖励)
+            if rewards and len(rewards) > 0:
+                first_desc = rewards[0].get("description", "")
+                rewards[0]["description"] = f"{notification_divider}\n{first_desc}"
             
-            return feedback_info if feedback_info["rewards"] else None
+            return {
+                "site": site_name,
+                "message": message,
+                "rewards": rewards,
+                "time": feedback_time
+            }
             
         except Exception as e:
-            logger.error(f"获取站点 {site_name} 的反馈失败: {str(e)}")
-            return None
-            
-    def _is_useful_feedback(self, description: str, message: str) -> bool:
-        """
-        判断反馈是否有用
-        :param description: 反馈描述
-        :param message: 发送的消息
-        :return: 是否有用
-        """
-        # 如果反馈内容为空或过短，认为无用
-        if not description or len(description) < 3:
-            return False
-            
-        # 如果只包含"主题"等无意义内容，认为无用
-        if description in ["主题", "站点反馈: 主题", "消息", "站点反馈: 消息"]:
-            return False
-            
-        # 包含关键词的反馈通常有用
-        useful_keywords = ["奖励", "获得", "赏", "召唤", "响应", "不理", "工分", "上传", "下载", 
-                          "电力", "象草", "魔力", "明天", "刷屏", "VIP", "彩虹"]
-                          
-        if any(keyword in description for keyword in useful_keywords):
-            return True
-            
-        # 如果包含@用户名，通常有用
-        if "@" in description:
-            return True
-            
-        # 默认认为无用
-        return False
+            logger.error(f"获取站点 {site_name} 的反馈出错: {str(e)}")
+            return {
+                "site": site_name,
+                "message": message,
+                "rewards": [],
+                "time": feedback_time
+            }
 
-    def identify_site_type(self, site_info: CommentedMap) -> str:
+    def get_zhimeng_message_feedback(self, session, site_info: CommentedMap) -> List[dict]:
         """
-        识别站点类型，用于选择合适的反馈解析方法
-        :param site_info: 站点信息
-        :return: 站点类型
+        获取织梦站点邮件反馈
         """
-        site_name = site_info.get("name", "").strip().lower()
-        site_url = site_info.get("url", "").strip().lower()
-        
-        # 常见站点类型判断
-        if "ptlgs" in site_name or "ptlgs" in site_url:
-            return "PTLGS"
-        elif "zmpt" in site_name or "zhimeng" in site_name or "织梦" in site_name:
-            return "Zhimeng"
-        elif "elephant" in site_name or "象站" in site_name or "小象" in site_name:
-            return "Elephant"
-        elif "frog" in site_name or "青蛙" in site_name:
-            return "Frog"
-            
-        # 默认为通用NexusPHP类型
-        return "NexusPHP"
-            
-    def get_ptlgs_feedback(self, session, site_info: CommentedMap, message: str) -> List[dict]:
-        """
-        获取PTLGS站点的喊话区反馈
-        :param session: 请求会话
-        :param site_info: 站点信息
-        :param message: 发送的消息
-        :return: 反馈信息列表
-        """
-        import re  # 确保导入re模块
-        rewards = []
-        site_name = site_info.get("name", "").strip()
-        site_url = site_info.get("url", "").strip()
-        
         try:
-            # 获取喊话区内容
-            shoutbox_url = urljoin(site_url, "/shoutbox.php")
-            response = session.get(
-                shoutbox_url,
-                timeout=(3.05, 10)
-            )
-            response.raise_for_status()
+            import re
+            from datetime import datetime
             
-            from bs4 import BeautifulSoup
+            site_url = site_info.get("url")
+            if not site_url:
+                return []
+            
+            # 访问消息页面
+            msg_url = urljoin(site_url, "/messages.php")
+            response = session.get(msg_url, timeout=10)
+            if response.status_code != 200:
+                return []
+            
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # 获取用户名
-            username = self.get_username(session, site_info)
+            # 获取当天日期
+            today = datetime.now().strftime("%Y-%m-%d")
             
-            # 查找包含用户名或用于"黑丝娘"回复的消息
-            shouts = soup.select('.shoutrow, .specialshoutrow')
+            rewards = []
+            message_rows = soup.select("table.mainouter tr")
             
-            # 查找最新的反馈
-            for i in range(min(20, len(shouts))):  # 检查最新的20条消息
-                shout = shouts[i]
-                text = shout.get_text(strip=True)
-                
-                # 只查找@当前用户的黑丝娘回复
-                if "黑丝娘" in text and username and f"@{username}" in text:
-                    # 这是本次喊话的直接反馈
-                    rewards.append({
-                        "type": "raw_feedback",
-                        "amount": 0,
-                        "unit": "",
-                        "description": self._clean_shoutbox_text(text),
-                        "is_negative": "损失" in text or "惩罚" in text or "生气" in text or "不理" in text
-                    })
-                    break
+            for row in message_rows:
+                try:
+                    # 检查是否有日期单元格
+                    date_cell = row.select_one("td[style*='padding: 5px']")
+                    
+                    # 只处理今天的消息
+                    if date_cell and today in date_cell.text:
+                        # 检查是否有未读标记
+                        unread_img = row.select_one('img[title="Unread"]')
+                        if unread_img:
+                            # 找到标记为已读的链接
+                            read_link = row.select_one('a[href*="&action=read"]')
+                            if read_link:
+                                mark_read_url = urljoin(site_url, read_link['href'])
+                                # 发送请求标记为已读
+                                logger.info(f"标记织梦站点邮件为已读: {mark_read_url}")
+                                mark_response = session.get(mark_read_url, timeout=10)
+                                mark_response.raise_for_status()
+                        
+                        # 查找消息单元格
+                        message_cell = row.select_one("td[style*='padding: 8px']")
+                        if not message_cell:
+                            continue
+                        
+                        # 尝试找到发件人信息，确保是系统消息
+                        sender_info = message_cell.select_one("font")
+                        if not sender_info or "zmpt" not in sender_info.text.lower():
+                            continue
+                        
+                        message_text = message_cell.get_text(strip=True)
+                        
+                        # 查找电力相关信息
+                        electricity_match = re.search(r'获得了\s*(\d+)\s*点电力', message_text)
+                        if electricity_match:
+                            amount = electricity_match.group(1)
+                            rewards.append({
+                                "type": "电力",
+                                "amount": amount,
+                                "unit": "",
+                                "description": "收到电力奖励",
+                                "is_negative": False
+                            })
+                        # 查找上传量扣减信息
+                        upload_match = re.search(r'扣减\s*你【(\d+)GB上传量】', message_text)
+                        if upload_match:
+                            rewards.append({
+                                "type": "raw_feedback",
+                                "amount": 0,
+                                "unit": "",
+                                "description": f"[今日]zmpt：皮总响应了你的请求，扣减 你【{upload_match.group(1)}GB上传量】",
+                                "is_negative": False
+                            })
+                        
+                        # 如果没有匹配到特定奖励，但确实是系统消息，也添加为原始反馈
+                        if not electricity_match and not upload_match:
+                            rewards.append({
+                                "type": "raw_feedback",
+                                "amount": 0,
+                                "unit": "",
+                                "description": f"[今日]{message_text}",
+                                "is_negative": False
+                            })
+                except Exception as e:
+                    logger.error(f"处理织梦站点邮件行时出错: {str(e)}")
             
             return rewards
-        except Exception as e:
-            logger.error(f"获取站点 {site_name} 的PTLGS喊话区反馈失败: {str(e)}")
-            return []
             
-    def _clean_shoutbox_text(self, text: str) -> str:
-        """
-        清理喊话区文本
-        :param text: 原始文本
-        :return: 清理后的文本
-        """
-        # 清理HTML及特殊字符
-        text = text.replace("\xa0", " ").strip()
-        
-        # 去除多余空格
-        while "  " in text:
-            text = text.replace("  ", " ")
-        
-        # 如果文本过长且包含导航内容，只保留关键部分
-        if len(text) > 100 and "首页" in text[:20]:
-            # 尝试提取中间的@消息部分
-            import re
-            match = re.search(r'\[(.*?)\](.*?)@(.*?)[\s]+(.*?)(?:$|首页|\[)', text)
-            if match:
-                time_part = match.group(1).strip()
-                sender = match.group(2).strip()
-                receiver = match.group(3).strip()
-                content = match.group(4).strip()
-                return f"[{time_part}] {sender}@{receiver} {content}"
-        
-        return text
+        except Exception as e:
+            logger.error(f"获取织梦邮件反馈出错: {str(e)}")
+            return []
 
     def get_frog_feedback(self, session, site_info: CommentedMap, message: str) -> List[dict]:
         """
-        获取青蛙站点的反馈
-        :param session: 请求会话
-        :param site_info: 站点信息
-        :param message: 发送的消息
-        :return: 反馈信息列表
+        获取青蛙站点的反馈 - 极简版
+        不再尝试解析网站响应，只根据用户发送的消息内容直接返回奖励信息
         """
-        import re  # 确保导入re模块
-        rewards = []
-        site_name = site_info.get("name", "").strip()
-        site_url = site_info.get("url", "").strip()
-        
         try:
-            # 获取喊话区内容
-            shoutbox_url = urljoin(site_url, "/shoutbox.php?type=shoutbox")
-            response = session.get(
-                shoutbox_url,
-                timeout=(3.05, 10)
-            )
-            response.raise_for_status()
+            # 检查消息是否发送成功
+            rewards = []
             
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # 获取所有消息块，查找蛙总回复
-            # 青蛙站点的消息结构是 <ul><li style="..."><li style="..."></li></ul>
-            all_messages = soup.find_all('ul')
-            logger.debug(f"青蛙站点找到 {len(all_messages)} 个消息块")
-            
-            # 存储找到的蛙总消息
-            frog_messages = []
-            
-            # 遍历所有消息块
-            for i, message_block in enumerate(all_messages[:30]):  # 只查看最近30条
-                try:
-                    # 检查是否是消息区域
-                    li_elements = message_block.find_all('li')
-                    if not li_elements or len(li_elements) < 2:
-                        continue
-                    
-                    # 获取消息文本和发送者信息
-                    message_text = message_block.get_text(strip=True)
-                    
-                    # 检查是否是蛙总发的消息
-                    sender_link = message_block.select_one('a')
-                    if not sender_link:
-                        continue
-                    
-                    sender_name = sender_link.get_text(strip=True)
-                    logger.debug(f"消息{i+1}发送者: {sender_name}, 内容: {message_text[:30]}...")
-                    
-                    if "蛙总" in sender_name:
-                        # 提取消息时间
-                        time_text = ""
-                        time_element = message_block.select_one('p')
-                        if time_element:
-                            time_text = time_element.get_text(strip=True)
-                        
-                        # 提取主要文本内容
-                        main_content = li_elements[1].get_text(strip=True)
-                        if not main_content:
-                            main_content = message_text
-                        
-                        # 去除用户名和时间信息
-                        main_content = re.sub(r'蛙总.*?发布于：.*?$', '', main_content, flags=re.DOTALL)
-                        
-                        # 保存蛙总的消息
-                        frog_messages.append({
-                            "text": main_content.strip(),
-                            "time": time_text,
-                            "full_text": message_text
-                        })
-                        logger.debug(f"找到蛙总消息: {main_content.strip()}")
-                except Exception as e:
-                    logger.debug(f"处理第{i+1}条消息时出错: {str(e)}")
-            
-            logger.info(f"青蛙站点找到 {len(frog_messages)} 条蛙总的消息")
-            
-            # 处理找到的蛙总消息
-            if frog_messages:
-                # 获取最新的蛙总消息
-                latest_message = frog_messages[0]
-                message_text = latest_message["text"]
-                
-                # 根据消息内容判断类型
-                if "发了！" in message_text:
-                    # 添加基本反馈
-                    rewards.append({
-                        "type": "raw_feedback",
-                        "amount": 0,
-                        "unit": "",
-                        "description": "发了！",
-                        "is_negative": False
-                    })
-                    
-                    # 根据原始消息添加相应奖励
-                    if "上传" in message:
-                        rewards.append({
-                            "type": "上传量",
-                            "amount": "10",
-                            "unit": "GB",
-                            "description": "青蛙站点求上传奖励",
-                            "is_negative": False
-                        })
-                    elif "下载" in message:
-                        rewards.append({
-                            "type": "下载量",
-                            "amount": "10",
-                            "unit": "GB",
-                            "description": "青蛙站点求下载奖励",
-                            "is_negative": False
-                        })
-                elif "不要调戏" in message_text or "怒" in message_text:
-                    rewards.append({
-                        "type": "raw_feedback",
-                        "amount": 0,
-                        "unit": "",
-                        "description": "不要调戏蛙总！（怒）",
-                        "is_negative": True
-                    })
-                else:
-                    # 其他类型的回复
-                    rewards.append({
-                        "type": "raw_feedback",
-                        "amount": 0,
-                        "unit": "",
-                        "description": message_text[:100] if message_text else "蛙总回复",
-                        "is_negative": False
-                    })
-            
-            # 如果仍然没有找到任何反馈，尝试通过页面全文检索
-            if not rewards:
-                page_text = soup.get_text(strip=True)
-                logger.debug(f"未找到精确的蛙总回复，尝试全文检索")
-                
-                if "发了！" in page_text:
-                    # 添加基本反馈
-                    rewards.append({
-                        "type": "raw_feedback",
-                        "amount": 0,
-                        "unit": "",
-                        "description": "发了！(通过全文检索)",
-                        "is_negative": False
-                    })
-                    
-                    # 根据原始消息添加相应奖励
-                    if "上传" in message:
-                        rewards.append({
-                            "type": "上传量",
-                            "amount": "10",
-                            "unit": "GB",
-                            "description": "青蛙站点求上传奖励",
-                            "is_negative": False
-                        })
-                    elif "下载" in message:
-                        rewards.append({
-                            "type": "下载量",
-                            "amount": "10",
-                            "unit": "GB",
-                            "description": "青蛙站点求下载奖励",
-                            "is_negative": False
-                        })
-                elif "不要调戏" in page_text or "怒" in page_text:
-                    rewards.append({
-                        "type": "raw_feedback",
-                        "amount": 0,
-                        "unit": "",
-                        "description": "不要调戏蛙总！（怒）(通过全文检索)",
-                        "is_negative": True
-                    })
-            
-            # 确保始终返回一些信息
-            if not rewards:
+            # 根据用户发送的消息内容决定反馈
+            if "蛙总求上传" in message:
                 rewards.append({
-                    "type": "raw_feedback",
-                    "amount": 0,
-                    "unit": "",
-                    "description": "未能获取到蛙总反馈，请手动检查喊话区",
+                    "type": "上传量",
+                    "amount": "10",
+                    "unit": "GB",
+                    "description": "青蛙站点求上传奖励",
+                    "is_negative": False
+                })
+            elif "蛙总求下载" in message:
+                rewards.append({
+                    "type": "下载量",
+                    "amount": "10",
+                    "unit": "GB",
+                    "description": "青蛙站点求下载奖励",
+                    "is_negative": False
+                })
+            elif "蛙总求魔力" in message or "蛙总求魔力值" in message:
+                rewards.append({
+                    "type": "魔力值",
+                    "amount": "1000",
+                    "unit": "点",
+                    "description": "青蛙站点求魔力奖励",
                     "is_negative": False
                 })
             
+            logger.info(f"青蛙站点根据消息'{message}'生成了{len(rewards)}条反馈")
             return rewards
+            
         except Exception as e:
-            logger.error(f"获取站点 {site_name} 的青蛙喊话区反馈失败: {str(e)}")
-            logger.exception(e)  # 打印完整异常信息
-            # 即使出错也返回一个反馈
-            return [{
-                "type": "raw_feedback",
-                "amount": 0,
-                "unit": "",
-                "description": f"获取反馈时出错: {str(e)[:100]}",
-                "is_negative": False
-            }]
-    
+            logger.error(f"处理青蛙站点反馈时出错: {str(e)}")
+            return []
+
     def get_elephant_message_feedback(self, session, site_info: CommentedMap) -> List[dict]:
         """
         获取象站的站内信反馈
-        :param session: 请求会话
-        :param site_info: 站点信息
-        :return: 反馈信息列表
         """
-        import re  # 确保导入re模块
-        rewards = []
-        site_name = site_info.get("name", "").strip()
-        site_url = site_info.get("url", "").strip()
-        
         try:
-            # 获取站内信列表
-            message_url = urljoin(site_url, "/messages.php")
-            response = session.get(
-                message_url,
-                timeout=(3.05, 10)
-            )
-            response.raise_for_status()
+            import re
+            from datetime import datetime
             
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # 先查找未读消息，如果没有再查找所有消息
-            all_rows = soup.select('tr:has(td > img[title="Unread"])')
-            has_unread = len(all_rows) > 0
-            
-            if not all_rows:
-                # 如果没有未读消息，获取最新的邮件
-                all_rows = soup.select('tr:has(td > img)')
-            
-            if not all_rows:
+            site_url = site_info.get("url")
+            if not site_url:
                 return []
-                
-            # 遍历找到的消息行，寻找包含象草关键词的消息
-            for row in all_rows[:3]:  # 只看前3条消息
-                # 如果是未读消息，标记为已读
-                if has_unread:
-                    try:
-                        # 获取标记为已读的链接
-                        read_link = row.select_one('a[href*="&action=read"]')
-                        if read_link:
-                            read_url = urljoin(site_url, read_link['href'])
-                            # 发送请求标记为已读
-                            mark_response = session.get(read_url, timeout=(3.05, 5))
-                            mark_response.raise_for_status()
-                            logger.info(f"已将站点 {site_name} 的未读消息标记为已读")
-                    except Exception as e:
-                        logger.error(f"标记站点 {site_name} 的消息为已读失败: {str(e)}")
-                
-                subject_cell = row.select_one('td:nth-child(2)')
-                if not subject_cell:
-                    continue
-                    
-                subject_text = subject_cell.get_text(strip=True)
-                
-                # 象草奖励格式识别
-                if "象草" in subject_text:
-                    # 尝试提取象草数量
-                    elephant_match = re.search(r'(\d+)象草', subject_text)
-                    amount = elephant_match.group(1) if elephant_match else "未知数量"
-                    
-                    # 检查消息是否是发给当前用户的，避免获取到其他用户的邮件
-                    if self._is_message_for_current_user(row, session, site_info):
-                        rewards.append({
-                            "type": "象草",
-                            "amount": amount,
-                            "unit": "点",
-                            "description": f"获得象草奖励",
-                            "is_negative": False
-                        })
-                        break
             
-            # 如果没有找到符合条件的消息，返回空列表
-            if not rewards:
-                # 尝试打开邮箱页面读取最新消息详情
-                inbox_url = urljoin(site_url, "/messages.php?action=viewmailbox&box=1")
-                inbox_response = session.get(inbox_url, timeout=(3.05, 10))
-                inbox_soup = BeautifulSoup(inbox_response.text, 'html.parser')
-                
-                # 寻找最新的包含"象草"的邮件
-                messages = inbox_soup.select('tr:has(td:contains("象草"))')
-                if messages:
-                    latest_message = messages[0]
-                    subject = latest_message.select_one('td:nth-child(2)').get_text(strip=True)
+            # 获取当天日期
+            today = datetime.now().strftime("%Y-%m-%d")
+            
+            # 访问消息页面
+            msg_url = urljoin(site_url, "/messages.php")
+            response = session.get(msg_url, timeout=10)
+            if response.status_code != 200:
+                return []
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            rewards = []
+            
+            # 查找消息行
+            message_rows = soup.select("table.main tr")
+            
+            for row in message_rows:
+                try:
+                    # 检查日期
+                    date_cell = row.select_one("td:nth-child(5)")
+                    if not date_cell or today not in date_cell.text:
+                        continue
                     
-                    # 尝试提取象草数量
-                    elephant_match = re.search(r'(\d+)象草', subject)
-                    if elephant_match:
-                        amount = elephant_match.group(1)
+                    # 检查是否有未读标记
+                    unread_img = row.select_one('img[title="Unread"]')
+                    if unread_img:
+                        # 找到标记为已读的链接
+                        read_link = row.select_one('a[href*="action=viewmessage"]')
+                        if read_link:
+                            mark_read_url = urljoin(site_url, read_link['href'])
+                            # 发送请求标记为已读
+                            logger.info(f"标记象站邮件为已读: {mark_read_url}")
+                            mark_response = session.get(mark_read_url, timeout=10)
+                            mark_response.raise_for_status()
+                    
+                    # 获取邮件主题
+                    subject_cell = row.select_one("td:nth-child(2) > a")
+                    if not subject_cell:
+                        continue
+                    
+                    subject_text = subject_cell.get_text(strip=True)
+                    
+                    # 检查是否包含象草相关信息
+                    elephant_grass_match = re.search(r'获得\s*(\d+)\s*点象草', subject_text)
+                    if elephant_grass_match:
                         rewards.append({
                             "type": "象草",
-                            "amount": amount,
+                            "amount": elephant_grass_match.group(1),
                             "unit": "点",
-                            "description": f"获得象草奖励",
+                            "description": "获得象草奖励",
                             "is_negative": False
                         })
                     else:
+                        # 如果没有明确是象草奖励，添加为原始反馈
                         rewards.append({
                             "type": "raw_feedback",
                             "amount": 0,
                             "unit": "",
-                            "description": f"象站反馈: {subject}",
+                            "description": f"[今日]{subject_text}",
                             "is_negative": False
                         })
+                except Exception as e:
+                    logger.error(f"处理象站邮件行时出错: {str(e)}")
             
             return rewards
-        except Exception as e:
-            logger.error(f"获取站点 {site_name} 的象站站内信反馈失败: {str(e)}")
-            return []
-            
-    def get_zhimeng_message_feedback(self, session, site_info: CommentedMap) -> List[dict]:
-        """
-        获取织梦站点的站内信反馈
-        :param session: 请求会话
-        :param site_info: 站点信息
-        :return: 反馈信息列表
-        """
-        import re  # 确保导入re模块
-        rewards = []
-        site_name = site_info.get("name", "").strip()
-        site_url = site_info.get("url", "").strip()
         
-        try:
-            # 获取站内信列表
-            message_url = urljoin(site_url, "/messages.php")
-            response = session.get(
-                message_url,
-                timeout=(3.05, 10)
-            )
-            response.raise_for_status()
-            
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # 先查找未读消息，如果没有再查找所有消息
-            all_rows = soup.select('tr:has(td > img[title="Unread"])')
-            has_unread = len(all_rows) > 0
-            
-            if not all_rows:
-                # 如果没有未读消息，获取最新的邮件
-                all_rows = soup.select('tr:has(td > img)')
-            
-            if not all_rows:
-                return []
-            
-            # 遍历找到的消息行，查看最新的消息
-            for row in all_rows[:3]:  # 只看前3条消息
-                # 如果是未读消息，标记为已读
-                if has_unread:
-                    try:
-                        # 获取标记为已读的链接
-                        read_link = row.select_one('a[href*="&action=read"]')
-                        if read_link:
-                            read_url = urljoin(site_url, read_link['href'])
-                            # 发送请求标记为已读
-                            mark_response = session.get(read_url, timeout=(3.05, 5))
-                            mark_response.raise_for_status()
-                            logger.info(f"已将站点 {site_name} 的未读消息标记为已读")
-                    except Exception as e:
-                        logger.error(f"标记站点 {site_name} 的消息为已读失败: {str(e)}")
-                
-                # 获取消息标题
-                subject_cell = row.select_one('td:nth-child(2)')
-                if not subject_cell:
-                    continue
-                
-                subject_text = subject_cell.get_text(strip=True)
-                
-                # 检查是否包含电力相关的信息
-                if "电力" in subject_text:
-                    # 尝试提取电力变动
-                    power_match = re.search(r'(\d+).*?电力', subject_text)
-                    amount = power_match.group(1) if power_match else "未知数量"
-                    
-                    if self._is_message_for_current_user(row, session, site_info):
-                        rewards.append({
-                            "type": "电力",
-                            "amount": amount,
-                            "unit": "",
-                            "description": f"收到电力奖励",
-                            "is_negative": False
-                        })
-                        break
-                # 检查是否包含上传相关信息
-                elif "上传" in subject_text:
-                    # 尝试提取上传量
-                    upload_match = re.search(r'(\d+(?:\.\d+)?).*?(?:GB|MB|TB)', subject_text)
-                    amount = upload_match.group(1) if upload_match else "未知数量"
-                    unit = "GB"  # 默认单位
-                    
-                    if upload_match and "MB" in upload_match.group(0):
-                        unit = "MB"
-                    elif upload_match and "TB" in upload_match.group(0):
-                        unit = "TB"
-                        
-                    if self._is_message_for_current_user(row, session, site_info):
-                        rewards.append({
-                            "type": "上传量",
-                            "amount": amount,
-                            "unit": unit,
-                            "description": f"获得上传量奖励",
-                            "is_negative": False
-                        })
-                        break
-                else:
-                    # 对于没有明确类型的消息，添加原始反馈
-                    if self._is_message_for_current_user(row, session, site_info):
-                        rewards.append({
-                            "type": "raw_feedback",
-                            "amount": 0,
-                            "unit": "",
-                            "description": f"站内信: {subject_text[:100]}",
-                            "is_negative": False
-                        })
-            
-            return rewards
         except Exception as e:
-            logger.error(f"获取站点 {site_name} 的织梦站内信反馈失败: {str(e)}")
+            logger.error(f"获取象站邮件反馈出错: {str(e)}")
             return []
-            
+
     def get_message_feedback(self, session, site_info: CommentedMap) -> List[dict]:
         """
         获取通用站点的站内信反馈（邮件形式的反馈）
@@ -1963,3 +1623,49 @@ class GroupChatZone(_PluginBase):
         except Exception as e:
             # 出错时默认认为是发给当前用户的，避免漏掉重要信息
             return True
+
+    def identify_site_type(self, site_info: CommentedMap) -> str:
+        """
+        识别站点类型，用于选择合适的反馈解析方法
+        """
+        site_name = site_info.get("name", "").strip().lower()
+        site_url = site_info.get("url", "").strip().lower()
+        
+        # 常见站点类型判断
+        if "ptlgs" in site_name or "ptlgs" in site_url:
+            return "ptlgs"
+        elif "zmpt" in site_name or "zhimeng" in site_name or "织梦" in site_name:
+            return "zhimeng_message"
+        elif "elephant" in site_name or "象站" in site_name or "小象" in site_name:
+            return "elephant_message"
+        elif "frog" in site_name or "青蛙" in site_name:
+            return "frog"
+            
+        # 默认为通用NexusPHP类型
+        return "general"
+        
+    def _is_useful_feedback(self, description: str, message: str) -> bool:
+        """
+        判断反馈是否有用
+        """
+        # 如果反馈内容为空或过短，认为无用
+        if not description or len(description) < 3:
+            return False
+            
+        # 如果只包含"主题"等无意义内容，认为无用
+        if description in ["主题", "站点反馈: 主题", "消息", "站点反馈: 消息"]:
+            return False
+            
+        # 包含关键词的反馈通常有用
+        useful_keywords = ["奖励", "获得", "赏", "召唤", "响应", "不理", "工分", "上传", "下载", 
+                          "电力", "象草", "魔力", "明天", "刷屏", "VIP", "彩虹"]
+                          
+        if any(keyword in description for keyword in useful_keywords):
+            return True
+            
+        # 如果包含@用户名，通常有用
+        if "@" in description:
+            return True
+            
+        # 默认认为无用
+        return False
