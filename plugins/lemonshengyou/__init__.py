@@ -29,7 +29,7 @@ class lemonshengyou(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/lemon.ico"
     # 插件版本
-    plugin_version = "0.9.1"
+    plugin_version = "0.9.2"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -500,13 +500,29 @@ class lemonshengyou(_PluginBase):
                 if type_input:
                     button = form.find('button')
                     if button and '免费' in button.get_text():
-                        free_button = form
+                        if not button.has_attr('disabled'):
+                            free_button = form
                         break
+            
+            # 查找神游记录
+            lottery_list = soup.find('div', class_='lottery_list')
+            if lottery_list:
+                # 尝试查找当前用户的最近一次神游记录
+                for item in lottery_list.find_all('div', class_='item'):
+                    user_link = item.find('a', class_=['User_Name', 'PowerUser_Name', 'EliteUser_Name', 'CrazyUser_Name', 'InsaneUser_Name', 'VIP_Name', 'Uploader_Name'])
+                    if user_link and 'title' in user_link.attrs:
+                        username = user_link['title'].split()[0]  # 获取用户名(可能包含身份标识,只取第一部分)
+                        if username == site_info.get('username'):
+                            reward_text = item.get_text(strip=True)
+                            if '【神游' in reward_text:  # 修改为只匹配前缀
+                                # 找到了用户的神游记录
+                                reward_parts = reward_text.split('-')[-1].strip()  # 获取奖励部分
+                                if not free_button:  # 如果按钮是禁用的,说明今天已经神游过
+                                    return False, "今天已经神游过", [reward_parts]
             
             # 如果没有免费按钮,说明今天已经神游过了
             if not free_button:
-                logger.warning("未找到免费神游按钮，可能今天已经神游过了")
-                return False, "今天已经神游过或无法找到免费神游按钮", []
+                return False, "今天已经神游过,未能获取最近奖励记录", []
                 
             # 2. 执行神游 - 使用免费神游选项
             logger.info("找到免费神游按钮，执行神游操作")
@@ -520,40 +536,25 @@ class lemonshengyou(_PluginBase):
             # 3. 解析结果
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # 查找神游结果提示
-            result_msg = soup.select_one('.shenyou-result, .success-message, .error-message, .info')
-            if not result_msg:
-                # 尝试查找其他可能包含结果的元素
-                result_msg = soup.find(['div', 'p'], text=lambda t: t and any(word in str(t) for word in ['神游成功', '获得奖励', '神游失败']))
+            # 重新获取神游记录列表
+            lottery_list = soup.find('div', class_='lottery_list')
+            if lottery_list:
+                # 查找最新的神游记录(应该是第一条)
+                first_item = lottery_list.find('div', class_='item')
+                if first_item:
+                    user_link = first_item.find('a', class_=['User_Name', 'PowerUser_Name', 'EliteUser_Name', 'CrazyUser_Name', 'InsaneUser_Name', 'VIP_Name', 'Uploader_Name'])
+                    if user_link and 'title' in user_link.attrs:
+                        username = user_link['title'].split()[0]
+                        if username == site_info.get('username'):
+                            reward_text = first_item.get_text(strip=True)
+                            if '【神游' in reward_text:  # 修改为只匹配前缀
+                                reward_parts = reward_text.split('-')[-1].strip()
+                                logger.info(f"神游成功，奖励: {reward_parts}")
+                                return True, None, [reward_parts]
             
-            if not result_msg:
-                logger.warning("无法从页面中获取神游结果")
-                return False, "无法获取神游结果", []
-                
-            result_text = result_msg.get_text(strip=True)
-            logger.info(f"神游结果: {result_text}")
-            
-            # 判断是否成功
-            if any(keyword in result_text for keyword in ["成功", "获得", "奖励"]):
-                # 提取奖励信息
-                rewards = []
-                # 查找可能包含奖励信息的元素
-                reward_elements = soup.select('.reward-item, .shenyou-reward, .info')
-                if reward_elements:
-                    for elem in reward_elements:
-                        reward_text = elem.get_text(strip=True)
-                        if reward_text and any(keyword in reward_text for keyword in ["获得", "奖励", "魔力", "上传量", "下载量", "积分"]):
-                            rewards.append(reward_text)
-                
-                if not rewards:
-                    # 如果没有找到具体奖励元素，直接使用结果文本
-                    rewards = [result_text]
-                    
-                logger.info(f"神游成功，奖励: {rewards}")
-                return True, None, rewards
-            else:
-                logger.warning(f"神游未成功: {result_text}")
-                return False, result_text, []
+            # 如果没有找到神游记录,返回失败
+            logger.warning("无法从神游记录中获取结果")
+            return False, "无法获取神游结果", []
                 
         except requests.exceptions.RequestException as e:
             logger.error(f"请求失败: {str(e)}")
