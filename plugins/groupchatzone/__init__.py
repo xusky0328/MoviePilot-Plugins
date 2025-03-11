@@ -31,7 +31,7 @@ class GroupChatZone(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/GroupChat.png"
     # 插件版本
-    plugin_version = "10.9.9999"
+    plugin_version = "10.99.9"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -1192,7 +1192,7 @@ class GroupChatZone(_PluginBase):
         
         try:
             # 获取喊话区内容
-            shoutbox_url = urljoin(site_url, "/shoutbox.php")
+            shoutbox_url = urljoin(site_url, "/shoutbox.php?type=shoutbox")
             response = session.get(
                 shoutbox_url,
                 timeout=(3.05, 10)
@@ -1202,42 +1202,69 @@ class GroupChatZone(_PluginBase):
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # 查找所有的消息
-            messages = soup.select('ul li')
-            logger.debug(f"找到 {len(messages)} 条青蛙站点消息")
+            # 获取所有消息块，查找蛙总回复
+            # 青蛙站点的消息结构是 <ul><li style="..."><li style="..."></li></ul>
+            all_messages = soup.find_all('ul')
+            logger.debug(f"青蛙站点找到 {len(all_messages)} 个消息块")
             
-            # 先查找蛙总的回复
-            frog_responses = []
-            for msg in messages[:30]:  # 只查找最近30条消息
-                # 查找发送者
-                sender_link = msg.select_one('a')
-                if not sender_link:
-                    continue
-                
-                sender_text = sender_link.get_text(strip=True)
-                if "蛙总" in sender_text:
-                    # 是蛙总发的消息
-                    message_text = msg.get_text(strip=True)
-                    time_text = ""
-                    time_span = msg.select_one('p')
-                    if time_span:
-                        time_text = time_span.get_text(strip=True)
+            # 存储找到的蛙总消息
+            frog_messages = []
+            
+            # 遍历所有消息块
+            for i, message_block in enumerate(all_messages[:30]):  # 只查看最近30条
+                try:
+                    # 检查是否是消息区域
+                    li_elements = message_block.find_all('li')
+                    if not li_elements or len(li_elements) < 2:
+                        continue
                     
-                    frog_responses.append({
-                        "text": message_text,
-                        "time": time_text
-                    })
+                    # 获取消息文本和发送者信息
+                    message_text = message_block.get_text(strip=True)
+                    
+                    # 检查是否是蛙总发的消息
+                    sender_link = message_block.select_one('a')
+                    if not sender_link:
+                        continue
+                    
+                    sender_name = sender_link.get_text(strip=True)
+                    logger.debug(f"消息{i+1}发送者: {sender_name}, 内容: {message_text[:30]}...")
+                    
+                    if "蛙总" in sender_name:
+                        # 提取消息时间
+                        time_text = ""
+                        time_element = message_block.select_one('p')
+                        if time_element:
+                            time_text = time_element.get_text(strip=True)
+                        
+                        # 提取主要文本内容
+                        main_content = li_elements[1].get_text(strip=True)
+                        if not main_content:
+                            main_content = message_text
+                        
+                        # 去除用户名和时间信息
+                        main_content = re.sub(r'蛙总.*?发布于：.*?$', '', main_content, flags=re.DOTALL)
+                        
+                        # 保存蛙总的消息
+                        frog_messages.append({
+                            "text": main_content.strip(),
+                            "time": time_text,
+                            "full_text": message_text
+                        })
+                        logger.debug(f"找到蛙总消息: {main_content.strip()}")
+                except Exception as e:
+                    logger.debug(f"处理第{i+1}条消息时出错: {str(e)}")
             
-            logger.debug(f"找到 {len(frog_responses)} 条蛙总的回复")
+            logger.info(f"青蛙站点找到 {len(frog_messages)} 条蛙总的消息")
             
-            # 找最新的一条蛙总回复
-            if frog_responses:
-                latest_response = frog_responses[0]
-                response_text = latest_response["text"]
+            # 处理找到的蛙总消息
+            if frog_messages:
+                # 获取最新的蛙总消息
+                latest_message = frog_messages[0]
+                message_text = latest_message["text"]
                 
-                # 处理不同类型的回复
-                if "发了！" in response_text:
-                    # 添加基本回复
+                # 根据消息内容判断类型
+                if "发了！" in message_text:
+                    # 添加基本反馈
                     rewards.append({
                         "type": "raw_feedback",
                         "amount": 0,
@@ -1246,7 +1273,7 @@ class GroupChatZone(_PluginBase):
                         "is_negative": False
                     })
                     
-                    # 添加奖励
+                    # 根据原始消息添加相应奖励
                     if "上传" in message:
                         rewards.append({
                             "type": "上传量",
@@ -1263,7 +1290,7 @@ class GroupChatZone(_PluginBase):
                             "description": "青蛙站点求下载奖励",
                             "is_negative": False
                         })
-                elif "不要调戏" in response_text or "怒" in response_text:
+                elif "不要调戏" in message_text or "怒" in message_text:
                     rewards.append({
                         "type": "raw_feedback",
                         "amount": 0,
@@ -1272,29 +1299,78 @@ class GroupChatZone(_PluginBase):
                         "is_negative": True
                     })
                 else:
-                    # 其他回复
+                    # 其他类型的回复
                     rewards.append({
                         "type": "raw_feedback",
                         "amount": 0,
                         "unit": "",
-                        "description": response_text[:100],
+                        "description": message_text[:100] if message_text else "蛙总回复",
                         "is_negative": False
                     })
             
-            # 如果没有找到回复，添加默认信息
+            # 如果仍然没有找到任何反馈，尝试通过页面全文检索
+            if not rewards:
+                page_text = soup.get_text(strip=True)
+                logger.debug(f"未找到精确的蛙总回复，尝试全文检索")
+                
+                if "发了！" in page_text:
+                    # 添加基本反馈
+                    rewards.append({
+                        "type": "raw_feedback",
+                        "amount": 0,
+                        "unit": "",
+                        "description": "发了！(通过全文检索)",
+                        "is_negative": False
+                    })
+                    
+                    # 根据原始消息添加相应奖励
+                    if "上传" in message:
+                        rewards.append({
+                            "type": "上传量",
+                            "amount": "10",
+                            "unit": "GB",
+                            "description": "青蛙站点求上传奖励",
+                            "is_negative": False
+                        })
+                    elif "下载" in message:
+                        rewards.append({
+                            "type": "下载量",
+                            "amount": "10",
+                            "unit": "GB",
+                            "description": "青蛙站点求下载奖励",
+                            "is_negative": False
+                        })
+                elif "不要调戏" in page_text or "怒" in page_text:
+                    rewards.append({
+                        "type": "raw_feedback",
+                        "amount": 0,
+                        "unit": "",
+                        "description": "不要调戏蛙总！（怒）(通过全文检索)",
+                        "is_negative": True
+                    })
+            
+            # 确保始终返回一些信息
             if not rewards:
                 rewards.append({
                     "type": "raw_feedback",
                     "amount": 0,
                     "unit": "",
-                    "description": "未能获取到蛙总反馈，请手动检查",
+                    "description": "未能获取到蛙总反馈，请手动检查喊话区",
                     "is_negative": False
                 })
             
             return rewards
         except Exception as e:
             logger.error(f"获取站点 {site_name} 的青蛙喊话区反馈失败: {str(e)}")
-            return []
+            logger.exception(e)  # 打印完整异常信息
+            # 即使出错也返回一个反馈
+            return [{
+                "type": "raw_feedback",
+                "amount": 0,
+                "unit": "",
+                "description": f"获取反馈时出错: {str(e)[:100]}",
+                "is_negative": False
+            }]
     
     def get_elephant_message_feedback(self, session, site_info: CommentedMap) -> List[dict]:
         """
