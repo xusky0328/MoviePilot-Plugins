@@ -36,7 +36,7 @@ class fnossign(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico"
     # 插件版本
-    plugin_version = "2.2"
+    plugin_version = "2.3"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -54,13 +54,17 @@ class fnossign(_PluginBase):
     _notify = False
     _onlyonce = False
     _cron = None
-    _scheduler = None
     _max_retries = 3  # 最大重试次数
     _retry_interval = 30  # 重试间隔(秒)
     _history_days = 30  # 历史保留天数
     _manual_trigger = False
+    # 定时器
+    _scheduler: Optional[BackgroundScheduler] = None
 
     def init_plugin(self, config: dict = None):
+        # 停止现有任务
+        self.stop_service()
+
         logger.info("============= fnossign 初始化 =============")
         try:
             if config:
@@ -76,8 +80,12 @@ class fnossign(_PluginBase):
             
             if self._onlyonce:
                 logger.info("执行一次性签到")
+                self._scheduler = BackgroundScheduler(timezone=settings.TZ)
+                self._manual_trigger = True
+                self._scheduler.add_job(func=self.sign, trigger='date',
+                                    run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=3),
+                                    name="飞牛论坛签到")
                 self._onlyonce = False
-                self._manual_trigger = True  # 标记为手动触发
                 self.update_config({
                     "onlyonce": False,
                     "enabled": self._enabled,
@@ -88,7 +96,12 @@ class fnossign(_PluginBase):
                     "retry_interval": self._retry_interval,
                     "history_days": self._history_days
                 })
-                self.sign()
+
+                # 启动任务
+                if self._scheduler.get_jobs():
+                    self._scheduler.print_jobs()
+                    self._scheduler.start()
+
         except Exception as e:
             logger.error(f"fnossign初始化错误: {str(e)}", exc_info=True)
 
@@ -687,25 +700,24 @@ class fnossign(_PluginBase):
                             },
                             'content': [
                                 {
+                                    'component': 'VCronField',
+                                    'props': {
+                                        'model': 'cron',
+                                        'label': '签到周期'
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            'component': 'VCol',
+                            'props': {
+                                'cols': 12,
+                                    'md': 3
+                            },
+                            'content': [
+                                {
                                         'component': 'VTextField',
                                     'props': {
-                                            'model': 'cron',
-                                            'label': '签到周期',
-                                            'placeholder': '0 8 * * *'
-                                        }
-                                    }
-                                ]
-                            },
-                            {
-                                'component': 'VCol',
-                                            'props': {
-                                    'cols': 12,
-                                    'md': 3
-                                            },
-                                            'content': [
-                                                {
-                                        'component': 'VTextField',
-                                                    'props': {
                                             'model': 'max_retries',
                                             'label': '最大重试次数',
                                             'type': 'number',
