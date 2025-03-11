@@ -31,7 +31,7 @@ class GroupChatZone(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/GroupChat.png"
     # 插件版本
-    plugin_version = "9.9.9999"
+    plugin_version = "9.9.99999"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -785,46 +785,54 @@ class GroupChatZone(_PluginBase):
         # 发送通知
         if self._notify:
             total_sites = len(selected_sites)
-            notification_text = f"全部站点数量: {total_sites}\n"
+            notification_text = f"📢 站点喊话结果通知 📢\n\n总站点数量: {total_sites}\n"
+            notification_text += "=" * 30 + "\n\n"
             
             # 添加喊话基本信息
             for site_name, result in site_results.items():
                 success_count = result["success_count"]
                 failure_count = result["failure_count"]
                 failed_messages = result["failed_messages"]
-                notification_text += f"【{site_name}】成功发送{success_count}条信息，失败{failure_count}条\n"
-                if failed_messages:
-                    notification_text += f"失败的消息: {', '.join(failed_messages)}\n"
+                if success_count > 0:
+                    notification_text += f"✅ 【{site_name}】成功发送 {success_count} 条信息\n"
+                if failure_count > 0:
+                    notification_text += f"❌ 【{site_name}】失败 {failure_count} 条信息\n"
+                    if failed_messages:
+                        notification_text += f"   失败消息: {', '.join(failed_messages)}\n"
             
             # 添加反馈信息
             if self._get_feedback and all_feedback:
-                notification_text += "\n【喊话反馈】\n"
+                notification_text += "\n" + "=" * 30 + "\n\n"
+                notification_text += "🔔 喊话反馈详情 🔔\n\n"
+                
                 for feedback in all_feedback:
                     site_name = feedback.get("site", "")
                     message = feedback.get("message", "")
                     rewards = feedback.get("rewards", [])
                     
                     if rewards:
-                        notification_text += f"站点 【{site_name}】 (消息: {message}):\n"
+                        notification_text += f"📌 站点【{site_name}】(消息: {message}):\n"
                         for reward in rewards:
-                            # 只输出有用的反馈
                             if reward.get("type") == "raw_feedback":
-                                # 直接显示原始反馈内容
-                                notification_text += f"- {reward.get('description', '')}\n"
+                                # 直接显示原始反馈内容，去除过长或重复的信息
+                                feedback_text = reward.get('description', '')
+                                notification_text += f"  • {feedback_text}\n"
                             elif reward.get("type") == "unknown":
-                                notification_text += f"- {reward.get('description', '')}\n"
+                                notification_text += f"  • {reward.get('description', '')}\n"
                             else:
-                                # 根据正负显示不同的表述
+                                # 根据正负显示不同的表述和图标
                                 if reward.get("is_negative", False):
-                                    notification_text += f"- 损失了 {reward.get('amount', '')} {reward.get('unit', '')} {reward.get('type', '')}\n"
+                                    notification_text += f"  • 📉 损失了 {reward.get('amount', '')} {reward.get('unit', '')} {reward.get('type', '')}\n"
                                 else:
-                                    notification_text += f"- 获得了 {reward.get('amount', '')} {reward.get('unit', '')} {reward.get('type', '')}\n"
+                                    notification_text += f"  • 📈 获得了 {reward.get('amount', '')} {reward.get('unit', '')} {reward.get('type', '')}\n"
+                        notification_text += "\n"
             
-            notification_text += f"\n{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
+            notification_text += "=" * 30 + "\n"
+            notification_text += f"⏱️ 完成时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
 
             self.post_message(
                 mtype=NotificationType.SiteMessage,
-                title="【执行喊话任务完成】:",
+                title="【喊话任务完成】",
                 text=notification_text
             )
 
@@ -1197,6 +1205,8 @@ class GroupChatZone(_PluginBase):
             
             # 先查找未读消息，如果没有再查找所有消息
             all_rows = soup.select('tr:has(td > img[title="Unread"])')
+            unread_found = bool(all_rows)
+            
             if not all_rows:
                 # 如果没有未读消息，获取最新的邮件
                 all_rows = soup.select('tr:has(td > img)')
@@ -1211,6 +1221,18 @@ class GroupChatZone(_PluginBase):
                     continue
                     
                 subject_text = subject_cell.get_text(strip=True)
+                
+                # 如果是未读消息，标记为已读
+                if unread_found:
+                    read_link = row.select_one('a[href*="&action=read"]')
+                    if read_link:
+                        read_url = urljoin(site_url, read_link['href'])
+                        # 发送请求标记为已读
+                        try:
+                            session.get(read_url, timeout=(3.05, 5))
+                            logger.debug(f"已将站点 {site_name} 的未读消息标记为已读")
+                        except Exception as e:
+                            logger.error(f"标记站点 {site_name} 的消息为已读失败: {str(e)}")
                 
                 # 象草奖励格式识别
                 if "象草" in subject_text:
@@ -1283,6 +1305,8 @@ class GroupChatZone(_PluginBase):
             
             # 查找所有消息行（包括已读和未读）
             all_rows = soup.select('tr:has(td > img[title="Unread"])')
+            unread_found = bool(all_rows)
+            
             if not all_rows:
                 all_rows = soup.select('tr:has(td > img)')
             
@@ -1291,6 +1315,18 @@ class GroupChatZone(_PluginBase):
                 
             # 获取最新的一条消息（通常是第一条）
             for row in all_rows[:3]:  # 只检查前三条消息
+                # 如果是未读消息，标记为已读
+                if unread_found:
+                    read_link = row.select_one('a[href*="&action=read"]')
+                    if read_link:
+                        read_url = urljoin(site_url, read_link['href'])
+                        # 发送请求标记为已读
+                        try:
+                            session.get(read_url, timeout=(3.05, 5))
+                            logger.debug(f"已将站点 {site_name} 的未读消息标记为已读")
+                        except Exception as e:
+                            logger.error(f"标记站点 {site_name} 的消息为已读失败: {str(e)}")
+                
                 # 获取消息主题
                 subject_cell = row.select_one('td:nth-child(2)')
                 if not subject_cell:
@@ -1347,42 +1383,6 @@ class GroupChatZone(_PluginBase):
             logger.error(f"获取站点 {site_name} 的织梦站内信反馈失败: {str(e)}")
             return []
             
-    def _is_message_for_current_user(self, message_row, session, site_info: CommentedMap) -> bool:
-        """
-        判断消息是否是发给当前用户的
-        :param message_row: 消息行元素
-        :param session: 请求会话
-        :param site_info: 站点信息
-        :return: 是否是发给当前用户的
-        """
-        try:
-            # 获取当前用户名
-            username = self.get_username(session, site_info)
-            if not username:
-                return True  # 如果无法获取用户名，则默认认为是发给当前用户的
-                
-            # 尝试从消息中提取接收者信息
-            receiver_cell = message_row.select_one('td:nth-child(3)')
-            if receiver_cell:
-                receiver_text = receiver_cell.get_text(strip=True)
-                # 如果接收者包含当前用户名，则认为是发给当前用户的
-                if username.lower() in receiver_text.lower():
-                    return True
-                    
-            # 如果无法确定接收者，则查看消息详情
-            message_link = message_row.select_one('a[href*="viewmessage"]')
-            if message_link:
-                href = message_link.get('href')
-                # 不要真的打开消息详情页面，因为这会标记为已读
-                # 此处只是通过消息链接的存在来判断这可能是一条有效消息
-                return True
-                
-            # 默认情况下，假设最新的几条消息是发给当前用户的
-            return True
-        except Exception as e:
-            # 出错时默认认为是发给当前用户的，避免漏掉重要信息
-            return True
-            
     def get_message_feedback(self, session, site_info: CommentedMap) -> List[dict]:
         """
         获取通用站点的站内信反馈（邮件形式的反馈）
@@ -1396,10 +1396,6 @@ class GroupChatZone(_PluginBase):
         site_url = site_info.get("url", "").strip()
         
         try:
-            # 检查是否为NexusPHP站点
-            if not self.is_nexusphp_site(site_info):
-                return []
-            
             # 获取站内信列表
             message_url = urljoin(site_url, "/messages.php")
             response = session.get(
@@ -1413,55 +1409,60 @@ class GroupChatZone(_PluginBase):
             
             # 查找所有消息行（包括已读和未读）
             all_rows = soup.select('tr:has(td > img[title="Unread"])')
+            unread_found = bool(all_rows)
             
             if not all_rows:
                 return []
                 
-            # 获取最新的一条消息（通常是第一条）
-            for row in all_rows[:3]:  # 只检查前三条消息
-                # 获取消息主题
-                subject_cell = row.select_one('td:nth-child(2)')
-                if not subject_cell:
-                    continue
-                    
-                subject_text = subject_cell.get_text(strip=True)
+            # 遍历找到的消息行
+            for row in all_rows[:3]:  # 只看前3条消息
+                # 如果是未读消息，标记为已读
+                if unread_found:
+                    read_link = row.select_one('a[href*="&action=read"]')
+                    if read_link:
+                        read_url = urljoin(site_url, read_link['href'])
+                        # 发送请求标记为已读
+                        try:
+                            session.get(read_url, timeout=(3.05, 5))
+                            logger.debug(f"已将站点 {site_name} 的未读消息标记为已读")
+                        except Exception as e:
+                            logger.error(f"标记站点 {site_name} 的消息为已读失败: {str(e)}")
                 
-                # 象草奖励格式识别
-                if "象草" in subject_text:
-                    # 尝试提取象草数量
-                    elephant_match = re.search(r'(\d+)象草', subject_text)
-                    amount = elephant_match.group(1) if elephant_match else "未知数量"
+                # 提取消息主题和内容
+                subject_cell = row.select_one('td:nth-child(2)')
+                if subject_cell:
+                    subject_text = subject_cell.get_text(strip=True)
                     
-                    # 检查消息是否是发给当前用户的，避免获取到其他用户的邮件
-                    if self._is_message_for_current_user(row, session, site_info):
+                    # 尝试提取奖励信息
+                    if any(keyword in subject_text for keyword in ["奖励", "获得", "赠送", "收到"]):
                         rewards.append({
                             "type": "raw_feedback",
                             "amount": 0,
                             "unit": "",
-                            "description": f"获得 {amount} 象草奖励",
+                            "description": subject_text,
                             "is_negative": False
                         })
                         break
-            
-            # 如果没有找到符合条件的消息，返回空列表
-            if not rewards:
-                # 尝试打开邮箱页面读取最新消息详情
-                inbox_url = urljoin(site_url, "/messages.php?action=viewmailbox&box=1")
-                inbox_response = session.get(inbox_url, timeout=(3.05, 10))
-                inbox_soup = BeautifulSoup(inbox_response.text, 'html.parser')
-                
-                # 寻找最新的包含"象草"的邮件
-                messages = inbox_soup.select('tr:has(td:contains("象草"))')
-                if messages:
-                    latest_message = messages[0]
-                    subject = latest_message.select_one('td:nth-child(2)').get_text(strip=True)
-                    rewards.append({
-                        "type": "raw_feedback",
-                        "amount": 0,
-                        "unit": "",
-                        "description": f"邮件内容: {subject}",
-                        "is_negative": False
-                    })
+                    # 对于限制或警告消息
+                    elif any(keyword in subject_text for keyword in ["限制", "警告", "超过", "禁止"]):
+                        rewards.append({
+                            "type": "raw_feedback",
+                            "amount": 0,
+                            "unit": "",
+                            "description": subject_text,
+                            "is_negative": True
+                        })
+                        break
+                    # 其他可能有用的反馈
+                    elif len(subject_text) < 100:  # 避免过长的无用内容
+                        rewards.append({
+                            "type": "raw_feedback",
+                            "amount": 0,
+                            "unit": "",
+                            "description": subject_text,
+                            "is_negative": False
+                        })
+                        break
             
             return rewards
         except Exception as e:

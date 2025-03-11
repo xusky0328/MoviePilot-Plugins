@@ -13,7 +13,7 @@
     "name": "群聊区测试",
     "description": "定时向多个站点发送预设消息(特定站点可获得奖励)。",
     "labels": "站点",
-    "version": "9.9.9999",
+    "version": "9.9.99999",
     "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/GroupChat.png",
     "author": "madrays",
     "level": 2,
