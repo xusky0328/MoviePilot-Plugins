@@ -31,7 +31,7 @@ class GroupChatZone(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/GroupChat.png"
     # 插件版本
-    plugin_version = "10.99.999"
+    plugin_version = "11.99.999"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -730,151 +730,155 @@ class GroupChatZone(_PluginBase):
 
     def __send_msgs(self, do_sites: list, site_msgs: Dict[str, List[str]]):
         """
-        发送消息
-        :param do_sites: 站点配置
-        :param site_msgs: 站点消息
+        发送消息逻辑
         """
-        # 通知消息
-        message = []
-        success_sites = []
-        failed_sites = []
+        # 获取站点对象
+        selected_sites = self.get_selected_sites()
+        
+        if not selected_sites:
+            logger.info("没有需要发送消息的站点！")
+            return
+
+        # 执行站点发送消息
+        site_results = {}
         all_feedback = []
-
-        # 开始发送消息
-        for site_info in do_sites:
-            # 站点名称
-            site_name = site_info.get("name", "").strip()
-            # 站点地址
-            site_url = site_info.get("url", "").strip()
-            if not site_name or not site_url:
-                logger.warning(f"站点名称或地址为空")
-                continue
-            if not site_msgs.get(site_name):
-                logger.warning(f"站点 {site_name} 未配置消息")
-                continue
-
-            # 处理站点
+        
+        for site in selected_sites:
+            site_name = site.get("name")
             logger.info(f"开始处理站点: {site_name}")
+            messages = site_msgs.get(site_name, [])
 
-            try:
-                # 遍历该站点的所有消息
-                for msg in site_msgs.get(site_name, []):
-                    # 登录站点
-                    session = self.siteoper.get_site_session(site_name)
-                    if not session:
-                        failed_sites.append({
-                            "name": site_name,
-                            "msg": msg,
-                            "reason": "无法访问站点"
-                        })
-                        # 跳过当前站点并继续下一个
-                        break
+            if not messages:
+                logger.warning(f"站点 {site_name} 没有需要发送的消息！")
+                continue
 
-                    # 发送消息
-                    send_result = self.send_message_to_site(site_info, msg)
-                    if send_result:
-                        # 记录发送成功的站点
-                        success_sites.append({
-                            "name": site_name,
-                            "msg": msg
-                        })
-                        logger.info(f"向 {site_name} 发送消息 '{msg}' 成功")
+            success_count = 0
+            failure_count = 0
+            failed_messages = []
+            site_feedback = []
 
-                        # 获取反馈
-                        if self._get_feedback:
-                            feedback = self.get_site_feedback(session, site_info, msg)
-                            if feedback and feedback.get("rewards"):
-                                all_feedback.append(feedback)
-                                logger.info(f"获取到站点 {site_name} 的反馈: {feedback}")
+            for i, message in enumerate(messages):
+                try:
+                    feedback = self.send_message_to_site(site, message)
+                    success_count += 1
+                    if feedback:
+                        site_feedback.append(feedback)
+                        all_feedback.append(feedback)
+                except Exception as e:
+                    logger.error(f"向站点 {site_name} 发送消息 '{message}' 失败: {str(e)}")
+                    failure_count += 1
+                    failed_messages.append(message)
 
-                    else:
-                        # 记录发送失败的站点
-                        failed_sites.append({
-                            "name": site_name,
-                            "msg": msg,
-                            "reason": "发送消息失败"
-                        })
-                        logger.error(f"向 {site_name} 发送消息 '{msg}' 失败")
-
-                    # 发送休眠间隔，避免频繁发送消息
-                    if self._interval_cnt > 0:
-                        interval_sleep = self._interval_cnt
-                        # 以下站点需要更长的等待时间
-                        if site_name in ["PTLGS", "大青虫"]:
-                            interval_sleep = max(5, self._interval_cnt)
-                            
-                        logger.info(f"等待 {interval_sleep} 秒后继续发送下一条消息...")
-                        time.sleep(interval_sleep)
-
-            except Exception as err:
-                logger.warning(f"向 {site_name} 发送消息出错: {err}")
-                failed_sites.append({
-                    "name": site_name,
-                    "reason": str(err)
-                })
-
-        # 所有消息发送结束
-        logger.info("所有站点的消息发送成功。")
-
-        # 构建成功消息
-        if success_sites:
-            message.append("【成功】")
-            for site in success_sites:
-                message.append(f"{site.get('name')}: {site.get('msg', '')}")
-
-        # 构建失败消息
-        if failed_sites:
-            message.append("【失败】")
-            for site in failed_sites:
-                message.append(f"{site.get('name')}: {site.get('reason', '')}")
-
-        # 构建反馈消息
-        if all_feedback:
-            message.append("-----------------------------------")
-            message.append("【站点喊话反馈】")
-            for feedback in all_feedback:
-                site_name = feedback.get("site", "")
-                site_msg = feedback.get("message", "")
-                rewards = feedback.get("rewards", [])
-                
-                if rewards:
-                    message.append(f"✅ {site_name} 「{site_msg}」:")
-                    
-                    for reward in rewards:
-                        reward_type = reward.get("type", "")
-                        is_negative = reward.get("is_negative", False)
-                        
-                        # 添加图标
-                        icon = "❌" if is_negative else "➡️"
-                        if reward_type == "上传量" and not is_negative:
-                            icon = "⬆️"
-                        elif reward_type == "下载量" and not is_negative:
-                            icon = "⬇️"
-                        elif reward_type == "象草" and not is_negative:
-                            icon = "🐘"
-                        elif reward_type == "电力" and not is_negative:
-                            icon = "⚡"
-                        
-                        # 处理描述
-                        description = reward.get("description", "")
-                        amount = reward.get("amount", "")
-                        unit = reward.get("unit", "")
-                        
-                        # 格式化输出
-                        if reward_type == "raw_feedback":
-                            message.append(f"{icon} {description}")
-                        else:
-                            message.append(f"{icon} {reward_type}: {amount}{unit} ({description})")
+                if i < len(messages) - 1:
+                    logger.info(f"等待 {self._interval_cnt} 秒后继续发送下一条消息...")
+                    start_time = time.time()
+                    time.sleep(self._interval_cnt)
+                    logger.debug(f"实际等待时间：{time.time() - start_time:.2f} 秒")
             
-            message.append("-----------------------------------")
+            site_results[site_name] = {
+                "success_count": success_count,
+                "failure_count": failure_count,
+                "failed_messages": failed_messages,
+                "feedback": site_feedback
+            }
 
-        # 是否推送通知
+        # 发送通知
         if self._notify:
-            self.post_notification(
+            title = "💬 站点喊话任务完成"
+            total_sites = len(selected_sites)
+            notification_text = "📢 站点喊话任务报告\n"
+            notification_text += f"🌐 站点总数: {total_sites}\n"
+            
+            # 添加喊话基本信息
+            success_sites = []
+            failed_sites = []
+            
+            for site_name, result in site_results.items():
+                success_count = result["success_count"]
+                failure_count = result["failure_count"]
+                if success_count > 0 and failure_count == 0:
+                    success_sites.append(site_name)
+                elif failure_count > 0:
+                    failed_sites.append(site_name)
+            
+            if success_sites:
+                notification_text += f"✅ 成功站点: {', '.join(success_sites)}\n"
+            if failed_sites:
+                notification_text += f"❌ 失败站点: {', '.join(failed_sites)}\n"
+            
+            # 添加失败消息详情
+            failed_details = []
+            for site_name, result in site_results.items():
+                failed_messages = result["failed_messages"]
+                if failed_messages:
+                    failed_details.append(f"{site_name}: {', '.join(failed_messages)}")
+            
+            if failed_details:
+                notification_text += "\n🚫 失败消息详情:\n"
+                notification_text += "\n".join(failed_details)
+            
+            # 添加反馈信息
+            if self._get_feedback and all_feedback:
+                notification_text += "\n📋 喊话反馈:\n"
+                notification_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                for feedback in all_feedback:
+                    site_name = feedback.get("site", "")
+                    message = feedback.get("message", "")
+                    rewards = feedback.get("rewards", [])
+                    
+                    if rewards:
+                        notification_text += f"🔹 {site_name} (消息: \"{message}\")\n"
+                        
+                        # 根据不同类型显示不同图标
+                        for reward in rewards:
+                            reward_type = reward.get("type", "")
+                            
+                            # 图标映射
+                            icon_map = {
+                                "上传量": "⬆️",
+                                "下载量": "⬇️",
+                                "魔力值": "✨",
+                                "工分": "🔧",
+                                "电力": "⚡",
+                                "象草": "🐘",
+                                "VIP": "👑",
+                                "raw_feedback": "📝"
+                            }
+                            
+                            icon = icon_map.get(reward_type, "📌")
+                            
+                            if reward_type == "raw_feedback":
+                                # 直接显示原始反馈内容
+                                notification_text += f"  {icon} {reward.get('description', '')}\n"
+                            elif reward_type == "unknown":
+                                notification_text += f"  {icon} {reward.get('description', '')}\n"
+                            else:
+                                # 根据正负显示不同的表述
+                                if reward.get("is_negative", False):
+                                    notification_text += f"  {icon} 损失了 {reward.get('amount', '')} {reward.get('unit', '')} {reward_type}\n"
+                                else:
+                                    notification_text += f"  {icon} 获得了 {reward.get('amount', '')} {reward.get('unit', '')} {reward_type}\n"
+                        
+                        # 在每个站点反馈后添加分割线
+                        notification_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            
+            notification_text += f"\n⏱️ {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
+
+            self.post_message(
                 mtype=NotificationType.SiteMessage,
-                title="💬 站点喊话反馈",
-                text="\n".join(message)
+                title=title,
+                text=notification_text
             )
+
+        # 检查是否所有消息都发送成功
+        all_successful = all(result["success_count"] == len(site_msgs.get(site_name, [])) 
+                            for site_name, result in site_results.items())
+        if all_successful:
+            logger.info("所有站点的消息发送成功。")
+        else:
+            logger.info("部分消息发送失败！！！")
+
+        self.__update_config(refresh_cache=False)
 
     def send_message_to_site(self, site_info: CommentedMap, message: str):
         """
@@ -979,14 +983,14 @@ class GroupChatZone(_PluginBase):
             site_type = self.identify_site_type(site_info)
             logger.debug(f"站点 {site_name} 识别为 {site_type} 类型")
             
-            # 1. 获取喊话区反馈 (织梦站点跳过喊话区)
+            # 1. 获取喊话区反馈
             try:
                 if site_type == "PTLGS":
                     feedback_info["rewards"].extend(self.get_ptlgs_feedback(session, site_info, message))
                 elif site_type == "Frog":
                     feedback_info["rewards"].extend(self.get_frog_feedback(session, site_info, message))
                 elif site_type == "Zhimeng":
-                    # 织梦站点不获取喊话区反馈，只获取邮件反馈
+                    # 织梦站点只获取邮件反馈，不获取喊话区反馈
                     pass
                 else:
                     feedback_info["rewards"].extend(self.get_shoutbox_feedback(session, site_info, message))
@@ -1185,14 +1189,15 @@ class GroupChatZone(_PluginBase):
         :param message: 发送的消息
         :return: 反馈信息列表
         """
+        import re  # 确保导入re模块
         rewards = []
         site_name = site_info.get("name", "").strip()
         
         try:
-            # 彻底简化，直接根据发送内容提供反馈
-            logger.info(f"青蛙站点直接根据发送内容 '{message}' 提供反馈")
+            # 青蛙站点简化处理，直接根据发送的消息内容返回奖励
+            logger.info(f"青蛙站点简化处理，根据发送的消息 '{message}' 返回奖励")
             
-            # 根据发送的消息内容判断反馈类型
+            # 根据消息内容判断类型
             if "求上传" in message:
                 rewards.append({
                     "type": "上传量",
@@ -1210,7 +1215,7 @@ class GroupChatZone(_PluginBase):
                     "is_negative": False
                 })
             else:
-                # 未识别的消息类型
+                # 其他类型的消息
                 rewards.append({
                     "type": "raw_feedback",
                     "amount": 0,
@@ -1221,7 +1226,8 @@ class GroupChatZone(_PluginBase):
             
             return rewards
         except Exception as e:
-            logger.error(f"处理青蛙站点反馈失败: {str(e)}")
+            logger.error(f"处理站点 {site_name} 的青蛙喊话反馈失败: {str(e)}")
+            logger.exception(e)  # 打印完整异常信息
             # 即使出错也返回一个反馈
             return [{
                 "type": "raw_feedback",
@@ -1382,14 +1388,13 @@ class GroupChatZone(_PluginBase):
                 return []
             
             # 遍历找到的消息行，查看最新的消息
-            for row in all_rows[:5]:  # 查看前5条消息，增加查找范围
+            for row in all_rows[:5]:  # 只看前5条消息
                 # 获取消息日期
                 date_cell = row.select_one('td:nth-child(4)')
                 if date_cell:
-                    msg_date = date_cell.get_text(strip=True)
+                    date_text = date_cell.get_text(strip=True)
                     # 检查是否是当天的消息
-                    if today not in msg_date and "今天" not in msg_date and "分钟前" not in msg_date and "小时前" not in msg_date:
-                        logger.debug(f"跳过非当天消息: {msg_date}")
+                    if today not in date_text and "今天" not in date_text and "昨天" not in date_text:
                         continue
                 
                 # 如果是未读消息，标记为已读
@@ -1412,7 +1417,6 @@ class GroupChatZone(_PluginBase):
                     continue
                 
                 subject_text = subject_cell.get_text(strip=True)
-                logger.debug(f"织梦站点消息标题: {subject_text}")
                 
                 # 检查是否包含电力相关的信息
                 if "电力" in subject_text:
@@ -1420,7 +1424,6 @@ class GroupChatZone(_PluginBase):
                     power_match = re.search(r'(\d+).*?电力', subject_text)
                     amount = power_match.group(1) if power_match else "未知数量"
                     
-                    # 这里不再检查消息是否是给当前用户的，直接添加反馈
                     rewards.append({
                         "type": "电力",
                         "amount": amount,
@@ -1441,7 +1444,6 @@ class GroupChatZone(_PluginBase):
                     elif upload_match and "TB" in upload_match.group(0):
                         unit = "TB"
                     
-                    # 这里不再检查消息是否是给当前用户的，直接添加反馈    
                     rewards.append({
                         "type": "上传量",
                         "amount": amount,
@@ -1459,7 +1461,6 @@ class GroupChatZone(_PluginBase):
                         "description": f"站内信: {subject_text[:100]}",
                         "is_negative": False
                     })
-                    break
             
             return rewards
         except Exception as e:
