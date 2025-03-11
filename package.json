@@ -13,7 +13,7 @@
     "name": "柠檬站点神游",
     "description": "自动完成柠檬站点每日免费神游三清天，获取奖励",
     "labels": "神游,站点,柠檬",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/lemon.ico",
     "author": "madrays",
     "level": 2,

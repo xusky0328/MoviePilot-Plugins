@@ -29,7 +29,7 @@ class lemonshengyou(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/lemon.ico"
     # 插件版本
-    plugin_version = "1.0.1"
+    plugin_version = "1.0.2"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -396,7 +396,7 @@ class lemonshengyou(_PluginBase):
             self._lock = threading.Lock()
             
         if not self._lock.acquire(blocking=False):
-            logger.warning("已有任务正在执行，本次调度跳过！")
+            logger.debug("已有任务正在执行，本次调度跳过！")
             return
             
         try:
@@ -427,13 +427,13 @@ class lemonshengyou(_PluginBase):
                     success, error_msg, rewards = self.__do_shenyou(site_info)
                     if success:
                         break
-                    logger.error(f"第{i+1}次神游失败：{error_msg}")
                     if i < self._retry_count - 1:
+                        logger.warning(f"第{i+1}次神游失败：{error_msg}，{self._retry_interval}秒后重试")
                         time.sleep(self._retry_interval)
                 except Exception as e:
                     error_msg = str(e)
-                    logger.error(f"第{i+1}次神游出错：{error_msg}")
                     if i < self._retry_count - 1:
+                        logger.warning(f"第{i+1}次神游出错：{error_msg}，{self._retry_interval}秒后重试")
                         time.sleep(self._retry_interval)
             
             # 发送通知
@@ -467,7 +467,7 @@ class lemonshengyou(_PluginBase):
                     self._lock.release()
                 except RuntimeError:
                     pass
-            logger.debug("任务执行完成，锁已释放")
+            logger.debug("任务执行完成")
 
     def __do_shenyou(self, site_info: CommentedMap) -> Tuple[bool, Optional[str], List[str]]:
         """
@@ -512,13 +512,10 @@ class lemonshengyou(_PluginBase):
             # 获取用户名
             username = self.__get_username(session, site_info)
             if not username:
-                logger.warning(f"无法获取用户名,可能影响神游记录匹配")
-            else:
-                logger.info(f"获取到用户名: {username}")
+                logger.warning("无法获取用户名,可能影响神游记录匹配")
             
             # 1. 访问神游页面
             lottery_url = urljoin(site_url, "lottery.php")
-            logger.info(f"访问神游页面: {lottery_url}")
             response = session.get(lottery_url, timeout=(3.05, 10))
             response.raise_for_status()
             
@@ -526,39 +523,44 @@ class lemonshengyou(_PluginBase):
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # 查找所有神游按钮
+            # 查找神游按钮
             free_button = None
+            button_disabled = False
             for form in soup.find_all('form', {'action': '?', 'method': 'post'}):
                 type_input = form.find('input', {'name': 'type', 'value': '0'})
                 if type_input:
                     button = form.find('button')
                     if button and '免费' in button.get_text():
-                        if not button.has_attr('disabled'):
-                            free_button = form
+                        free_button = form
+                        button_disabled = button.has_attr('disabled')
                         break
             
             # 查找神游记录
             lottery_list = soup.find('div', class_='lottery_list')
             if lottery_list and username:
-                # 尝试查找当前用户的最近一次神游记录
-                for item in lottery_list.find_all('div', class_='item'):
-                    user_link = item.find('a', class_=['User_Name', 'PowerUser_Name', 'EliteUser_Name', 'CrazyUser_Name', 'InsaneUser_Name', 'VIP_Name', 'Uploader_Name'])
-                    if user_link and user_link.find('span', title=username):  # 直接检查span的title属性
-                        reward_text = item.get_text(strip=True)
-                        if '【神游' in reward_text:  # 修改为只匹配前缀
-                            # 找到了用户的神游记录
-                            reward_parts = reward_text.split('-')[-1].strip()  # 获取奖励部分
-                            if not free_button:  # 如果按钮是禁用的,说明今天已经神游过
+                # 先检查最新的神游记录
+                first_item = lottery_list.find('div', class_='item')
+                if first_item:
+                    user_link = first_item.find('a', class_=['User_Name', 'PowerUser_Name', 'EliteUser_Name', 'CrazyUser_Name', 'InsaneUser_Name', 'VIP_Name', 'Uploader_Name'])
+                    if user_link and user_link.find('span', title=username):
+                        reward_text = first_item.get_text(strip=True)
+                        if '【神游' in reward_text:
+                            reward_parts = reward_text.split('-')[-1].strip()
+                            if button_disabled:
                                 return False, "今天已经神游过", [reward_parts]
                             else:
-                                logger.info(f"找到用户最近一次神游记录: {reward_parts}")
+                                logger.info(f"找到最近一次神游记录: {reward_parts}")
             
-            # 如果没有免费按钮,说明今天已经神游过了
-            if not free_button:
+            # 如果按钮被禁用但没找到记录
+            if button_disabled:
                 return False, "今天已经神游过", []
                 
-            # 2. 执行神游 - 使用免费神游选项
-            logger.info("找到免费神游按钮，执行神游操作")
+            # 如果没有免费按钮
+            if not free_button:
+                return False, "未找到神游按钮", []
+                
+            # 2. 执行神游
+            logger.info("执行神游操作...")
             shenyou_data = {
                 "type": "0"  # 0 表示免费神游
             }
@@ -566,32 +568,31 @@ class lemonshengyou(_PluginBase):
             response = session.post(lottery_url, data=shenyou_data, timeout=(3.05, 10))
             response.raise_for_status()
             
-            # 3. 解析结果
+            # 等待1秒让记录更新
+            time.sleep(1)
+            
+            # 重新获取页面检查结果
+            response = session.get(lottery_url, timeout=(3.05, 10))
+            response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # 重新获取神游记录列表
+            # 查找最新的神游记录
             lottery_list = soup.find('div', class_='lottery_list')
-            if lottery_list and username:
-                # 查找最新的神游记录(应该是第一条)
+            if lottery_list:
                 first_item = lottery_list.find('div', class_='item')
                 if first_item:
                     user_link = first_item.find('a', class_=['User_Name', 'PowerUser_Name', 'EliteUser_Name', 'CrazyUser_Name', 'InsaneUser_Name', 'VIP_Name', 'Uploader_Name'])
-                    if user_link and user_link.find('span', title=username):  # 直接检查span的title属性
+                    if user_link and user_link.find('span', title=username):
                         reward_text = first_item.get_text(strip=True)
-                        if '【神游' in reward_text:  # 修改为只匹配前缀
+                        if '【神游' in reward_text:
                             reward_parts = reward_text.split('-')[-1].strip()
-                            logger.info(f"神游成功，奖励: {reward_parts}")
                             return True, None, [reward_parts]
             
-            # 如果没有找到神游记录,返回失败
-            logger.warning("无法从神游记录中获取结果")
             return False, "无法获取神游结果", []
                 
         except requests.exceptions.RequestException as e:
-            logger.error(f"请求失败: {str(e)}")
             return False, f"请求失败: {str(e)}", []
         except Exception as e:
-            logger.error(f"神游失败: {str(e)}")
             return False, f"神游失败: {str(e)}", []
         finally:
             session.close()
@@ -603,7 +604,6 @@ class lemonshengyou(_PluginBase):
         :param site_info: 站点信息
         :return: 用户名
         """
-        site_name = site_info.get("name", "").strip()
         site_url = site_info.get("url", "").strip()
         
         try:
@@ -648,5 +648,5 @@ class lemonshengyou(_PluginBase):
             
             return username
         except Exception as e:
-            logger.error(f"获取站点 {site_name} 的用户名失败: {str(e)}")
+            logger.warning(f"获取用户名失败: {str(e)}")
             return None 
