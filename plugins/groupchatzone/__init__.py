@@ -31,7 +31,7 @@ class GroupChatZone(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/GroupChat.png"
     # 插件版本
-    plugin_version = "9.9.999"
+    plugin_version = "9.9.9999"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -1528,3 +1528,173 @@ class GroupChatZone(_PluginBase):
             if len(do_sites) == 0:
                 self._enabled = False
         return do_sites
+
+    def get_shoutbox_feedback(self, session, site_info: CommentedMap, message: str) -> List[dict]:
+        """
+        获取通用喊话区反馈
+        :param session: 请求会话
+        :param site_info: 站点信息
+        :param message: 发送的消息
+        :return: 反馈信息列表
+        """
+        import re  # 确保导入re模块
+        rewards = []
+        site_name = site_info.get("name", "").strip()
+        site_url = site_info.get("url", "").strip()
+        
+        try:
+            # 获取喊话区内容
+            shoutbox_url = urljoin(site_url, "/shoutbox.php")
+            response = session.get(
+                shoutbox_url,
+                timeout=(3.05, 10)
+            )
+            response.raise_for_status()
+            
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # 获取用户名
+            username = self.get_username(session, site_info)
+            
+            # 查找包含用户名或ID的消息
+            shouts = soup.select('.shoutrow, .specialshoutrow')
+            
+            # 查找最新的反馈（不限定时间，获取最新的@用户信息）
+            for i in range(min(20, len(shouts))):  # 检查最新的20条消息
+                shout = shouts[i]
+                text = shout.get_text(strip=True)
+                
+                # 检查是否包含用户名的@消息
+                if username and f"@{username}" in text:
+                    # 这可能是本次喊话的反馈
+                    rewards.append({
+                        "type": "raw_feedback",
+                        "amount": 0,
+                        "unit": "",
+                        "description": self._clean_shoutbox_text(text),
+                        "is_negative": "损失" in text or "惩罚" in text or "生气" in text or "不理" in text
+                    })
+                    # 只获取最新的一条反馈
+                    break
+                
+                # 如果找不到@用户的消息，但找到了包含用户发送消息内容的回复
+                elif message and message in text:
+                    # 查找下一条消息是否是系统/管理员回复
+                    if i + 1 < len(shouts):
+                        next_shout = shouts[i+1]
+                        next_text = next_shout.get_text(strip=True)
+                        # 如果下一条消息包含奖励关键词
+                        if any(keyword in next_text for keyword in ["奖励", "获得", "赏", "响应", "召唤"]):
+                            rewards.append({
+                                "type": "raw_feedback",
+                                "amount": 0,
+                                "unit": "",
+                                "description": self._clean_shoutbox_text(next_text),
+                                "is_negative": "损失" in next_text or "惩罚" in next_text or "生气" in next_text or "不理" in next_text
+                            })
+                            break
+            
+            return rewards
+        except Exception as e:
+            logger.error(f"获取站点 {site_name} 的喊话区反馈失败: {str(e)}")
+            return []
+            
+    def get_user_id(self, session, site_info: CommentedMap) -> str:
+        """
+        获取用户ID
+        :param session: 请求会话
+        :param site_info: 站点信息
+        :return: 用户ID
+        """
+        import re  # 确保导入re模块
+        site_name = site_info.get("name", "").strip()
+        site_url = site_info.get("url", "").strip()
+        
+        try:
+            # 访问个人信息页面
+            usercp_url = urljoin(site_url, "/usercp.php")
+            response = session.get(
+                usercp_url,
+                timeout=(3.05, 10)
+            )
+            response.raise_for_status()
+            
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # 查找用户ID
+            user_id = None
+            
+            # 方法1: 从URL中获取
+            profile_link = soup.select_one('a[href*="userdetails.php?id="]')
+            if profile_link:
+                href = profile_link.get('href')
+                user_id = href.split('id=')[1].split('&')[0]
+            
+            # 方法2: 从页面内容中获取
+            if not user_id:
+                userid_elem = soup.select_one('input[name="userid"]')
+                if userid_elem:
+                    user_id = userid_elem.get('value')
+            
+            return user_id
+        except Exception as e:
+            logger.error(f"获取站点 {site_name} 的用户ID失败: {str(e)}")
+            return None
+    
+    def get_username(self, session, site_info: CommentedMap) -> str:
+        """
+        获取用户名
+        :param session: 请求会话
+        :param site_info: 站点信息
+        :return: 用户名
+        """
+        import re  # 确保导入re模块
+        site_name = site_info.get("name", "").strip()
+        site_url = site_info.get("url", "").strip()
+        
+        try:
+            # 访问个人信息页面
+            usercp_url = urljoin(site_url, "/usercp.php")
+            response = session.get(
+                usercp_url,
+                timeout=(3.05, 10)
+            )
+            response.raise_for_status()
+            
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # 尝试多种方式获取用户名
+            username = None
+            
+            # 方法1: 从欢迎信息中获取
+            welcome_msg = soup.select_one('.welcome')
+            if welcome_msg:
+                text = welcome_msg.get_text()
+                import re
+                username_match = re.search(r'欢迎回来.*?([^,，\s]+)', text)
+                if username_match:
+                    username = username_match.group(1)
+            
+            # 方法2: 从用户详情链接中获取
+            if not username:
+                username_elem = soup.select_one('a[href*="userdetails.php"]')
+                if username_elem:
+                    username = username_elem.get_text(strip=True)
+            
+            # 方法3: 直接尝试查找用户名元素
+            if not username:
+                # 尝试找到常见的用户名显示位置
+                user_elements = soup.select('.username, .user, .profile-username, a[href*="userdetails"]')
+                for elem in user_elements:
+                    potential_username = elem.get_text(strip=True)
+                    if potential_username and len(potential_username) > 1 and len(potential_username) < 30:
+                        username = potential_username
+                        break
+            
+            return username
+        except Exception as e:
+            logger.error(f"获取站点 {site_name} 的用户名失败: {str(e)}")
+            return None
