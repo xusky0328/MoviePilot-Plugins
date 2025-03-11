@@ -31,7 +31,7 @@ class GroupChatZone(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/GroupChat.png"
     # 插件版本
-    plugin_version = "13.99.999"
+    plugin_version = "14.99.999"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -1372,6 +1372,8 @@ class GroupChatZone(_PluginBase):
         try:
             # 获取站内信列表
             message_url = urljoin(site_url, "/messages.php")
+            logger.info(f"正在获取站点 {site_name} 的站内信: {message_url}")
+            
             response = session.get(
                 message_url,
                 timeout=(3.05, 10)
@@ -1379,150 +1381,130 @@ class GroupChatZone(_PluginBase):
             response.raise_for_status()
             
             from bs4 import BeautifulSoup
-            soup = BeautifulSoup(response.text, 'html.parser')
+            html_text = response.text
+            soup = BeautifulSoup(html_text, 'html.parser')
             
-            # 先查找未读消息，如果没有再查找所有消息
-            all_rows = soup.select('tr:has(td > img[title="Unread"])')
-            has_unread = len(all_rows) > 0
-            logger.info(f"织梦站点找到 {len(all_rows)} 条未读消息")
+            # 直接查找包含赠送电力相关文本的链接
+            power_links = []
+            all_links = soup.select('a[href*="viewmessage"]')
+            for link in all_links:
+                link_text = link.get_text(strip=True)
+                if "赠送" in link_text and "电力" in link_text:
+                    power_links.append(link)
+                    logger.info(f"找到电力消息链接: {link_text}")
             
-            if not all_rows:
-                # 如果没有未读消息，获取最新的邮件
-                all_rows = soup.select('tr')
-                logger.info(f"织梦站点找到 {len(all_rows)} 条消息")
+            logger.info(f"找到 {len(power_links)} 条电力消息链接")
             
-            # 提取有效的消息行
-            valid_rows = []
-            for row in all_rows:
-                # 确保行有足够的单元格
-                cells = row.find_all('td')
-                if len(cells) >= 2:
-                    # 检查是否有主题单元格
-                    subject_cell = row.select_one('td:nth-child(2)')
-                    if subject_cell and subject_cell.get_text(strip=True):
-                        valid_rows.append(row)
-            
-            logger.info(f"织梦站点找到 {len(valid_rows)} 条有效消息")
-            
-            if not valid_rows:
-                logger.error(f"织梦站点无法找到任何有效消息")
-                return []
+            if power_links:
+                # 处理第一条电力消息
+                power_link = power_links[0]
+                power_text = power_link.get_text(strip=True)
                 
-            # 遍历找到的有效消息行
-            for row in valid_rows[:5]:  # 只看前5条消息
-                # 获取消息标题
-                subject_cell = row.select_one('td:nth-child(2)')
-                if not subject_cell:
-                    continue
-                    
-                subject_text = subject_cell.get_text(strip=True)
-                logger.info(f"织梦站点消息标题内容: '{subject_text}'")
-                
-                # 电力奖励格式识别 - 匹配"收到来自 zmpt 赠送的 2210 电力"这种格式
-                if "电力" in subject_text:
-                    # 尝试提取电力数量
-                    power_match = re.search(r'赠送的\s*([-\d]+)\s*电力', subject_text)
-                    if not power_match:
-                        power_match = re.search(r'(\d+)\s*电力', subject_text)
-                    
-                    amount = power_match.group(1) if power_match else "未知数量"
-                    logger.info(f"织梦站点找到电力奖励: {amount}")
+                # 提取电力数量
+                power_match = re.search(r'赠送的\s*([-+]?\d+)\s*电力', power_text)
+                if power_match:
+                    amount = power_match.group(1)
+                    is_negative = amount.startswith("-")
+                    logger.info(f"提取到电力数量: {amount}")
                     
                     rewards.append({
                         "type": "电力",
-                        "amount": amount,
+                        "amount": amount.lstrip("+-"),
                         "unit": "",
-                        "description": f"收到电力奖励",
-                        "is_negative": "-" in amount if isinstance(amount, str) else False
+                        "description": f"{'扣除' if is_negative else '收到'}电力奖励",
+                        "is_negative": is_negative
                     })
-                    break
-                elif "上传" in subject_text:
-                    # 尝试提取上传量
-                    upload_match = re.search(r'(\d+(?:\.\d+)?).*?(?:GB|MB|TB)', subject_text)
-                    amount = upload_match.group(1) if upload_match else "未知数量"
-                    unit = "GB"  # 默认单位
-                    
-                    if upload_match and "MB" in upload_match.group(0):
-                        unit = "MB"
-                    elif upload_match and "TB" in upload_match.group(0):
-                        unit = "TB"
-                    
-                    logger.info(f"织梦站点找到上传奖励: {amount} {unit}")
-                    rewards.append({
-                        "type": "上传量",
-                        "amount": amount,
-                        "unit": unit,
-                        "description": f"获得上传量奖励",
-                        "is_negative": False
-                    })
-                    break
+                    return rewards
             
-            # 如果没有找到符合条件的消息，尝试获取最新的邮件内容
-            if not rewards:
-                logger.info("织梦站点未在消息列表中找到奖励，尝试直接获取最新消息")
-                try:
-                    # 查找第一条消息的链接并打开
-                    message_link = None
-                    for row in valid_rows[:1]:  # 只打开最新的一条
-                        links = row.select('a[href*="viewmessage"]')
-                        if links:
-                            message_link = links[0]['href']
-                            break
+            # 如果上面的方法失败，使用正则表达式直接从HTML中提取
+            logger.info("使用正则表达式从HTML中提取电力消息")
+            power_matches = re.findall(r'<a href="messages\.php\?action=viewmessage[^>]*>(收到来自[^<]*赠送的\s*[-+]?\d+\s*电力)</a>', html_text)
+            
+            if power_matches:
+                logger.info(f"正则表达式找到 {len(power_matches)} 条电力消息")
+                power_text = power_matches[0]  # 使用第一条匹配
+                
+                # 提取电力数量
+                power_match = re.search(r'赠送的\s*([-+]?\d+)\s*电力', power_text)
+                if power_match:
+                    amount = power_match.group(1)
+                    is_negative = amount.startswith("-")
+                    logger.info(f"从正则表达式匹配中提取到电力数量: {amount}")
                     
-                    if message_link:
-                        # 打开消息详情
-                        full_link = urljoin(site_url, message_link)
-                        logger.info(f"织梦站点打开消息链接: {full_link}")
-                        
-                        message_response = session.get(full_link, timeout=(3.05, 10))
-                        message_soup = BeautifulSoup(message_response.text, 'html.parser')
-                        
-                        # 获取消息内容
-                        message_content = message_soup.get_text()
-                        logger.info(f"织梦站点消息详情前100字符: {message_content[:100]}")
-                        
-                        # 查找电力信息
-                        if "电力" in message_content:
-                            power_match = re.search(r'(\d+)\s*电力', message_content)
-                            amount = power_match.group(1) if power_match else "未知数量"
+                    rewards.append({
+                        "type": "电力",
+                        "amount": amount.lstrip("+-"),
+                        "unit": "",
+                        "description": f"{'扣除' if is_negative else '收到'}电力奖励",
+                        "is_negative": is_negative
+                    })
+                    return rewards
+            
+            # 如果仍然未找到，尝试更宽松的方法
+            logger.info("使用更宽松的方法查找电力消息")
+            # 查找所有表格的行
+            rows = soup.select('table tr')
+            logger.info(f"找到 {len(rows)} 个表格行")
+            
+            # 查找包含"电力"的行
+            for row in rows:
+                row_text = row.get_text(strip=True)
+                if "电力" in row_text:
+                    # 获取行中所有链接
+                    links = row.select('a')
+                    for link in links:
+                        link_text = link.get_text(strip=True)
+                        if "电力" in link_text:
+                            logger.info(f"在表格行中找到电力链接: {link_text}")
                             
-                            rewards.append({
-                                "type": "电力",
-                                "amount": amount,
-                                "unit": "",
-                                "description": f"收到电力奖励",
-                                "is_negative": False
-                            })
-                        else:
-                            # 如果没有具体信息，至少返回消息标题
-                            first_row = valid_rows[0]
-                            subject = first_row.select_one('td:nth-child(2)').get_text(strip=True)
-                            
-                            rewards.append({
-                                "type": "raw_feedback",
-                                "amount": 0,
-                                "unit": "",
-                                "description": f"织梦站点最新消息: {subject}",
-                                "is_negative": False
-                            })
-                except Exception as e:
-                    logger.error(f"织梦站点打开消息详情失败: {str(e)}")
-                    # 至少返回一条消息的标题作为反馈
-                    if valid_rows:
-                        first_row = valid_rows[0]
-                        subject = first_row.select_one('td:nth-child(2)').get_text(strip=True)
-                        
-                        rewards.append({
-                            "type": "raw_feedback",
-                            "amount": 0,
-                            "unit": "",
-                            "description": f"织梦站点最新消息: {subject}",
-                            "is_negative": False
-                        })
+                            # 尝试提取电力数量
+                            power_match = re.search(r'[-+]?\d+\s*电力', link_text)
+                            if power_match:
+                                power_text = power_match.group(0)
+                                amount = re.search(r'([-+]?\d+)', power_text).group(1)
+                                is_negative = amount.startswith("-")
+                                
+                                logger.info(f"从表格行链接中提取到电力数量: {amount}")
+                                
+                                rewards.append({
+                                    "type": "电力",
+                                    "amount": amount.lstrip("+-"),
+                                    "unit": "",
+                                    "description": f"{'扣除' if is_negative else '收到'}电力奖励",
+                                    "is_negative": is_negative
+                                })
+                                return rewards
+            
+            # 如果所有方法都失败，返回一个通用消息
+            logger.warning("无法识别电力消息，返回通用消息")
+            
+            # 尝试至少返回最新一条消息
+            latest_links = soup.select('td.rowfollow a[href*="viewmessage"]')
+            if latest_links:
+                latest_message = latest_links[0].get_text(strip=True)
+                logger.info(f"返回最新消息: {latest_message}")
+                
+                rewards.append({
+                    "type": "raw_feedback",
+                    "amount": 0,
+                    "unit": "",
+                    "description": f"站内信: {latest_message}",
+                    "is_negative": False
+                })
+            else:
+                rewards.append({
+                    "type": "raw_feedback",
+                    "amount": 0,
+                    "unit": "",
+                    "description": f"未能识别织梦站点消息",
+                    "is_negative": False
+                })
             
             return rewards
         except Exception as e:
             logger.error(f"获取站点 {site_name} 的织梦站内信反馈失败: {str(e)}")
+            import traceback
+            logger.error(f"详细错误: {traceback.format_exc()}")
             return []
             
     def get_message_feedback(self, session, site_info: CommentedMap) -> List[dict]:
