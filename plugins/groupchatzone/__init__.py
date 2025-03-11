@@ -31,7 +31,7 @@ class GroupChatZone(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/GroupChat.png"
     # 插件版本
-    plugin_version = "12.99.999"
+    plugin_version = "13.99.999"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -1388,54 +1388,52 @@ class GroupChatZone(_PluginBase):
             
             if not all_rows:
                 # 如果没有未读消息，获取最新的邮件
-                all_rows = soup.select('tr:has(td > img)')
+                all_rows = soup.select('tr')
                 logger.info(f"织梦站点找到 {len(all_rows)} 条消息")
             
-            if not all_rows:
-                # 如果仍然没有找到消息，尝试使用更宽松的选择器
-                all_rows = soup.select('table.main tr')
-                logger.info(f"织梦站点使用备用选择器找到 {len(all_rows)} 条消息")
-                
-            if not all_rows:
-                logger.error(f"织梦站点无法找到任何消息")
+            # 提取有效的消息行
+            valid_rows = []
+            for row in all_rows:
+                # 确保行有足够的单元格
+                cells = row.find_all('td')
+                if len(cells) >= 2:
+                    # 检查是否有主题单元格
+                    subject_cell = row.select_one('td:nth-child(2)')
+                    if subject_cell and subject_cell.get_text(strip=True):
+                        valid_rows.append(row)
+            
+            logger.info(f"织梦站点找到 {len(valid_rows)} 条有效消息")
+            
+            if not valid_rows:
+                logger.error(f"织梦站点无法找到任何有效消息")
                 return []
                 
-            # 遍历找到的消息行，寻找包含电力关键词的消息
-            for row in all_rows[:5]:  # 只看前5条消息
-                # 如果是未读消息，标记为已读
-                if has_unread:
-                    try:
-                        # 获取标记为已读的链接
-                        read_link = row.select_one('a[href*="&action=read"]')
-                        if read_link:
-                            read_url = urljoin(site_url, read_link['href'])
-                            # 发送请求标记为已读
-                            mark_response = session.get(read_url, timeout=(3.05, 5))
-                            mark_response.raise_for_status()
-                            logger.info(f"已将站点 {site_name} 的未读消息标记为已读")
-                    except Exception as e:
-                        logger.error(f"标记站点 {site_name} 的消息为已读失败: {str(e)}")
-                
+            # 遍历找到的有效消息行
+            for row in valid_rows[:5]:  # 只看前5条消息
                 # 获取消息标题
                 subject_cell = row.select_one('td:nth-child(2)')
                 if not subject_cell:
                     continue
                     
                 subject_text = subject_cell.get_text(strip=True)
-                logger.info(f"织梦站点消息标题: {subject_text}")
+                logger.info(f"织梦站点消息标题内容: '{subject_text}'")
                 
-                # 电力奖励格式识别
+                # 电力奖励格式识别 - 匹配"收到来自 zmpt 赠送的 2210 电力"这种格式
                 if "电力" in subject_text:
                     # 尝试提取电力数量
-                    power_match = re.search(r'(\d+).*?电力', subject_text)
+                    power_match = re.search(r'赠送的\s*([-\d]+)\s*电力', subject_text)
+                    if not power_match:
+                        power_match = re.search(r'(\d+)\s*电力', subject_text)
+                    
                     amount = power_match.group(1) if power_match else "未知数量"
+                    logger.info(f"织梦站点找到电力奖励: {amount}")
                     
                     rewards.append({
                         "type": "电力",
                         "amount": amount,
                         "unit": "",
                         "description": f"收到电力奖励",
-                        "is_negative": False
+                        "is_negative": "-" in amount if isinstance(amount, str) else False
                     })
                     break
                 elif "上传" in subject_text:
@@ -1449,6 +1447,7 @@ class GroupChatZone(_PluginBase):
                     elif upload_match and "TB" in upload_match.group(0):
                         unit = "TB"
                     
+                    logger.info(f"织梦站点找到上传奖励: {amount} {unit}")
                     rewards.append({
                         "type": "上传量",
                         "amount": amount,
@@ -1457,56 +1456,69 @@ class GroupChatZone(_PluginBase):
                         "is_negative": False
                     })
                     break
-                else:
-                    # 对于没有明确类型的消息，添加原始反馈
-                    rewards.append({
-                        "type": "raw_feedback",
-                        "amount": 0,
-                        "unit": "",
-                        "description": f"站内信: {subject_text[:100]}",
-                        "is_negative": False
-                    })
-                    break
             
-            # 如果没有找到符合条件的消息，尝试打开邮箱页面读取最新消息详情
+            # 如果没有找到符合条件的消息，尝试获取最新的邮件内容
             if not rewards:
+                logger.info("织梦站点未在消息列表中找到奖励，尝试直接获取最新消息")
                 try:
-                    # 尝试打开邮箱页面读取最新消息详情
-                    inbox_url = urljoin(site_url, "/messages.php?action=viewmailbox&box=1")
-                    inbox_response = session.get(inbox_url, timeout=(3.05, 10))
-                    inbox_soup = BeautifulSoup(inbox_response.text, 'html.parser')
+                    # 查找第一条消息的链接并打开
+                    message_link = None
+                    for row in valid_rows[:1]:  # 只打开最新的一条
+                        links = row.select('a[href*="viewmessage"]')
+                        if links:
+                            message_link = links[0]['href']
+                            break
                     
-                    # 寻找最新的邮件
-                    messages = inbox_soup.select('tr')
-                    if messages:
-                        latest_message = messages[0]
-                        subject = latest_message.select_one('td:nth-child(2)')
-                        if subject:
-                            subject_text = subject.get_text(strip=True)
-                            logger.info(f"织梦站点收件箱消息标题: {subject_text}")
+                    if message_link:
+                        # 打开消息详情
+                        full_link = urljoin(site_url, message_link)
+                        logger.info(f"织梦站点打开消息链接: {full_link}")
+                        
+                        message_response = session.get(full_link, timeout=(3.05, 10))
+                        message_soup = BeautifulSoup(message_response.text, 'html.parser')
+                        
+                        # 获取消息内容
+                        message_content = message_soup.get_text()
+                        logger.info(f"织梦站点消息详情前100字符: {message_content[:100]}")
+                        
+                        # 查找电力信息
+                        if "电力" in message_content:
+                            power_match = re.search(r'(\d+)\s*电力', message_content)
+                            amount = power_match.group(1) if power_match else "未知数量"
                             
-                            if "电力" in subject_text:
-                                # 尝试提取电力数量
-                                power_match = re.search(r'(\d+).*?电力', subject_text)
-                                amount = power_match.group(1) if power_match else "未知数量"
-                                
-                                rewards.append({
-                                    "type": "电力",
-                                    "amount": amount,
-                                    "unit": "",
-                                    "description": f"收到电力奖励",
-                                    "is_negative": False
-                                })
-                            else:
-                                rewards.append({
-                                    "type": "raw_feedback",
-                                    "amount": 0,
-                                    "unit": "",
-                                    "description": f"织梦站点反馈: {subject_text}",
-                                    "is_negative": False
-                                })
+                            rewards.append({
+                                "type": "电力",
+                                "amount": amount,
+                                "unit": "",
+                                "description": f"收到电力奖励",
+                                "is_negative": False
+                            })
+                        else:
+                            # 如果没有具体信息，至少返回消息标题
+                            first_row = valid_rows[0]
+                            subject = first_row.select_one('td:nth-child(2)').get_text(strip=True)
+                            
+                            rewards.append({
+                                "type": "raw_feedback",
+                                "amount": 0,
+                                "unit": "",
+                                "description": f"织梦站点最新消息: {subject}",
+                                "is_negative": False
+                            })
                 except Exception as e:
-                    logger.error(f"获取织梦站点收件箱失败: {str(e)}")
+                    logger.error(f"织梦站点打开消息详情失败: {str(e)}")
+                    # 至少返回一条消息的标题作为反馈
+                    if valid_rows:
+                        first_row = valid_rows[0]
+                        subject = first_row.select_one('td:nth-child(2)').get_text(strip=True)
+                        
+                        rewards.append({
+                            "type": "raw_feedback",
+                            "amount": 0,
+                            "unit": "",
+                            "description": f"织梦站点最新消息: {subject}",
+                            "is_negative": False
+                        })
             
             return rewards
         except Exception as e:
