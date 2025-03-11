@@ -29,7 +29,7 @@ class lemonshengyou(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/lemon.ico"
     # 插件版本
-    plugin_version = "0.9.2"
+    plugin_version = "0.9.3"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -397,6 +397,13 @@ class lemonshengyou(_PluginBase):
             error_msg = None
             rewards = []
             
+            # 获取用户名
+            username = site_info.get("username", "").strip()
+            if not username:
+                return False, "无法获取站点用户名信息", []
+            
+            logger.info(f"当前用户名: {username}")
+
             for i in range(self._retry_count):
                 try:
                     success, error_msg, rewards = self.__do_shenyou(site_info)
@@ -453,6 +460,13 @@ class lemonshengyou(_PluginBase):
         site_cookie = site_info.get("cookie", "").strip()
         ua = site_info.get("ua", "").strip()
         proxies = settings.PROXY if site_info.get("proxy") else None
+
+        # 获取用户名
+        username = site_info.get("username", "").strip()
+        if not username:
+            return False, "无法获取站点用户名信息", []
+            
+        logger.info(f"当前用户名: {username}")
 
         if not all([site_name, site_url, site_cookie, ua]):
             return False, "站点信息不完整", []
@@ -511,8 +525,9 @@ class lemonshengyou(_PluginBase):
                 for item in lottery_list.find_all('div', class_='item'):
                     user_link = item.find('a', class_=['User_Name', 'PowerUser_Name', 'EliteUser_Name', 'CrazyUser_Name', 'InsaneUser_Name', 'VIP_Name', 'Uploader_Name'])
                     if user_link and 'title' in user_link.attrs:
-                        username = user_link['title'].split()[0]  # 获取用户名(可能包含身份标识,只取第一部分)
-                        if username == site_info.get('username'):
+                        record_username = user_link['title'].split()[0]  # 获取用户名(可能包含身份标识,只取第一部分)
+                        logger.debug(f"记录用户名: {record_username}, 当前用户名: {username}")
+                        if record_username == username:
                             reward_text = item.get_text(strip=True)
                             if '【神游' in reward_text:  # 修改为只匹配前缀
                                 # 找到了用户的神游记录
@@ -544,8 +559,9 @@ class lemonshengyou(_PluginBase):
                 if first_item:
                     user_link = first_item.find('a', class_=['User_Name', 'PowerUser_Name', 'EliteUser_Name', 'CrazyUser_Name', 'InsaneUser_Name', 'VIP_Name', 'Uploader_Name'])
                     if user_link and 'title' in user_link.attrs:
-                        username = user_link['title'].split()[0]
-                        if username == site_info.get('username'):
+                        record_username = user_link['title'].split()[0]
+                        logger.debug(f"最新记录用户名: {record_username}, 当前用户名: {username}")
+                        if record_username == username:
                             reward_text = first_item.get_text(strip=True)
                             if '【神游' in reward_text:  # 修改为只匹配前缀
                                 reward_parts = reward_text.split('-')[-1].strip()
