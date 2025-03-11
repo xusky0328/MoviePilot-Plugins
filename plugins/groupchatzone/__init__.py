@@ -31,7 +31,7 @@ class GroupChatZone(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/GroupChat.png"
     # 插件版本
-    plugin_version = "9.9.99"
+    plugin_version = "9.9.999"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -807,6 +807,7 @@ class GroupChatZone(_PluginBase):
                     if rewards:
                         notification_text += f"站点 【{site_name}】 (消息: {message}):\n"
                         for reward in rewards:
+                            # 只输出有用的反馈
                             if reward.get("type") == "raw_feedback":
                                 # 直接显示原始反馈内容
                                 notification_text += f"- {reward.get('description', '')}\n"
@@ -962,12 +963,77 @@ class GroupChatZone(_PluginBase):
             except Exception as e:
                 logger.error(f"获取站点 {site_name} 的站内信反馈失败: {str(e)}")
             
+            # 这里对rewards进行清理和筛选
+            cleaned_rewards = []
+            for reward in feedback_info["rewards"]:
+                # 清理description中的HTML和无用内容
+                if "description" in reward:
+                    # 清理常见的HTML前缀
+                    desc = reward["description"]
+                    
+                    # 如果描述内容过长且没有特定关键词，认为是垃圾数据
+                    if len(desc) > 100 and not any(keyword in desc for keyword in ["奖励", "获得", "赏", "召唤", "响应", "工分", "上传", "下载", "@"]):
+                        continue
+                    
+                    # 如果是页面导航内容，忽略
+                    if desc.startswith("首") and ("页" in desc[:10]) and ("论" in desc[:10]):
+                        continue
+                    
+                    # 如果包含"欢迎回来"和大量其他内容，忽略
+                    if "欢迎回来" in desc and len(desc) > 50:
+                        continue
+                    
+                    # 清理掉\xa0和多余空格
+                    desc = desc.replace("\xa0", " ").strip()
+                    while "  " in desc:
+                        desc = desc.replace("  ", " ")
+                    
+                    reward["description"] = desc
+                
+                # 只保留有价值的反馈
+                if reward.get("type") == "raw_feedback" and not self._is_useful_feedback(reward["description"], message):
+                    continue
+                
+                cleaned_rewards.append(reward)
+            
+            # 更新清理后的奖励列表
+            feedback_info["rewards"] = cleaned_rewards
+            
             return feedback_info if feedback_info["rewards"] else None
             
         except Exception as e:
             logger.error(f"获取站点 {site_name} 的反馈失败: {str(e)}")
             return None
             
+    def _is_useful_feedback(self, description: str, message: str) -> bool:
+        """
+        判断反馈是否有用
+        :param description: 反馈描述
+        :param message: 发送的消息
+        :return: 是否有用
+        """
+        # 如果反馈内容为空或过短，认为无用
+        if not description or len(description) < 3:
+            return False
+            
+        # 如果只包含"主题"等无意义内容，认为无用
+        if description in ["主题", "站点反馈: 主题", "消息", "站点反馈: 消息"]:
+            return False
+            
+        # 包含关键词的反馈通常有用
+        useful_keywords = ["奖励", "获得", "赏", "召唤", "响应", "不理", "工分", "上传", "下载", 
+                          "电力", "象草", "魔力", "明天", "刷屏", "VIP", "彩虹"]
+                          
+        if any(keyword in description for keyword in useful_keywords):
+            return True
+            
+        # 如果包含@用户名，通常有用
+        if "@" in description:
+            return True
+            
+        # 默认认为无用
+        return False
+
     def identify_site_type(self, site_info: CommentedMap) -> str:
         """
         识别站点类型，用于选择合适的反馈解析方法
@@ -1021,42 +1087,55 @@ class GroupChatZone(_PluginBase):
             # 查找包含用户名或用于"黑丝娘"回复的消息
             shouts = soup.select('.shoutrow, .specialshoutrow')
             
-            # 记录最近的反馈（仅限当前请求的反馈）
-            recent_feedback = None
-            
-            # 从最新的消息开始，查找直接对应本次喊话的反馈
-            for i in range(min(10, len(shouts))):  # 只检查最新的10条消息
+            # 查找最新的反馈
+            for i in range(min(20, len(shouts))):  # 检查最新的20条消息
                 shout = shouts[i]
                 text = shout.get_text(strip=True)
                 
                 # 只查找@当前用户的黑丝娘回复
                 if "黑丝娘" in text and username and f"@{username}" in text:
-                    # 检查时间戳，只处理非常近的消息（如 "1分钟前" 或 "<1分钟前"）
-                    time_match = re.search(r'\[(<?[\s]*\d+)分钟前\]', text)
-                    if time_match:
-                        time_text = time_match.group(1).strip()
-                        # 如果是 "<1分钟前" 或 "1分钟前"
-                        if time_text.startswith("<") or time_text == "1":
-                            # 这是本次喊话的直接反馈
-                            recent_feedback = {
-                                "type": "raw_feedback",
-                                "amount": 0,
-                                "unit": "",
-                                "description": text,
-                                "is_negative": "损失" in text or "惩罚" in text or "生气" in text
-                            }
-                            rewards.append(recent_feedback)
-                            break
+                    # 这是本次喊话的直接反馈
+                    rewards.append({
+                        "type": "raw_feedback",
+                        "amount": 0,
+                        "unit": "",
+                        "description": self._clean_shoutbox_text(text),
+                        "is_negative": "损失" in text or "惩罚" in text or "生气" in text or "不理" in text
+                    })
+                    break
             
-            # 如果找不到直接反馈，返回空列表
-            if not rewards:
-                return []
-                
             return rewards
         except Exception as e:
             logger.error(f"获取站点 {site_name} 的PTLGS喊话区反馈失败: {str(e)}")
             return []
-    
+            
+    def _clean_shoutbox_text(self, text: str) -> str:
+        """
+        清理喊话区文本
+        :param text: 原始文本
+        :return: 清理后的文本
+        """
+        # 清理HTML及特殊字符
+        text = text.replace("\xa0", " ").strip()
+        
+        # 去除多余空格
+        while "  " in text:
+            text = text.replace("  ", " ")
+        
+        # 如果文本过长且包含导航内容，只保留关键部分
+        if len(text) > 100 and "首页" in text[:20]:
+            # 尝试提取中间的@消息部分
+            import re
+            match = re.search(r'\[(.*?)\](.*?)@(.*?)[\s]+(.*?)(?:$|首页|\[)', text)
+            if match:
+                time_part = match.group(1).strip()
+                sender = match.group(2).strip()
+                receiver = match.group(3).strip()
+                content = match.group(4).strip()
+                return f"[{time_part}] {sender}@{receiver} {content}"
+        
+        return text
+
     def get_frog_feedback(self, session, site_info: CommentedMap, message: str) -> List[dict]:
         """
         获取青蛙站点的喊话区反馈
@@ -1116,32 +1195,21 @@ class GroupChatZone(_PluginBase):
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # 查找所有消息行（包括已读和未读）
-            all_rows = soup.select('tr:has(td > img[title]), tr.unreadpm')
+            # 先查找未读消息，如果没有再查找所有消息
+            all_rows = soup.select('tr:has(td > img[title="Unread"])')
+            if not all_rows:
+                # 如果没有未读消息，获取最新的邮件
+                all_rows = soup.select('tr:has(td > img)')
             
             if not all_rows:
                 return []
                 
-            # 获取最新的一条消息（通常是第一条）
-            latest_row = all_rows[0]
-            
-            # 检查是否为未读消息，如果是，则标记为已读
-            unread_icon = latest_row.select_one('img[title="Unread"]')
-            if unread_icon:
-                # 获取标记为已读的链接
-                read_link = latest_row.select_one('a[href*="&action=read"]')
-                if read_link:
-                    read_url = urljoin(site_url, read_link['href'])
-                    # 发送请求标记为已读
-                    try:
-                        session.get(read_url, timeout=(3.05, 5))
-                        logger.info(f"已将站点 {site_name} 的未读消息标记为已读")
-                    except Exception as e:
-                        logger.error(f"标记站点 {site_name} 的消息为已读失败: {str(e)}")
-            
-            # 获取消息主题
-            subject_cell = latest_row.select_one('td:nth-child(2)')
-            if subject_cell:
+            # 遍历找到的消息行，寻找包含象草关键词的消息
+            for row in all_rows[:3]:  # 只看前3条消息
+                subject_cell = row.select_one('td:nth-child(2)')
+                if not subject_cell:
+                    continue
+                    
                 subject_text = subject_cell.get_text(strip=True)
                 
                 # 象草奖励格式识别
@@ -1150,29 +1218,34 @@ class GroupChatZone(_PluginBase):
                     elephant_match = re.search(r'(\d+)象草', subject_text)
                     amount = elephant_match.group(1) if elephant_match else "未知数量"
                     
+                    # 检查消息是否是发给当前用户的，避免获取到其他用户的邮件
+                    if self._is_message_for_current_user(row, session, site_info):
+                        rewards.append({
+                            "type": "raw_feedback",
+                            "amount": 0,
+                            "unit": "",
+                            "description": f"获得 {amount} 象草奖励",
+                            "is_negative": False
+                        })
+                        break
+            
+            # 如果没有找到符合条件的消息，返回空列表
+            if not rewards:
+                # 尝试打开邮箱页面读取最新消息详情
+                inbox_url = urljoin(site_url, "/messages.php?action=viewmailbox&box=1")
+                inbox_response = session.get(inbox_url, timeout=(3.05, 10))
+                inbox_soup = BeautifulSoup(inbox_response.text, 'html.parser')
+                
+                # 寻找最新的包含"象草"的邮件
+                messages = inbox_soup.select('tr:has(td:contains("象草"))')
+                if messages:
+                    latest_message = messages[0]
+                    subject = latest_message.select_one('td:nth-child(2)').get_text(strip=True)
                     rewards.append({
                         "type": "raw_feedback",
                         "amount": 0,
                         "unit": "",
-                        "description": f"{subject_text} (象草数量: {amount})",
-                        "is_negative": False
-                    })
-                # 如果没有找到象草信息，但包含"奖励"相关词语，也添加
-                elif any(keyword in subject_text for keyword in ["奖励", "获得", "赠送", "收到"]):
-                    rewards.append({
-                        "type": "raw_feedback",
-                        "amount": 0,
-                        "unit": "",
-                        "description": subject_text,
-                        "is_negative": False
-                    })
-                # 对于无奖励反馈或限制信息，也添加
-                else:
-                    rewards.append({
-                        "type": "raw_feedback",
-                        "amount": 0,
-                        "unit": "",
-                        "description": f"站点反馈: {subject_text}",
+                        "description": f"邮件内容: {subject}",
                         "is_negative": False
                     })
             
@@ -1205,71 +1278,110 @@ class GroupChatZone(_PluginBase):
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(response.text, 'html.parser')
             
+            # 获取用户名，用于后续判断消息是否是发给当前用户的
+            username = self.get_username(session, site_info)
+            
             # 查找所有消息行（包括已读和未读）
-            all_rows = soup.select('tr:has(td > img[title]), tr.unreadpm')
+            all_rows = soup.select('tr:has(td > img[title="Unread"])')
+            if not all_rows:
+                all_rows = soup.select('tr:has(td > img)')
             
             if not all_rows:
                 return []
                 
             # 获取最新的一条消息（通常是第一条）
-            latest_row = all_rows[0]
-            
-            # 检查是否为未读消息，如果是，则标记为已读
-            unread_icon = latest_row.select_one('img[title="Unread"]')
-            if unread_icon:
-                # 获取标记为已读的链接
-                read_link = latest_row.select_one('a[href*="&action=read"]')
-                if read_link:
-                    read_url = urljoin(site_url, read_link['href'])
-                    # 发送请求标记为已读
-                    try:
-                        session.get(read_url, timeout=(3.05, 5))
-                        logger.info(f"已将站点 {site_name} 的未读消息标记为已读")
-                    except Exception as e:
-                        logger.error(f"标记站点 {site_name} 的消息为已读失败: {str(e)}")
-            
-            # 获取消息主题
-            subject_cell = latest_row.select_one('td:nth-child(2)')
-            if subject_cell:
+            for row in all_rows[:3]:  # 只检查前三条消息
+                # 获取消息主题
+                subject_cell = row.select_one('td:nth-child(2)')
+                if not subject_cell:
+                    continue
+                    
                 subject_text = subject_cell.get_text(strip=True)
                 
                 # 电力奖励格式识别
                 if "电力" in subject_text:
-                    # 尝试提取电力数量
-                    power_match = re.search(r'(-?\d+)电力', subject_text)
-                    amount = power_match.group(1) if power_match else "未知数量"
-                    is_negative = amount.startswith('-') if amount != "未知数量" else False
-                    
-                    rewards.append({
-                        "type": "raw_feedback",
-                        "amount": 0,
-                        "unit": "",
-                        "description": f"{subject_text} (电力数量: {amount[1:] if is_negative else amount})",
-                        "is_negative": is_negative
-                    })
-                # 如果没有找到电力信息，但包含"奖励"相关词语，也添加
-                elif any(keyword in subject_text for keyword in ["奖励", "获得", "赠送", "收到"]):
-                    rewards.append({
-                        "type": "raw_feedback",
-                        "amount": 0,
-                        "unit": "",
-                        "description": subject_text,
-                        "is_negative": False
-                    })
-                # 对于无奖励反馈或限制信息，也添加
-                else:
-                    rewards.append({
-                        "type": "raw_feedback",
-                        "amount": 0,
-                        "unit": "",
-                        "description": f"站点反馈: {subject_text}",
-                        "is_negative": False
-                    })
+                    # 检查是否是发给当前用户的消息，避免读取其他用户的消息
+                    if self._is_message_for_current_user(row, session, site_info):
+                        # 尝试提取电力数量
+                        power_match = re.search(r'(-?\d+)电力', subject_text)
+                        if power_match:
+                            amount = power_match.group(1)
+                            is_negative = amount.startswith('-')
+                            
+                            rewards.append({
+                                "type": "raw_feedback",
+                                "amount": 0,
+                                "unit": "",
+                                "description": f"{'扣除' if is_negative else '获得'} {amount[1:] if is_negative else amount} 电力",
+                                "is_negative": is_negative
+                            })
+                            break
+                        else:
+                            # 如果无法提取数量但确认是电力相关消息
+                            rewards.append({
+                                "type": "raw_feedback",
+                                "amount": 0,
+                                "unit": "",
+                                "description": f"电力变动: {subject_text}",
+                                "is_negative": '-' in subject_text
+                            })
+                            break
+            
+            # 如果没有找到符合条件的消息，返回空列表
+            if not rewards and username:
+                # 尝试查找包含用户名的消息
+                for row in all_rows[:5]:  # 扩大范围到5条
+                    subject_text = row.select_one('td:nth-child(2)').get_text(strip=True) if row.select_one('td:nth-child(2)') else ""
+                    if username in subject_text and "电力" in subject_text:
+                        rewards.append({
+                            "type": "raw_feedback",
+                            "amount": 0,
+                            "unit": "",
+                            "description": f"电力相关: {subject_text}",
+                            "is_negative": '-' in subject_text
+                        })
+                        break
             
             return rewards
         except Exception as e:
             logger.error(f"获取站点 {site_name} 的织梦站内信反馈失败: {str(e)}")
             return []
+            
+    def _is_message_for_current_user(self, message_row, session, site_info: CommentedMap) -> bool:
+        """
+        判断消息是否是发给当前用户的
+        :param message_row: 消息行元素
+        :param session: 请求会话
+        :param site_info: 站点信息
+        :return: 是否是发给当前用户的
+        """
+        try:
+            # 获取当前用户名
+            username = self.get_username(session, site_info)
+            if not username:
+                return True  # 如果无法获取用户名，则默认认为是发给当前用户的
+                
+            # 尝试从消息中提取接收者信息
+            receiver_cell = message_row.select_one('td:nth-child(3)')
+            if receiver_cell:
+                receiver_text = receiver_cell.get_text(strip=True)
+                # 如果接收者包含当前用户名，则认为是发给当前用户的
+                if username.lower() in receiver_text.lower():
+                    return True
+                    
+            # 如果无法确定接收者，则查看消息详情
+            message_link = message_row.select_one('a[href*="viewmessage"]')
+            if message_link:
+                href = message_link.get('href')
+                # 不要真的打开消息详情页面，因为这会标记为已读
+                # 此处只是通过消息链接的存在来判断这可能是一条有效消息
+                return True
+                
+            # 默认情况下，假设最新的几条消息是发给当前用户的
+            return True
+        except Exception as e:
+            # 出错时默认认为是发给当前用户的，避免漏掉重要信息
+            return True
             
     def get_message_feedback(self, session, site_info: CommentedMap) -> List[dict]:
         """
@@ -1300,167 +1412,61 @@ class GroupChatZone(_PluginBase):
             soup = BeautifulSoup(response.text, 'html.parser')
             
             # 查找所有消息行（包括已读和未读）
-            all_rows = soup.select('tr:has(td > img[title]), tr.unreadpm')
+            all_rows = soup.select('tr:has(td > img[title="Unread"])')
             
             if not all_rows:
                 return []
                 
             # 获取最新的一条消息（通常是第一条）
-            latest_row = all_rows[0]
-            
-            # 检查是否为未读消息，如果是，则标记为已读
-            unread_icon = latest_row.select_one('img[title="Unread"]')
-            if unread_icon:
-                # 获取标记为已读的链接
-                read_link = latest_row.select_one('a[href*="&action=read"]')
-                if read_link:
-                    read_url = urljoin(site_url, read_link['href'])
-                    # 发送请求标记为已读
-                    try:
-                        session.get(read_url, timeout=(3.05, 5))
-                        logger.info(f"已将站点 {site_name} 的未读消息标记为已读")
-                    except Exception as e:
-                        logger.error(f"标记站点 {site_name} 的消息为已读失败: {str(e)}")
-            
-            # 获取消息主题和详情
-            message_link = latest_row.select_one('a[href*="viewmessage"]')
-            
-            if message_link:
-                try:
-                    message_id = message_link['href'].split('id=')[1].split('&')[0]
-                    message_detail_url = urljoin(site_url, f"/messages.php?action=viewmessage&id={message_id}")
+            for row in all_rows[:3]:  # 只检查前三条消息
+                # 获取消息主题
+                subject_cell = row.select_one('td:nth-child(2)')
+                if not subject_cell:
+                    continue
                     
-                    detail_response = session.get(
-                        message_detail_url,
-                        timeout=(3.05, 10)
-                    )
-                    detail_response.raise_for_status()
+                subject_text = subject_cell.get_text(strip=True)
+                
+                # 象草奖励格式识别
+                if "象草" in subject_text:
+                    # 尝试提取象草数量
+                    elephant_match = re.search(r'(\d+)象草', subject_text)
+                    amount = elephant_match.group(1) if elephant_match else "未知数量"
                     
-                    detail_soup = BeautifulSoup(detail_response.text, 'html.parser')
-                    message_content = detail_soup.select_one('.text')
-                    
-                    if message_content:
-                        text = message_content.get_text(strip=True)
-                        
-                        # 从文本中尝试提取奖励信息
-                        reward_info = self.extract_reward_info(text)
-                        if reward_info:
-                            rewards.append(reward_info)
-                        else:
-                            # 如果没有识别出具体奖励信息，但内容不为空，也添加为原始反馈
-                            rewards.append({
-                                "type": "raw_feedback",
-                                "amount": 0,
-                                "unit": "",
-                                "description": text,
-                                "is_negative": False
-                            })
-                except Exception as e:
-                    logger.error(f"解析站点 {site_name} 的消息详情失败: {str(e)}")
-                    
-                    # 如果无法获取详情，至少返回消息主题
-                    subject_cell = latest_row.select_one('td:nth-child(2)')
-                    if subject_cell:
-                        subject_text = subject_cell.get_text(strip=True)
+                    # 检查消息是否是发给当前用户的，避免获取到其他用户的邮件
+                    if self._is_message_for_current_user(row, session, site_info):
                         rewards.append({
-                            "type": "raw_feedback", 
+                            "type": "raw_feedback",
                             "amount": 0,
                             "unit": "",
-                            "description": f"站点反馈: {subject_text}",
+                            "description": f"获得 {amount} 象草奖励",
                             "is_negative": False
                         })
+                        break
+            
+            # 如果没有找到符合条件的消息，返回空列表
+            if not rewards:
+                # 尝试打开邮箱页面读取最新消息详情
+                inbox_url = urljoin(site_url, "/messages.php?action=viewmailbox&box=1")
+                inbox_response = session.get(inbox_url, timeout=(3.05, 10))
+                inbox_soup = BeautifulSoup(inbox_response.text, 'html.parser')
+                
+                # 寻找最新的包含"象草"的邮件
+                messages = inbox_soup.select('tr:has(td:contains("象草"))')
+                if messages:
+                    latest_message = messages[0]
+                    subject = latest_message.select_one('td:nth-child(2)').get_text(strip=True)
+                    rewards.append({
+                        "type": "raw_feedback",
+                        "amount": 0,
+                        "unit": "",
+                        "description": f"邮件内容: {subject}",
+                        "is_negative": False
+                    })
             
             return rewards
         except Exception as e:
             logger.error(f"获取站点 {site_name} 的站内信反馈失败: {str(e)}")
             return []
-    
-    def get_user_id(self, session, site_info: CommentedMap) -> str:
-        """
-        获取用户ID
-        :param session: 请求会话
-        :param site_info: 站点信息
-        :return: 用户ID
-        """
-        site_name = site_info.get("name", "").strip()
-        site_url = site_info.get("url", "").strip()
-        
-        try:
-            # 访问个人信息页面
-            usercp_url = urljoin(site_url, "/usercp.php")
-            response = session.get(
-                usercp_url,
-                timeout=(3.05, 10)
-            )
-            response.raise_for_status()
-            
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # 查找用户ID
-            user_id = None
-            
-            # 方法1: 从URL中获取
-            profile_link = soup.select_one('a[href*="userdetails.php?id="]')
-            if profile_link:
-                href = profile_link.get('href')
-                user_id = href.split('id=')[1].split('&')[0]
-            
-            # 方法2: 从页面内容中获取
-            if not user_id:
-                userid_elem = soup.select_one('input[name="userid"]')
-                if userid_elem:
-                    user_id = userid_elem.get('value')
-            
-            return user_id
-        except Exception as e:
-            logger.error(f"获取站点 {site_name} 的用户ID失败: {str(e)}")
-            return None
-    
-    def get_username(self, session, site_info: CommentedMap) -> str:
-        """
-        获取用户名
-        :param session: 请求会话
-        :param site_info: 站点信息
-        :return: 用户名
-        """
-        site_name = site_info.get("name", "").strip()
-        site_url = site_info.get("url", "").strip()
-        
-        try:
-            # 访问个人信息页面
-            usercp_url = urljoin(site_url, "/usercp.php")
-            response = session.get(
-                usercp_url,
-                timeout=(3.05, 10)
-            )
-            response.raise_for_status()
-            
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # 尝试多种方式获取用户名
-            username = None
-            
-            # 方法1: 从欢迎信息中获取
-            welcome_msg = soup.select_one('.welcome')
-            if welcome_msg:
-                text = welcome_msg.get_text()
-                import re
-                username_match = re.search(r'欢迎回来.*?([^,，\s]+)', text)
-                if username_match:
-                    username = username_match.group(1)
-            
-            # 方法2: 从用户详情链接中获取
-            if not username:
-                username_elem = soup.select_one('a[href*="userdetails.php"]')
-                if username_elem:
-                    username = username_elem.get_text(strip=True)
-            
-            return username
-        except Exception as e:
-            logger.error(f"获取站点 {site_name} 的用户名失败: {str(e)}")
-            return None
     
     def is_nexusphp_site(self, site_info: CommentedMap) -> bool:
         """
@@ -1522,215 +1528,3 @@ class GroupChatZone(_PluginBase):
             if len(do_sites) == 0:
                 self._enabled = False
         return do_sites
-
-    def extract_reward_info(self, text: str) -> dict:
-        """
-        从文本中提取奖励信息
-        :param text: 文本内容
-        :return: 奖励信息字典
-        """
-        import re
-        
-        # 初始化奖励信息
-        reward = {
-            "type": "unknown",
-            "amount": 0,
-            "unit": "",
-            "description": text,
-            "is_negative": False  # 是否为负面奖励（扣除）
-        }
-        
-        # 判断是否包含扣除关键词
-        negative_keywords = ['损失', '扣除', '惩罚', '邦邦两拳', '生气', '起床气']
-        is_negative = any(keyword in text for keyword in negative_keywords)
-        
-        # 提取下载量奖励
-        dl_match = re.search(r'(奖励|获得|赏|赠送).+?(\d+)[\s]?([G|T|M|K])[B]?.+?(下载量|下载)', text, re.IGNORECASE)
-        if dl_match:
-            reward["type"] = "下载量"
-            reward["amount"] = dl_match.group(2)
-            reward["unit"] = dl_match.group(3) + "B"
-            reward["is_negative"] = is_negative
-            return reward
-        
-        # 提取上传量奖励
-        ul_match = re.search(r'(奖励|获得|赏|赠送).+?(\d+)[\s]?([G|T|M|K])[B]?.+?(上传量|上传)', text, re.IGNORECASE)
-        if ul_match:
-            reward["type"] = "上传量"
-            reward["amount"] = ul_match.group(2)
-            reward["unit"] = ul_match.group(3) + "B"
-            reward["is_negative"] = is_negative
-            return reward
-            
-        # 也可能是简单的格式，如"XX GB 上传"
-        simple_ul_match = re.search(r'(\d+)[\s]?([G|T|M|K])[B]?.+?(上传)', text, re.IGNORECASE)
-        if simple_ul_match:
-            reward["type"] = "上传量"
-            reward["amount"] = simple_ul_match.group(1)
-            reward["unit"] = simple_ul_match.group(2) + "B"
-            reward["is_negative"] = is_negative
-            return reward
-        
-        # 提取魔力值奖励
-        bonus_match = re.search(r'(奖励|获得|赏|赠送).+?(\d+[,.\d]*).+?(魔力值|魔力)', text, re.IGNORECASE)
-        if bonus_match:
-            reward["type"] = "魔力值"
-            reward["amount"] = bonus_match.group(2).replace(',', '')
-            reward["unit"] = "点"
-            reward["is_negative"] = is_negative
-            return reward
-        
-        # 提取VIP奖励
-        vip_match = re.search(r'(获得|奖励|赏).+?(VIP|会员)', text, re.IGNORECASE)
-        if vip_match:
-            reward["type"] = "VIP"
-            reward["amount"] = 1
-            reward["unit"] = "个"
-            reward["is_negative"] = is_negative
-            return reward
-        
-        # 提取其他类型奖励
-        other_match = re.search(r'(获得|奖励|赏).+?(\w+ID|勋章|成就)', text, re.IGNORECASE)
-        if other_match:
-            reward["type"] = other_match.group(2)
-            reward["amount"] = 1
-            reward["unit"] = "个"
-            reward["is_negative"] = is_negative
-            return reward
-        
-        # PTLGS工分奖励/扣除
-        workpoints_match = re.search(r'(奖赏|获得|损失|惩罚|扣除).+?(\d+).+?(工分)', text, re.IGNORECASE)
-        if workpoints_match:
-            reward["type"] = "工分"
-            reward["amount"] = workpoints_match.group(2)
-            reward["unit"] = "分"
-            # 判断是否为负面奖励
-            if '损失' in text or '惩罚' in text or '扣除' in text:
-                reward["is_negative"] = True
-            return reward
-            
-        # 直接匹配"工分"数字格式
-        direct_workpoints_match = re.search(r'(\d+)\s*工分', text, re.IGNORECASE)
-        if direct_workpoints_match:
-            reward["type"] = "工分"
-            reward["amount"] = direct_workpoints_match.group(1)
-            reward["unit"] = "分"
-            reward["is_negative"] = is_negative
-            return reward
-        
-        # 织梦电力奖励/扣除
-        power_match = re.search(r'(赠送|收到).+?(-?\d+).+?(电力)', text, re.IGNORECASE)
-        if power_match:
-            reward["type"] = "电力"
-            reward["amount"] = power_match.group(2)
-            reward["unit"] = "点"
-            # 判断是否为负面奖励
-            if power_match.group(2).startswith('-'):
-                reward["is_negative"] = True
-                # 去掉负号
-                reward["amount"] = reward["amount"][1:]
-            return reward
-            
-        # 象站"象草"奖励
-        elephant_match = re.search(r'(\d+)(象草)', text, re.IGNORECASE)
-        if elephant_match:
-            reward["type"] = "象草"
-            reward["amount"] = elephant_match.group(1)
-            reward["unit"] = "点"
-            reward["is_negative"] = is_negative
-            return reward
-        
-        # 青蛙站固定奖励格式
-        frog_match = re.search(r'(发了！)', text, re.IGNORECASE)
-        if frog_match:
-            if '求上传' in text or '上传' in text:
-                reward["type"] = "上传量"
-                reward["amount"] = "10"
-                reward["unit"] = "GB"
-            elif '求下载' in text or '下载' in text:
-                reward["type"] = "下载量"
-                reward["amount"] = "10"
-                reward["unit"] = "GB"
-            reward["is_negative"] = False
-            return reward
-        
-        # 如果包含奖励关键词但无法识别具体类型
-        reward_keywords = ['奖励', '获得', '赏', '赠送', '收到']
-        if any(keyword in text for keyword in reward_keywords):
-            reward["description"] = text
-            reward["is_negative"] = is_negative
-            return reward
-        
-        # 如果不包含奖励信息，返回None
-        return None
-
-    def get_shoutbox_feedback(self, session, site_info: CommentedMap, message: str) -> List[dict]:
-        """
-        获取通用喊话区反馈
-        :param session: 请求会话
-        :param site_info: 站点信息
-        :param message: 发送的消息
-        :return: 反馈信息列表
-        """
-        import re  # 确保导入re模块
-        rewards = []
-        site_name = site_info.get("name", "").strip()
-        site_url = site_info.get("url", "").strip()
-        
-        try:
-            # 获取喊话区内容
-            shoutbox_url = urljoin(site_url, "/shoutbox.php")
-            response = session.get(
-                shoutbox_url,
-                timeout=(3.05, 10)
-            )
-            response.raise_for_status()
-            
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # 获取用户名
-            username = self.get_username(session, site_info)
-            
-            # 查找包含用户名或ID的消息
-            shouts = soup.select('.shoutrow, .specialshoutrow')
-            
-            # 查找最新的反馈（不限定时间，获取最新的@用户信息）
-            for i in range(min(20, len(shouts))):  # 检查最新的20条消息
-                shout = shouts[i]
-                text = shout.get_text(strip=True)
-                
-                # 检查是否包含用户名的@消息
-                if username and f"@{username}" in text:
-                    # 这可能是本次喊话的反馈
-                    rewards.append({
-                        "type": "raw_feedback",
-                        "amount": 0,
-                        "unit": "",
-                        "description": text,
-                        "is_negative": "损失" in text or "惩罚" in text or "生气" in text or "不理" in text
-                    })
-                    # 只获取最新的一条反馈
-                    break
-                
-                # 如果找不到@用户的消息，但找到了包含用户发送消息内容的回复
-                elif message and message in text:
-                    # 查找下一条消息是否是系统/管理员回复
-                    if i + 1 < len(shouts):
-                        next_shout = shouts[i+1]
-                        next_text = next_shout.get_text(strip=True)
-                        # 如果下一条消息包含奖励关键词
-                        if any(keyword in next_text for keyword in ["奖励", "获得", "赏", "响应", "召唤"]):
-                            rewards.append({
-                                "type": "raw_feedback",
-                                "amount": 0,
-                                "unit": "",
-                                "description": next_text,
-                                "is_negative": "损失" in next_text or "惩罚" in next_text or "生气" in next_text or "不理" in next_text
-                            })
-                            break
-            
-            return rewards
-        except Exception as e:
-            logger.error(f"获取站点 {site_name} 的喊话区反馈失败: {str(e)}")
-            return []
