@@ -29,7 +29,7 @@ class lemonshengyou(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/lemon.ico"
     # 插件版本
-    plugin_version = "1.0.3"
+    plugin_version = "1.0.4"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -531,7 +531,7 @@ class lemonshengyou(_PluginBase):
             soup = BeautifulSoup(response.text, 'html.parser')
             
             # 函数：查找用户的神游记录，检查前MAX_RECORDS条记录
-            def find_user_lottery_records(soup_obj, max_records=50):
+            def find_user_lottery_records(soup_obj, max_records=200):
                 records = []
                 lottery_list = soup_obj.find('div', class_='lottery_list')
                 if not lottery_list:
@@ -544,6 +544,9 @@ class lemonshengyou(_PluginBase):
                 # 只检查前max_records条记录
                 check_items = items[:max_records] if len(items) > max_records else items
                 
+                # 记录用于匹配的用户名格式
+                logger.info(f"要匹配的用户名: '{username}'")
+                
                 for item in check_items:
                     # 查找日期
                     date_span = item.find('span', class_='date')
@@ -552,22 +555,30 @@ class lemonshengyou(_PluginBase):
                     # 查找用户链接
                     user_link = item.find('a', class_=['User_Name', 'PowerUser_Name', 'EliteUser_Name', 'CrazyUser_Name', 'InsaneUser_Name', 'VIP_Name', 'Uploader_Name'])
                     
-                    # 尝试多种方式匹配用户名
+                    # 提取记录原始文本用于调试
+                    item_text = item.get_text(strip=True)
+                    
+                    # 严格匹配用户名
                     is_user_record = False
                     if user_link:
-                        # 方法1: 检查span的title属性
-                        span = user_link.find('span', title=username)
-                        if span:
+                        # 方法1: 直接检查链接文本与用户名是否完全匹配
+                        link_text = user_link.get_text(strip=True)
+                        if link_text == username:
                             is_user_record = True
+                            logger.info(f"方法1匹配成功: 链接文本'{link_text}'与用户名'{username}'完全匹配")
                         
-                        # 方法2: 检查用户链接文本
-                        elif username in user_link.get_text():
+                        # 方法2: 检查span的title属性是否与用户名完全匹配
+                        span = user_link.find('span')
+                        if span and span.has_attr('title') and span['title'] == username:
                             is_user_record = True
-                            
-                        # 方法3: 检查userdetails.php链接
-                        elif user_link.has_attr('href') and 'userdetails.php' in user_link['href']:
-                            # 可能需要进一步确认用户ID
-                            is_user_record = True
+                            logger.info(f"方法2匹配成功: span的title属性'{span['title']}'与用户名匹配")
+                        
+                        # 方法3: 检查是否包含userdetails.php链接和用户ID
+                        if user_link.has_attr('href') and 'userdetails.php?id=' in user_link['href']:
+                            user_id = user_link['href'].split('userdetails.php?id=')[1].split('&')[0]
+                            # 记录ID以便后续处理
+                            logger.debug(f"记录中的用户ID: {user_id}")
+                            # 这里我们无法直接匹配ID，因为需要知道当前用户ID
                     
                     if is_user_record:
                         # 找到用户记录
@@ -577,8 +588,16 @@ class lemonshengyou(_PluginBase):
                         
                         # 只保留包含神游关键词的记录
                         if '【神游' in reward_parts:
-                            logger.info(f"找到用户神游记录: {reward_parts} ({item_date})")
+                            logger.info(f"✅ 匹配成功 - 确认是用户 '{username}' 的记录: {reward_parts} ({item_date})")
                             records.append((reward_parts, item_date))
+                    else:
+                        # 记录不匹配的原因，用于调试
+                        logger.debug(f"不匹配记录: {item_text[:30]}...")
+                
+                if not records:
+                    logger.warning(f"未找到用户 '{username}' 的任何神游记录! 检查了 {len(check_items)} 条记录")
+                else:
+                    logger.info(f"共找到 {len(records)} 条用户 '{username}' 的神游记录")
                 
                 return records
             
@@ -615,7 +634,7 @@ class lemonshengyou(_PluginBase):
                     return False, "今天已经神游过", [reward]
                 # 没有找到任何记录
                 else:
-                    return False, "今天已经神游过，但未找到奖励记录", []
+                    return False, "今天已经神游过，但未找到属于当前用户的奖励记录", []
             
             # 如果没有找到免费按钮
             if not free_button:
@@ -687,9 +706,22 @@ class lemonshengyou(_PluginBase):
                 logger.warning(f"神游状态未知，返回最近记录: {reward}")
                 return False, "神游状态未知", [reward]
             
+            # 查看页面提示信息
+            alert_msg = ""
+            alerts = soup.find_all('div', class_=['error', 'success', 'notice', 'alert'])
+            for alert in alerts:
+                alert_text = alert.get_text(strip=True)
+                if alert_text:
+                    alert_msg = alert_text
+                    logger.info(f"页面提示信息: {alert_msg}")
+                    break
+                    
+            if alert_msg:
+                return False, f"神游结果: {alert_msg}", []
+            
             # 真的找不到任何奖励记录
-            logger.error("神游后未找到任何奖励记录")
-            return False, "无法获取神游结果", []
+            logger.error(f"神游后未找到用户 '{username}' 的任何奖励记录")
+            return False, f"神游操作完成，但未找到属于用户 '{username}' 的奖励记录", []
                 
         except requests.exceptions.RequestException as e:
             logger.error(f"请求失败: {str(e)}")
