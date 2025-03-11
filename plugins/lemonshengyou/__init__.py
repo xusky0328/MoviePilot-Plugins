@@ -29,7 +29,7 @@ class lemonshengyou(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/lemon.ico"
     # 插件版本
-    plugin_version = "0.9.3"
+    plugin_version = "0.9.4"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -397,13 +397,6 @@ class lemonshengyou(_PluginBase):
             error_msg = None
             rewards = []
             
-            # 获取用户名
-            username = site_info.get("username", "").strip()
-            if not username:
-                return False, "无法获取站点用户名信息", []
-            
-            logger.info(f"当前用户名: {username}")
-
             for i in range(self._retry_count):
                 try:
                     success, error_msg, rewards = self.__do_shenyou(site_info)
@@ -461,13 +454,6 @@ class lemonshengyou(_PluginBase):
         ua = site_info.get("ua", "").strip()
         proxies = settings.PROXY if site_info.get("proxy") else None
 
-        # 获取用户名
-        username = site_info.get("username", "").strip()
-        if not username:
-            return False, "无法获取站点用户名信息", []
-            
-        logger.info(f"当前用户名: {username}")
-
         if not all([site_name, site_url, site_cookie, ua]):
             return False, "站点信息不完整", []
 
@@ -497,6 +483,13 @@ class lemonshengyou(_PluginBase):
             session.proxies = proxies
             
         try:
+            # 获取用户名
+            username = self.__get_username(session, site_info)
+            if not username:
+                logger.warning(f"无法获取用户名,可能影响神游记录匹配")
+            else:
+                logger.info(f"获取到用户名: {username}")
+            
             # 1. 访问神游页面
             lottery_url = urljoin(site_url, "lottery.php")
             logger.info(f"访问神游页面: {lottery_url}")
@@ -520,20 +513,21 @@ class lemonshengyou(_PluginBase):
             
             # 查找神游记录
             lottery_list = soup.find('div', class_='lottery_list')
-            if lottery_list:
+            if lottery_list and username:
                 # 尝试查找当前用户的最近一次神游记录
                 for item in lottery_list.find_all('div', class_='item'):
                     user_link = item.find('a', class_=['User_Name', 'PowerUser_Name', 'EliteUser_Name', 'CrazyUser_Name', 'InsaneUser_Name', 'VIP_Name', 'Uploader_Name'])
                     if user_link and 'title' in user_link.attrs:
-                        record_username = user_link['title'].split()[0]  # 获取用户名(可能包含身份标识,只取第一部分)
-                        logger.debug(f"记录用户名: {record_username}, 当前用户名: {username}")
-                        if record_username == username:
+                        item_username = user_link['title'].split()[0]  # 获取用户名(可能包含身份标识,只取第一部分)
+                        if item_username == username:
                             reward_text = item.get_text(strip=True)
                             if '【神游' in reward_text:  # 修改为只匹配前缀
                                 # 找到了用户的神游记录
                                 reward_parts = reward_text.split('-')[-1].strip()  # 获取奖励部分
                                 if not free_button:  # 如果按钮是禁用的,说明今天已经神游过
                                     return False, "今天已经神游过", [reward_parts]
+                                else:
+                                    logger.info(f"找到用户最近一次神游记录: {reward_parts}")
             
             # 如果没有免费按钮,说明今天已经神游过了
             if not free_button:
@@ -553,15 +547,14 @@ class lemonshengyou(_PluginBase):
             
             # 重新获取神游记录列表
             lottery_list = soup.find('div', class_='lottery_list')
-            if lottery_list:
+            if lottery_list and username:
                 # 查找最新的神游记录(应该是第一条)
                 first_item = lottery_list.find('div', class_='item')
                 if first_item:
                     user_link = first_item.find('a', class_=['User_Name', 'PowerUser_Name', 'EliteUser_Name', 'CrazyUser_Name', 'InsaneUser_Name', 'VIP_Name', 'Uploader_Name'])
                     if user_link and 'title' in user_link.attrs:
-                        record_username = user_link['title'].split()[0]
-                        logger.debug(f"最新记录用户名: {record_username}, 当前用户名: {username}")
-                        if record_username == username:
+                        item_username = user_link['title'].split()[0]
+                        if item_username == username:
                             reward_text = first_item.get_text(strip=True)
                             if '【神游' in reward_text:  # 修改为只匹配前缀
                                 reward_parts = reward_text.split('-')[-1].strip()
@@ -579,4 +572,59 @@ class lemonshengyou(_PluginBase):
             logger.error(f"神游失败: {str(e)}")
             return False, f"神游失败: {str(e)}", []
         finally:
-            session.close() 
+            session.close()
+            
+    def __get_username(self, session, site_info: CommentedMap) -> str:
+        """
+        获取用户名
+        :param session: 请求会话
+        :param site_info: 站点信息
+        :return: 用户名
+        """
+        site_name = site_info.get("name", "").strip()
+        site_url = site_info.get("url", "").strip()
+        
+        try:
+            # 访问个人信息页面
+            usercp_url = urljoin(site_url, "/usercp.php")
+            response = session.get(
+                usercp_url,
+                timeout=(3.05, 10)
+            )
+            response.raise_for_status()
+            
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # 尝试多种方式获取用户名
+            username = None
+            
+            # 方法1: 从欢迎信息中获取
+            welcome_msg = soup.select_one('.welcome')
+            if welcome_msg:
+                text = welcome_msg.get_text()
+                import re
+                username_match = re.search(r'欢迎回来.*?([^,，\s]+)', text)
+                if username_match:
+                    username = username_match.group(1)
+            
+            # 方法2: 从用户详情链接中获取
+            if not username:
+                username_elem = soup.select_one('a[href*="userdetails.php"]')
+                if username_elem:
+                    username = username_elem.get_text(strip=True)
+            
+            # 方法3: 直接尝试查找用户名元素
+            if not username:
+                # 尝试找到常见的用户名显示位置
+                user_elements = soup.select('.username, .user, .profile-username, a[href*="userdetails"]')
+                for elem in user_elements:
+                    potential_username = elem.get_text(strip=True)
+                    if potential_username and len(potential_username) > 1 and len(potential_username) < 30:
+                        username = potential_username
+                        break
+            
+            return username
+        except Exception as e:
+            logger.error(f"获取站点 {site_name} 的用户名失败: {str(e)}")
+            return None 
