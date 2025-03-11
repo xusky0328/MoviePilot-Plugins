@@ -31,7 +31,7 @@ class GroupChatZone(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/GroupChat.png"
     # 插件版本
-    plugin_version = "9.9.999999"
+    plugin_version = "9.9.9999999"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -820,10 +820,20 @@ class GroupChatZone(_PluginBase):
             # 添加反馈信息
             if self._get_feedback and all_feedback:
                 notification_text += "\n📋 喊话反馈:\n"
+                # 按站点分组处理反馈
+                site_feedback_map = {}
                 for feedback in all_feedback:
                     site_name = feedback.get("site", "")
-                    message = feedback.get("message", "")
-                    rewards = feedback.get("rewards", [])
+                    if site_name not in site_feedback_map:
+                        site_feedback_map[site_name] = []
+                    site_feedback_map[site_name].append(feedback)
+                
+                # 按站点显示反馈
+                for site_name, feedbacks in site_feedback_map.items():
+                    # 对每个站点只显示最新的一条反馈
+                    latest_feedback = feedbacks[0]  # 假设最新的反馈在列表前面
+                    message = latest_feedback.get("message", "")
+                    rewards = latest_feedback.get("rewards", [])
                     
                     if rewards:
                         notification_text += f"🔹 {site_name} (消息: \"{message}\")\n"
@@ -1257,17 +1267,26 @@ class GroupChatZone(_PluginBase):
                             # 如果无法提取具体奖励但确认有"发了"，添加通用奖励
                             rewards.append({
                                 "type": "raw_feedback",
-                                "description": f"[< 1分钟前] {cleaned_text}",
+                                "description": cleaned_text,
                                 "is_negative": False
                             })
                     else:
                         # 所有其他回复都直接推送给用户
                         rewards.append({
                             "type": "raw_feedback",
-                            "description": f"[< 1分钟前] {cleaned_text}",
+                            "description": cleaned_text,
                             "is_negative": "不要" in text or "刷屏" in text or "限制" in text or "明天" in text
                         })
                     break
+            
+            # 如果没有找到反馈，尝试获取站内信反馈
+            if not rewards:
+                try:
+                    message_rewards = self.get_message_feedback(session, site_info)
+                    if message_rewards:
+                        rewards.extend(message_rewards)
+                except Exception as e:
+                    logger.error(f"获取站点 {site_name} 的站内信反馈失败: {str(e)}")
             
             return rewards
         except Exception as e:
@@ -1496,7 +1515,8 @@ class GroupChatZone(_PluginBase):
                     
                     if power_match:
                         amount = power_match.group(1)
-                        is_increase = "增加" in content_text or "收到" in content_text
+                        # 检查是否是增加电力的消息
+                        is_increase = "增加" in content_text or "收到" in content_text or "赠送" in content_text
                         
                         # 查找发送者信息
                         sender_info = ""
