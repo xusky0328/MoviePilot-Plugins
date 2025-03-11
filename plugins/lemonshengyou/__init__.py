@@ -29,7 +29,7 @@ class lemonshengyou(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/lemon.ico"
     # 插件版本
-    plugin_version = "0.9.4"
+    plugin_version = "0.9.5"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -517,21 +517,19 @@ class lemonshengyou(_PluginBase):
                 # 尝试查找当前用户的最近一次神游记录
                 for item in lottery_list.find_all('div', class_='item'):
                     user_link = item.find('a', class_=['User_Name', 'PowerUser_Name', 'EliteUser_Name', 'CrazyUser_Name', 'InsaneUser_Name', 'VIP_Name', 'Uploader_Name'])
-                    if user_link and 'title' in user_link.attrs:
-                        item_username = user_link['title'].split()[0]  # 获取用户名(可能包含身份标识,只取第一部分)
-                        if item_username == username:
-                            reward_text = item.get_text(strip=True)
-                            if '【神游' in reward_text:  # 修改为只匹配前缀
-                                # 找到了用户的神游记录
-                                reward_parts = reward_text.split('-')[-1].strip()  # 获取奖励部分
-                                if not free_button:  # 如果按钮是禁用的,说明今天已经神游过
-                                    return False, "今天已经神游过", [reward_parts]
-                                else:
-                                    logger.info(f"找到用户最近一次神游记录: {reward_parts}")
+                    if user_link and user_link.find('span', title=username):  # 直接检查span的title属性
+                        reward_text = item.get_text(strip=True)
+                        if '【神游' in reward_text:  # 修改为只匹配前缀
+                            # 找到了用户的神游记录
+                            reward_parts = reward_text.split('-')[-1].strip()  # 获取奖励部分
+                            if not free_button:  # 如果按钮是禁用的,说明今天已经神游过
+                                return False, "今天已经神游过", [reward_parts]
+                            else:
+                                logger.info(f"找到用户最近一次神游记录: {reward_parts}")
             
             # 如果没有免费按钮,说明今天已经神游过了
             if not free_button:
-                return False, "今天已经神游过,未能获取最近奖励记录", []
+                return False, "今天已经神游过", []
                 
             # 2. 执行神游 - 使用免费神游选项
             logger.info("找到免费神游按钮，执行神游操作")
@@ -552,14 +550,12 @@ class lemonshengyou(_PluginBase):
                 first_item = lottery_list.find('div', class_='item')
                 if first_item:
                     user_link = first_item.find('a', class_=['User_Name', 'PowerUser_Name', 'EliteUser_Name', 'CrazyUser_Name', 'InsaneUser_Name', 'VIP_Name', 'Uploader_Name'])
-                    if user_link and 'title' in user_link.attrs:
-                        item_username = user_link['title'].split()[0]
-                        if item_username == username:
-                            reward_text = first_item.get_text(strip=True)
-                            if '【神游' in reward_text:  # 修改为只匹配前缀
-                                reward_parts = reward_text.split('-')[-1].strip()
-                                logger.info(f"神游成功，奖励: {reward_parts}")
-                                return True, None, [reward_parts]
+                    if user_link and user_link.find('span', title=username):  # 直接检查span的title属性
+                        reward_text = first_item.get_text(strip=True)
+                        if '【神游' in reward_text:  # 修改为只匹配前缀
+                            reward_parts = reward_text.split('-')[-1].strip()
+                            logger.info(f"神游成功，奖励: {reward_parts}")
+                            return True, None, [reward_parts]
             
             # 如果没有找到神游记录,返回失败
             logger.warning("无法从神游记录中获取结果")
