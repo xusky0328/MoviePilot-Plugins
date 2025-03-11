@@ -1,6 +1,6 @@
 """
 飞牛论坛签到插件
-版本: 2.1
+版本: 2.5
 作者: madrays
 功能:
 - 自动完成飞牛论坛每日签到
@@ -36,7 +36,7 @@ class fnossign(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico"
     # 插件版本
-    plugin_version = "2.4"
+    plugin_version = "2.5"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -112,10 +112,36 @@ class fnossign(_PluginBase):
             # 检查是否今日已成功签到（通过记录）
             if not self._is_manual_trigger() and self._is_already_signed_today():
                 logger.info("根据历史记录，今日已成功签到，跳过本次执行")
-                return {
+                # 创建跳过记录
+                sign_dict = {
                     "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
                     "status": "跳过: 今日已签到",
                 }
+                
+                # 获取最后一次成功签到的记录信息
+                history = self.get_data('sign_history') or []
+                today = datetime.now().strftime('%Y-%m-%d')
+                today_success = [
+                    record for record in history 
+                    if record.get("date", "").startswith(today) 
+                    and record.get("status") in ["签到成功", "已签到"]
+                ]
+                
+                if today_success:
+                    last_success = max(today_success, key=lambda x: x.get("date", ""))
+                    # 复制积分信息到跳过记录
+                    sign_dict.update({
+                        "fnb": last_success.get("fnb"),
+                        "nz": last_success.get("nz"),
+                        "credit": last_success.get("credit"),
+                        "login_days": last_success.get("login_days")
+                    })
+                
+                # 发送通知
+                if self._notify:
+                    self._send_sign_notification(sign_dict)
+                
+                return sign_dict
             
             # 检查先决条件
             if not self._cookie:
