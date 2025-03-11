@@ -29,7 +29,7 @@ class lemonshengyou(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/lemon.ico"
     # 插件版本
-    plugin_version = "0.9.5"
+    plugin_version = "0.9.6"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -417,12 +417,13 @@ class lemonshengyou(_PluginBase):
                 text = f"站点：{site_info.get('name')}\n"
                 if success:
                     text += "状态：✅ 神游成功\n"
-                    if rewards:
-                        text += "\n🎁 获得奖励：\n"
-                        for reward in rewards:
-                            text += f"- {reward}\n"
                 else:
                     text += f"状态：❌ 神游失败\n原因：{error_msg}"
+                
+                if rewards:
+                    text += "\n🎁 获得奖励：\n"
+                    for reward in rewards:
+                        text += f"- {reward}\n"
                 
                 text += f"\n⏱️ {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
                 
