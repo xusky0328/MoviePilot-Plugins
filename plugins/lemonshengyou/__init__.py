@@ -665,14 +665,7 @@ class lemonshengyou(_PluginBase):
             # 查找今日新记录
             new_today_records = [record for record, date in new_user_records if today in date]
             
-            # 检查神游是否成功
-            # 1. 如果新增了今日记录，表示神游成功
-            if len(new_today_records) > len(today_records):
-                reward = new_today_records[0][0]
-                logger.info(f"神游成功，获得奖励: {reward}")
-                return True, None, [reward]
-            
-            # 2. 如果已有今日记录且按钮变为禁用，也表示成功
+            # 重新检查按钮状态
             button_now_disabled = False
             for form in soup.find_all('form', {'action': '?', 'method': 'post'}):
                 type_input = form.find('input', {'name': 'type', 'value': '0'})
@@ -680,31 +673,50 @@ class lemonshengyou(_PluginBase):
                     button = form.find('button')
                     if button and '免费' in button.get_text():
                         button_now_disabled = button.has_attr('disabled')
+                        logger.info(f"神游后按钮状态: {'禁用' if button_now_disabled else '可用'}")
                         break
             
-            if not button_disabled and button_now_disabled and new_today_records:
+            # 检查神游是否成功
+            # 1. 如果按钮从可用变为禁用，这是最明确的神游成功标志
+            if not button_disabled and button_now_disabled:
+                if new_user_records:
+                    reward = new_user_records[0][0]
+                    logger.info(f"神游成功，按钮已禁用，获得奖励: {reward}")
+                    return True, None, [reward]
+                else:
+                    # 按钮状态变化但未找到记录，仍然视为成功
+                    logger.info("神游成功，按钮已禁用，但未找到奖励记录")
+                    return True, None, ["神游成功，但未找到具体奖励信息"]
+            
+            # 2. 如果新增了今日记录，表示神游成功
+            if len(new_today_records) > len(today_records):
                 reward = new_today_records[0][0]
-                logger.info(f"神游成功，按钮已禁用，获得奖励: {reward}")
+                logger.info(f"神游成功，获得奖励: {reward}")
                 return True, None, [reward]
             
             # 3. 检查页面中是否有成功提示
             success_msg = soup.find('div', class_='success')
-            if success_msg and new_user_records:
-                reward = new_user_records[0][0]
-                logger.info(f"神游成功，页面有成功提示，获得奖励: {reward}")
-                return True, None, [reward]
+            if success_msg:
+                if new_user_records:
+                    reward = new_user_records[0][0]
+                    logger.info(f"神游成功，页面有成功提示，获得奖励: {reward}")
+                    return True, None, [reward]
+                else:
+                    logger.info("神游成功，页面有成功提示，但未找到奖励记录")
+                    return True, None, ["神游成功，但未找到具体奖励信息"]
             
-            # 如果所有检查都失败，但有今日记录，也返回记录
+            # 4. 如果有今日记录，即使没有其他明确标志，也视为可能成功
             if new_today_records:
                 reward = new_today_records[0][0]
-                logger.warning(f"神游可能成功，但无法确认，获得奖励: {reward}")
+                logger.info(f"找到今日神游记录，视为成功，奖励: {reward}")
                 return True, None, [reward]
             
-            # 最后，如果有任何用户记录，至少返回最近的一条
+            # 5. 如果有任何用户记录，但确实无法判断成功与否
             if new_user_records:
                 reward = new_user_records[0][0]
-                logger.warning(f"神游状态未知，返回最近记录: {reward}")
-                return False, "神游状态未知", [reward]
+                logger.warning(f"找到用户神游记录，但无法确认是否为本次操作: {reward}")
+                # 这里改为返回成功，因为有记录就说明神游过
+                return True, "找到神游记录，但无法确认是否为本次操作", [reward]
             
             # 查看页面提示信息
             alert_msg = ""
@@ -717,7 +729,10 @@ class lemonshengyou(_PluginBase):
                     break
                     
             if alert_msg:
-                return False, f"神游结果: {alert_msg}", []
+                if "成功" in alert_msg:
+                    return True, f"神游成功: {alert_msg}", []
+                else:
+                    return False, f"神游结果: {alert_msg}", []
             
             # 真的找不到任何奖励记录
             logger.error(f"神游后未找到用户 '{username}' 的任何奖励记录")

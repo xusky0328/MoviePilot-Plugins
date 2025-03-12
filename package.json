@@ -3,20 +3,26 @@
     "name": "飞牛论坛签到",
     "description": "自动完成飞牛论坛每日签到，支持失败重试和历史记录",
     "labels": "签到",
-    "version": "2.5",
+    "version": "2.5.1",
     "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico",
     "author": "madrays",
     "level": 2,
-    "v2": true
+    "v2": true,
+    "history": {
+      "v2.5.1": "修复签到成功后，未能正确获取签到状态的bug。"
+    }
   },
   "lemonshengyou": {
     "name": "柠檬站点神游",
     "description": "自动完成柠檬站点每日免费神游三清天，获取奖励",
     "labels": "神游,站点,柠檬",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/lemon.ico",
     "author": "madrays",
     "level": 2,
-    "v2": true
+    "v2": true,
+    "history": {
+      "v1.0.5": "修复神游成功后，未能正确获取神游状态的bug。"
+    }
   }
 }

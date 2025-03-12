@@ -36,7 +36,7 @@ class fnossign(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico"
     # 插件版本
-    plugin_version = "2.5"
+    plugin_version = "2.5.1"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -108,6 +108,10 @@ class fnossign(_PluginBase):
     def sign(self, retry_count=0):
         """执行签到，支持失败重试"""
         logger.info("============= 开始签到 =============")
+        notification_sent = False  # 标记是否已发送通知
+        sign_dict = None
+        sign_status = None  # 记录签到状态
+        
         try:
             # 检查是否今日已成功签到（通过记录）
             if not self._is_manual_trigger() and self._is_already_signed_today():
@@ -140,6 +144,7 @@ class fnossign(_PluginBase):
                 # 发送通知
                 if self._notify:
                     self._send_sign_notification(sign_dict)
+                    notification_sent = True
                 
                 return sign_dict
             
@@ -158,6 +163,7 @@ class fnossign(_PluginBase):
                         title="【飞牛论坛签到失败】",
                         text="❌ 未配置Cookie，请在插件设置中添加Cookie"
                     )
+                    notification_sent = True
                 return sign_dict
             
             logger.info(f"使用Cookie长度: {len(self._cookie)} 字符")
@@ -178,6 +184,7 @@ class fnossign(_PluginBase):
                         title="【飞牛论坛签到失败】",
                         text="❌ Cookie中缺少必要的认证信息，请更新Cookie"
                     )
+                    notification_sent = True
                 return sign_dict
             
             # 设置请求头和会话
@@ -219,25 +226,81 @@ class fnossign(_PluginBase):
                         title="【飞牛论坛签到失败】",
                         text="❌ Cookie无效或已过期，请更新Cookie"
                     )
+                    notification_sent = True
                 return sign_dict
             
             # 步骤1: 访问签到页面获取sign参数
             logger.info("正在访问论坛首页...")
-            session.get("https://club.fnnas.com/")
+            session.get("https://club.fnnas.com/", timeout=(5, 15))
             
             logger.info("正在访问签到页面...")
             sign_page_url = "https://club.fnnas.com/plugin.php?id=zqlj_sign"
-            response = session.get(sign_page_url)
+            response = session.get(sign_page_url, timeout=(5, 15))
             html_content = response.text
             
             # 检查是否已经签到
             if "您今天已经打过卡了" in html_content:
                 logger.info("今日已签到")
-                sign_dict = self._get_credit_info_and_create_record(session, "已签到")
+                sign_status = "已签到"
                 
-                # 发送通知
-                if self._notify:
-                    self._send_sign_notification(sign_dict)
+                # 先保存一个基本记录，即使后续获取积分信息失败也有记录
+                basic_sign_dict = {
+                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                    "status": sign_status
+                }
+                self._save_sign_history(basic_sign_dict)
+                self._save_last_sign_date()
+                
+                # 尝试获取积分信息
+                try:
+                    sign_dict = self._get_credit_info_and_create_record(session, sign_status)
+                    
+                    # 发送通知
+                    if self._notify:
+                        self._send_sign_notification(sign_dict)
+                        notification_sent = True
+                except Exception as e:
+                    logger.error(f"处理已签到状态时发生错误: {str(e)}", exc_info=True)
+                    
+                    # 如果获取积分信息失败，尝试单独再次获取
+                    logger.info("尝试单独获取积分信息...")
+                    try:
+                        credit_info = self._get_credit_info(session)
+                        if credit_info:
+                            # 更新之前保存的基本记录
+                            basic_sign_dict.update({
+                                "fnb": credit_info.get("fnb", 0),
+                                "nz": credit_info.get("nz", 0),
+                                "credit": credit_info.get("jf", 0),
+                                "login_days": credit_info.get("ts", 0)
+                            })
+                            self._save_sign_history(basic_sign_dict)
+                            sign_dict = basic_sign_dict
+                            
+                            # 发送包含积分信息的通知
+                            if self._notify and not notification_sent:
+                                self._send_sign_notification(sign_dict)
+                                notification_sent = True
+                        else:
+                            # 如果还是获取不到积分信息，发送基本通知
+                            if not notification_sent and self._notify:
+                                self.post_message(
+                                    mtype=NotificationType.SiteMessage,
+                                    title="【飞牛论坛已签到】",
+                                    text=f"今日已签到，但获取详细信息失败\n⏱️ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                )
+                                notification_sent = True
+                            sign_dict = basic_sign_dict
+                    except Exception as e2:
+                        logger.error(f"二次获取积分信息失败: {str(e2)}", exc_info=True)
+                        if not notification_sent and self._notify:
+                            self.post_message(
+                                mtype=NotificationType.SiteMessage,
+                                title="【飞牛论坛已签到】",
+                                text=f"今日已签到，但获取详细信息失败\n⏱️ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                            )
+                            notification_sent = True
+                        sign_dict = basic_sign_dict
                 
                 return sign_dict
             
@@ -264,6 +327,7 @@ class fnossign(_PluginBase):
                         title="【飞牛论坛签到失败】",
                         text="❌ 签到失败: 未找到签到参数"
                     )
+                    notification_sent = True
                 return sign_dict
             
             sign_param = sign_match.group(1)
@@ -276,7 +340,7 @@ class fnossign(_PluginBase):
             # 更新Referer头
             session.headers.update({"Referer": sign_page_url})
             
-            response = session.get(sign_url)
+            response = session.get(sign_url, timeout=(5, 15))
             html_content = response.text
             
             # 储存响应以便调试
@@ -284,22 +348,135 @@ class fnossign(_PluginBase):
             logger.info(f"签到响应内容预览: {debug_resp}")
             
             # 检查签到结果
+            success_flag = False
             if "恭喜您，打卡成功" in html_content or "打卡成功" in html_content:
                 logger.info("签到成功")
-                sign_dict = self._get_credit_info_and_create_record(session, "签到成功")
+                sign_status = "签到成功"
+                success_flag = True
                 
-                # 发送通知
-                if self._notify:
-                    self._send_sign_notification(sign_dict)
+                # 先保存一个基本记录，即使后续获取积分信息失败也有记录
+                basic_sign_dict = {
+                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                    "status": sign_status
+                }
+                self._save_sign_history(basic_sign_dict)
+                self._save_last_sign_date()
+                
+                # 尝试获取积分信息
+                try:
+                    sign_dict = self._get_credit_info_and_create_record(session, sign_status)
+                    
+                    # 发送通知
+                    if self._notify:
+                        self._send_sign_notification(sign_dict)
+                        notification_sent = True
+                except Exception as e:
+                    logger.error(f"处理签到成功状态时发生错误: {str(e)}", exc_info=True)
+                    
+                    # 如果获取积分信息失败，尝试单独再次获取
+                    logger.info("尝试单独获取积分信息...")
+                    try:
+                        credit_info = self._get_credit_info(session)
+                        if credit_info:
+                            # 更新之前保存的基本记录
+                            basic_sign_dict.update({
+                                "fnb": credit_info.get("fnb", 0),
+                                "nz": credit_info.get("nz", 0),
+                                "credit": credit_info.get("jf", 0),
+                                "login_days": credit_info.get("ts", 0)
+                            })
+                            self._save_sign_history(basic_sign_dict)
+                            sign_dict = basic_sign_dict
+                            
+                            # 发送包含积分信息的通知
+                            if self._notify and not notification_sent:
+                                self._send_sign_notification(sign_dict)
+                                notification_sent = True
+                        else:
+                            # 如果还是获取不到积分信息，发送基本通知
+                            if not notification_sent and self._notify:
+                                self.post_message(
+                                    mtype=NotificationType.SiteMessage,
+                                    title="【✅ 飞牛论坛签到成功】",
+                                    text=f"签到成功，但获取详细信息失败\n⏱️ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                )
+                                notification_sent = True
+                            sign_dict = basic_sign_dict
+                    except Exception as e2:
+                        logger.error(f"二次获取积分信息失败: {str(e2)}", exc_info=True)
+                        if not notification_sent and self._notify:
+                            self.post_message(
+                                mtype=NotificationType.SiteMessage,
+                                title="【✅ 飞牛论坛签到成功】",
+                                text=f"签到成功，但获取详细信息失败\n⏱️ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                            )
+                            notification_sent = True
+                        sign_dict = basic_sign_dict
                 
                 return sign_dict
+                
             elif "您今天已经打过卡了" in html_content:
                 logger.info("今日已签到")
-                sign_dict = self._get_credit_info_and_create_record(session, "已签到")
+                sign_status = "已签到"
                 
-                # 发送通知
-                if self._notify:
-                    self._send_sign_notification(sign_dict)
+                # 先保存一个基本记录，即使后续获取积分信息失败也有记录
+                basic_sign_dict = {
+                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                    "status": sign_status
+                }
+                self._save_sign_history(basic_sign_dict)
+                self._save_last_sign_date()
+                
+                # 尝试获取积分信息
+                try:
+                    sign_dict = self._get_credit_info_and_create_record(session, sign_status)
+                    
+                    # 发送通知
+                    if self._notify:
+                        self._send_sign_notification(sign_dict)
+                        notification_sent = True
+                except Exception as e:
+                    logger.error(f"处理已签到状态时发生错误: {str(e)}", exc_info=True)
+                    
+                    # 如果获取积分信息失败，尝试单独再次获取
+                    logger.info("尝试单独获取积分信息...")
+                    try:
+                        credit_info = self._get_credit_info(session)
+                        if credit_info:
+                            # 更新之前保存的基本记录
+                            basic_sign_dict.update({
+                                "fnb": credit_info.get("fnb", 0),
+                                "nz": credit_info.get("nz", 0),
+                                "credit": credit_info.get("jf", 0),
+                                "login_days": credit_info.get("ts", 0)
+                            })
+                            self._save_sign_history(basic_sign_dict)
+                            sign_dict = basic_sign_dict
+                            
+                            # 发送包含积分信息的通知
+                            if self._notify and not notification_sent:
+                                self._send_sign_notification(sign_dict)
+                                notification_sent = True
+                        else:
+                            # 如果还是获取不到积分信息，发送基本通知
+                            if not notification_sent and self._notify:
+                                self.post_message(
+                                    mtype=NotificationType.SiteMessage,
+                                    title="【飞牛论坛已签到】",
+                                    text=f"今日已签到，但获取详细信息失败\n⏱️ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                )
+                                notification_sent = True
+                            sign_dict = basic_sign_dict
+                    except Exception as e2:
+                        logger.error(f"二次获取积分信息失败: {str(e2)}", exc_info=True)
+                        if not notification_sent and self._notify:
+                            self.post_message(
+                                mtype=NotificationType.SiteMessage,
+                                title="【飞牛论坛已签到】",
+                                text=f"今日已签到，但获取详细信息失败\n⏱️ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                            )
+                            notification_sent = True
+                        sign_dict = basic_sign_dict
                 
                 return sign_dict
             else:
@@ -321,9 +498,10 @@ class fnossign(_PluginBase):
                 if self._notify:
                     self.post_message(
                         mtype=NotificationType.SiteMessage,
-                        title="【飞牛论坛签到失败】",
+                        title="【❌ 飞牛论坛签到失败】",
                         text="❌ 签到失败: 响应内容异常"
                     )
+                    notification_sent = True
                 return sign_dict
         
         except requests.RequestException as req_exc:
@@ -342,12 +520,13 @@ class fnossign(_PluginBase):
                 self._save_sign_history(sign_dict)
                 
                 # 发送失败通知
-                if self._notify:
+                if self._notify and not notification_sent:
                     self.post_message(
                         mtype=NotificationType.SiteMessage,
-                        title="【飞牛论坛签到失败】",
+                        title="【❌ 飞牛论坛签到失败】",
                         text=f"❌ 网络请求异常: {str(req_exc)}"
                     )
+                    notification_sent = True
                 
                 return sign_dict
                 
@@ -355,46 +534,120 @@ class fnossign(_PluginBase):
             # 签到过程中的异常
             logger.error(f"签到过程异常: {str(e)}", exc_info=True)
             
-            # 记录失败
-            sign_dict = {
-                "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-                "status": f"签到失败: {str(e)}",
-            }
-            self._save_sign_history(sign_dict)
+            # 检查是否已经确认签到状态但出错
+            if sign_status in ["签到成功", "已签到"] and not sign_dict:
+                # 确保至少保存基本记录
+                basic_sign_dict = {
+                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                    "status": sign_status
+                }
+                try:
+                    self._save_sign_history(basic_sign_dict)
+                    self._save_last_sign_date()
+                    sign_dict = basic_sign_dict
+                    
+                    # 尝试单独获取积分信息
+                    logger.info("尝试在异常处理中单独获取积分信息...")
+                    try:
+                        # 重新创建会话
+                        new_session = requests.Session()
+                        new_session.headers.update(headers)
+                        new_session.cookies.update(cookies)
+                        
+                        credit_info = self._get_credit_info(new_session)
+                        if credit_info:
+                            basic_sign_dict.update({
+                                "fnb": credit_info.get("fnb", 0),
+                                "nz": credit_info.get("nz", 0),
+                                "credit": credit_info.get("jf", 0),
+                                "login_days": credit_info.get("ts", 0)
+                            })
+                            self._save_sign_history(basic_sign_dict)
+                            sign_dict = basic_sign_dict
+                        
+                        # 发送通知
+                        if self._notify and not notification_sent:
+                            self._send_sign_notification(sign_dict)
+                            notification_sent = True
+                    except Exception as e3:
+                        logger.error(f"在异常处理中获取积分信息失败: {str(e3)}", exc_info=True)
+                        if not notification_sent and self._notify:
+                            title = "【✅ 飞牛论坛签到成功】" if sign_status == "签到成功" else "【飞牛论坛已签到】"
+                            self.post_message(
+                                mtype=NotificationType.SiteMessage,
+                                title=title,
+                                text=f"{sign_status}，但获取详细信息失败\n⏱️ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                            )
+                            notification_sent = True
+                except:
+                    pass
             
-            # 发送失败通知
-            if self._notify:
-                self.post_message(
-                    mtype=NotificationType.SiteMessage,
-                    title="【飞牛论坛签到失败】",
-                    text=f"❌ 签到过程发生异常: {str(e)}"
-                )
+            # 如果没有签到信息，记录失败
+            if not sign_dict:
+                sign_dict = {
+                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                    "status": f"签到失败: {str(e)}",
+                }
+                self._save_sign_history(sign_dict)
+                
+                # 发送失败通知
+                if self._notify and not notification_sent:
+                    self.post_message(
+                        mtype=NotificationType.SiteMessage,
+                        title="【❌ 飞牛论坛签到失败】",
+                        text=f"❌ 签到过程发生异常: {str(e)}"
+                    )
+                    notification_sent = True
                 
             return sign_dict
-            
+        finally:
+            # 确保在退出前关闭会话
+            try:
+                if 'session' in locals() and session:
+                    session.close()
+            except:
+                pass
+
     def _get_credit_info_and_create_record(self, session, status):
         """获取积分信息并创建签到记录"""
-        # 步骤3: 获取积分信息
-        credit_info = self._get_credit_info(session)
-        
-        # 创建签到记录
-        sign_dict = {
-            "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-            "status": status,
-            "fnb": credit_info.get("fnb", 0),
-            "nz": credit_info.get("nz", 0),
-            "credit": credit_info.get("jf", 0),
-            "login_days": credit_info.get("ts", 0)
-        }
-        
-        # 保存签到记录
-        self._save_sign_history(sign_dict)
-        
-        # 记录最后一次成功签到的日期
-        if "签到成功" in status or "已签到" in status:
-            self._save_last_sign_date()
-        
-        return sign_dict
+        try:
+            # 步骤3: 获取积分信息
+            credit_info = self._get_credit_info(session)
+            
+            # 创建签到记录
+            sign_dict = {
+                "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                "status": status,
+                "fnb": credit_info.get("fnb", 0),
+                "nz": credit_info.get("nz", 0),
+                "credit": credit_info.get("jf", 0),
+                "login_days": credit_info.get("ts", 0)
+            }
+            
+            # 保存签到记录
+            self._save_sign_history(sign_dict)
+            
+            # 记录最后一次成功签到的日期
+            if "签到成功" in status or "已签到" in status:
+                self._save_last_sign_date()
+            
+            return sign_dict
+        except Exception as e:
+            logger.error(f"获取积分信息并创建记录失败: {str(e)}", exc_info=True)
+            # 创建一个基本记录
+            sign_dict = {
+                "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                "status": status
+            }
+            # 尝试保存基本记录
+            try:
+                self._save_sign_history(sign_dict)
+                if "签到成功" in status or "已签到" in status:
+                    self._save_last_sign_date()
+            except Exception as save_error:
+                logger.error(f"保存基本签到记录失败: {str(save_error)}")
+                
+            return sign_dict
 
     def _get_credit_info(self, session):
         """
@@ -403,7 +656,7 @@ class fnossign(_PluginBase):
         try:
             # 访问正确的积分页面
             credit_url = "https://club.fnnas.com/home.php?mod=spacecp&ac=credit&showcredit=1"
-            response = session.get(credit_url)
+            response = session.get(credit_url, timeout=(5, 15))  # 添加超时参数
             response.raise_for_status()
             
             # 检查是否重定向到登录页
