@@ -36,7 +36,7 @@ class fnossign(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico"
     # 插件版本
-    plugin_version = "2.5.1"
+    plugin_version = "2.5.2"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -248,7 +248,6 @@ class fnossign(_PluginBase):
                     "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
                     "status": sign_status
                 }
-                self._save_sign_history(basic_sign_dict)
                 self._save_last_sign_date()
                 
                 # 尝试获取积分信息
@@ -283,20 +282,22 @@ class fnossign(_PluginBase):
                                 notification_sent = True
                         else:
                             # 如果还是获取不到积分信息，发送基本通知
+                            self._save_sign_history(basic_sign_dict)
                             if not notification_sent and self._notify:
                                 self.post_message(
                                     mtype=NotificationType.SiteMessage,
-                                    title="【飞牛论坛已签到】",
+                                    title="【✅ 飞牛论坛已签到】",
                                     text=f"今日已签到，但获取详细信息失败\n⏱️ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                                 )
                                 notification_sent = True
                             sign_dict = basic_sign_dict
                     except Exception as e2:
                         logger.error(f"二次获取积分信息失败: {str(e2)}", exc_info=True)
+                        self._save_sign_history(basic_sign_dict)
                         if not notification_sent and self._notify:
                             self.post_message(
                                 mtype=NotificationType.SiteMessage,
-                                title="【飞牛论坛已签到】",
+                                title="【✅ 飞牛论坛已签到】",
                                 text=f"今日已签到，但获取详细信息失败\n⏱️ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                             )
                             notification_sent = True
@@ -359,7 +360,6 @@ class fnossign(_PluginBase):
                     "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
                     "status": sign_status
                 }
-                self._save_sign_history(basic_sign_dict)
                 self._save_last_sign_date()
                 
                 # 尝试获取积分信息
@@ -394,6 +394,7 @@ class fnossign(_PluginBase):
                                 notification_sent = True
                         else:
                             # 如果还是获取不到积分信息，发送基本通知
+                            self._save_sign_history(basic_sign_dict)
                             if not notification_sent and self._notify:
                                 self.post_message(
                                     mtype=NotificationType.SiteMessage,
@@ -404,6 +405,7 @@ class fnossign(_PluginBase):
                             sign_dict = basic_sign_dict
                     except Exception as e2:
                         logger.error(f"二次获取积分信息失败: {str(e2)}", exc_info=True)
+                        self._save_sign_history(basic_sign_dict)
                         if not notification_sent and self._notify:
                             self.post_message(
                                 mtype=NotificationType.SiteMessage,
@@ -424,7 +426,6 @@ class fnossign(_PluginBase):
                     "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
                     "status": sign_status
                 }
-                self._save_sign_history(basic_sign_dict)
                 self._save_last_sign_date()
                 
                 # 尝试获取积分信息
@@ -459,6 +460,7 @@ class fnossign(_PluginBase):
                                 notification_sent = True
                         else:
                             # 如果还是获取不到积分信息，发送基本通知
+                            self._save_sign_history(basic_sign_dict)
                             if not notification_sent and self._notify:
                                 self.post_message(
                                     mtype=NotificationType.SiteMessage,
@@ -469,6 +471,7 @@ class fnossign(_PluginBase):
                             sign_dict = basic_sign_dict
                     except Exception as e2:
                         logger.error(f"二次获取积分信息失败: {str(e2)}", exc_info=True)
+                        self._save_sign_history(basic_sign_dict)
                         if not notification_sent and self._notify:
                             self.post_message(
                                 mtype=NotificationType.SiteMessage,
