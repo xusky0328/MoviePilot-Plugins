@@ -3,13 +3,15 @@
     "name": "飞牛论坛签到",
     "description": "自动完成飞牛论坛每日签到，支持失败重试和历史记录",
     "labels": "签到",
-    "version": "2.5.2",
+    "version": "2.5.3",
     "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico",
     "author": "madrays",
     "level": 2,
     "v2": true,
     "history": {
-      "v2.5.2": "修复签到成功后，未能正确获取签到状态的bug。"
+      "v2.5.3": "增强重试机制，解决定时任务卡住问题，超出重试次数后自动安排延迟重试",
+      "v2.5.2": "修复手动签到时会产生重复记录的问题",
+      "v2.5.1": "修复签到成功后，未能正确获取签到状态的bug。"
     }
   },
   "lemonshengyou": {
