@@ -1,6 +1,6 @@
 """
 飞牛论坛签到插件
-版本: 2.5
+版本: 2.5.4
 作者: madrays
 功能:
 - 自动完成飞牛论坛每日签到
@@ -26,6 +26,7 @@ from app.plugins import _PluginBase
 from typing import Any, List, Dict, Tuple, Optional
 from app.log import logger
 from app.schemas import NotificationType
+from concurrent.futures import ThreadPoolExecutor
 
 
 class fnossign(_PluginBase):
@@ -36,7 +37,7 @@ class fnossign(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fnos.ico"
     # 插件版本
-    plugin_version = "2.5.3"
+    plugin_version = "2.5.4"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -60,6 +61,7 @@ class fnossign(_PluginBase):
     _manual_trigger = False
     # 定时器
     _scheduler: Optional[BackgroundScheduler] = None
+    _current_trigger_type = None  # 保存当前执行的触发类型
 
     def init_plugin(self, config: dict = None):
         # 停止现有任务
@@ -77,6 +79,9 @@ class fnossign(_PluginBase):
                 self._retry_interval = int(config.get("retry_interval", 30))
                 self._history_days = int(config.get("history_days", 30))
                 logger.info(f"配置: enabled={self._enabled}, notify={self._notify}, cron={self._cron}, max_retries={self._max_retries}, retry_interval={self._retry_interval}, history_days={self._history_days}")
+            
+            # 清理所有可能的延长重试任务
+            self._clear_extended_retry_tasks()
             
             if self._onlyonce:
                 logger.info("执行一次性签到")
@@ -112,6 +117,22 @@ class fnossign(_PluginBase):
             retry_count: 常规重试计数
             extended_retry: 延长重试计数（0=首次尝试, 1=第一次延长重试, 2=第二次延长重试）
         """
+        # 设置执行超时保护
+        start_time = datetime.now()
+        sign_timeout = 300  # 限制签到执行最长时间为5分钟
+        
+        # 保存当前执行的触发类型
+        self._current_trigger_type = "手动触发" if self._is_manual_trigger() else "定时触发"
+        
+        # 如果是定时任务且不是重试，检查是否有正在运行的延长重试任务
+        if retry_count == 0 and extended_retry == 0 and not self._is_manual_trigger():
+            if self._has_running_extended_retry():
+                logger.warning("检测到有正在运行的延长重试任务，跳过本次执行")
+                return {
+                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                    "status": "跳过: 有正在进行的重试任务"
+                }
+        
         logger.info("============= 开始签到 =============")
         notification_sent = False  # 标记是否已发送通知
         sign_dict = None
@@ -127,6 +148,7 @@ class fnossign(_PluginBase):
             # 检查是否今日已成功签到（通过记录）
             if not self._is_manual_trigger() and self._is_already_signed_today():
                 logger.info("根据历史记录，今日已成功签到，跳过本次执行")
+                
                 # 创建跳过记录
                 sign_dict = {
                     "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
@@ -142,6 +164,7 @@ class fnossign(_PluginBase):
                     and record.get("status") in ["签到成功", "已签到"]
                 ]
                 
+                # 添加最后成功签到记录的详细信息
                 if today_success:
                     last_success = max(today_success, key=lambda x: x.get("date", ""))
                     # 复制积分信息到跳过记录
@@ -152,16 +175,90 @@ class fnossign(_PluginBase):
                         "login_days": last_success.get("login_days")
                     })
                 
-                # 发送通知
+                # 发送通知 - 通知用户已经签到过了
                 if self._notify:
-                    self._send_sign_notification(sign_dict)
-                    notification_sent = True
+                    last_sign_time = self._get_last_sign_time()
+                    
+                    title = "【ℹ️ 飞牛论坛重复签到】"
+                    text = (
+                        f"📢 执行结果\n"
+                        f"━━━━━━━━━━\n"
+                        f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"📍 方式：{self._current_trigger_type}\n"
+                        f"ℹ️ 状态：今日已完成签到 ({last_sign_time})\n"
+                    )
+                    
+                    # 如果有积分信息，添加到通知中
+                    if "fnb" in sign_dict and sign_dict["fnb"] is not None:
+                        text += (
+                            f"━━━━━━━━━━\n"
+                            f"📊 积分统计\n"
+                            f"💎 飞牛币：{sign_dict.get('fnb', '—')}\n"
+                            f"🔥 牛  值：{sign_dict.get('nz', '—')}\n"
+                            f"✨ 积  分：{sign_dict.get('credit', '—')}\n"
+                            f"📆 签到天数：{sign_dict.get('login_days', '—')}\n"
+                        )
+                    
+                    text += f"━━━━━━━━━━"
+                    
+                    self.post_message(
+                        mtype=NotificationType.SiteMessage,
+                        title=title,
+                        text=text
+                    )
                 
                 return sign_dict
             
-            # 检查先决条件
-            if not self._cookie:
-                logger.error("签到失败：未配置Cookie")
+            # 解析Cookie
+            cookies = {}
+            if self._cookie:
+                try:
+                    for cookie_item in self._cookie.split(';'):
+                        if '=' in cookie_item:
+                            name, value = cookie_item.strip().split('=', 1)
+                            cookies[name] = value
+                    
+                    # 检查必要的Cookie值
+                    required_cookies = ["pvRK_2132_saltkey", "pvRK_2132_auth"]
+                    missing_cookies = [c for c in required_cookies if c not in cookies]
+                    
+                    if missing_cookies:
+                        logger.error(f"Cookie中缺少必要的值: {', '.join(missing_cookies)}")
+                        sign_dict = {
+                            "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                            "status": "签到失败: Cookie无效，缺少必要值",
+                        }
+                        self._save_sign_history(sign_dict)
+                        
+                        if self._notify:
+                            self.post_message(
+                                mtype=NotificationType.SiteMessage,
+                                title="【飞牛论坛签到失败】",
+                                text=f"❌ Cookie无效，缺少必要值: {', '.join(missing_cookies)}"
+                            )
+                            notification_sent = True
+                        return sign_dict
+                    
+                    logger.info(f"成功提取必要的Cookie值: {', '.join(required_cookies)}")
+                    logger.info(f"使用Cookie长度: {len(self._cookie)} 字符")
+                except Exception as e:
+                    logger.error(f"解析Cookie时出错: {str(e)}")
+                    sign_dict = {
+                        "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                        "status": "签到失败: Cookie解析错误",
+                    }
+                    self._save_sign_history(sign_dict)
+                    
+                    if self._notify:
+                        self.post_message(
+                            mtype=NotificationType.SiteMessage,
+                            title="【飞牛论坛签到失败】",
+                            text=f"❌ Cookie解析错误: {str(e)}"
+                        )
+                        notification_sent = True
+                    return sign_dict
+            else:
+                logger.error("未配置Cookie")
                 sign_dict = {
                     "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
                     "status": "签到失败: 未配置Cookie",
@@ -170,33 +267,15 @@ class fnossign(_PluginBase):
                 
                 if self._notify:
                     self.post_message(
-                        mtype=NotificationType.SiteMessage, 
+                        mtype=NotificationType.SiteMessage,
                         title="【飞牛论坛签到失败】",
-                        text="❌ 未配置Cookie，请在插件设置中添加Cookie"
+                        text="❌ 未配置Cookie，请在设置中添加Cookie"
                     )
                     notification_sent = True
                 return sign_dict
             
-            logger.info(f"使用Cookie长度: {len(self._cookie)} 字符")
-            
-            # 从完整Cookie中提取关键值
-            cookies = self._extract_required_cookies(self._cookie)
-            if not cookies or 'pvRK_2132_saltkey' not in cookies or 'pvRK_2132_auth' not in cookies:
-                logger.error("签到失败：Cookie中缺少必要的认证信息")
-                sign_dict = {
-                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-                    "status": "签到失败: Cookie中缺少必要的认证信息",
-                }
-                self._save_sign_history(sign_dict)
-                
-                if self._notify:
-                    self.post_message(
-                        mtype=NotificationType.SiteMessage, 
-                        title="【飞牛论坛签到失败】",
-                        text="❌ Cookie中缺少必要的认证信息，请更新Cookie"
-                    )
-                    notification_sent = True
-                return sign_dict
+            # 检查今日是否已签到
+            logger.info("今日尚未成功签到")
             
             # 设置请求头和会话
             headers = {
@@ -223,8 +302,22 @@ class fnossign(_PluginBase):
             session.mount('http://', adapter)
             session.mount('https://', adapter)
             
-            # 验证Cookie是否有效
-            if not self._check_cookie_valid(session):
+            # 验证Cookie是否有效 - 增加超时保护
+            cookie_valid = False
+            try:
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    # 使用Future和超时机制
+                    future = executor.submit(self._check_cookie_valid, session)
+                    try:
+                        cookie_valid = future.result(timeout=15)  # 15秒超时
+                    except TimeoutError:
+                        logger.error("检查Cookie有效性超时")
+                        cookie_valid = False
+            except Exception as e:
+                logger.error(f"检查Cookie时出现异常: {str(e)}")
+                cookie_valid = False
+            
+            if not cookie_valid:
                 sign_dict = {
                     "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
                     "status": "签到失败: Cookie无效或已过期",
@@ -246,9 +339,135 @@ class fnossign(_PluginBase):
                 # 设置较短的超时时间，避免卡住
                 session.get("https://club.fnnas.com/", timeout=(3, 10))
             except requests.Timeout:
-                logger.warning("访问论坛首页超时，继续执行...")
+                logger.warning("访问论坛首页超时，尝试重试...")
+                # 首页访问超时时尝试重试
+                if retry_count < self._max_retries:
+                    logger.info(f"将在{self._retry_interval}秒后进行第{retry_count+1}次常规重试...")
+                    if self._notify:
+                        self.post_message(
+                            mtype=NotificationType.SiteMessage,
+                            title="【飞牛论坛签到重试】",
+                            text=f"❗ 访问论坛首页超时，{self._retry_interval}秒后将进行第{retry_count+1}次常规重试"
+                        )
+                    time.sleep(self._retry_interval)
+                    return self.sign(retry_count + 1, extended_retry)
+                # 延长重试逻辑
+                elif extended_retry < 2:
+                    delay = 300  # 5分钟延迟
+                    next_retry = extended_retry + 1
+                    logger.info(f"已达最大常规重试次数，将在{delay}秒后进行第{next_retry}次延长重试...")
+                    if self._notify:
+                        self.post_message(
+                            mtype=NotificationType.SiteMessage,
+                            title="【飞牛论坛签到延长重试】",
+                            text=f"⚠️ 常规重试{self._max_retries}次后首页仍访问超时，将在5分钟后进行第{next_retry}次延长重试"
+                        )
+                    
+                    # 确保清理之前可能存在的延长重试任务
+                    self._clear_extended_retry_tasks()
+                    
+                    # 安排延迟任务
+                    scheduler = BackgroundScheduler(timezone=settings.TZ)
+                    retry_job_id = f"fnossign_extended_retry_{next_retry}"
+                    scheduler.add_job(
+                        func=self.sign,
+                        trigger='date',
+                        id=retry_job_id,
+                        run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=delay),
+                        args=[0, next_retry],
+                        name=f"飞牛论坛签到延长重试{next_retry}"
+                    )
+                    scheduler.start()
+                    
+                    # 记录当前重试任务ID
+                    self.save_data('current_retry_task', retry_job_id)
+                    
+                    sign_dict = {
+                        "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                        "status": f"首页访问超时: 已安排{next_retry}次延长重试",
+                    }
+                    self._save_sign_history(sign_dict)
+                    return sign_dict
+                
+                # 所有重试都失败
+                sign_dict = {
+                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                    "status": "签到失败: 首页多次访问超时",
+                }
+                self._save_sign_history(sign_dict)
+                if self._notify:
+                    self.post_message(
+                        mtype=NotificationType.SiteMessage,
+                        title="【❌ 飞牛论坛签到失败】",
+                        text="❌ 访问论坛首页多次超时，所有重试均失败，请检查网络连接或站点状态"
+                    )
+                    notification_sent = True
+                return sign_dict
             except Exception as e:
-                logger.warning(f"访问论坛首页出错: {str(e)}，继续执行...")
+                logger.warning(f"访问论坛首页出错: {str(e)}，尝试重试...")
+                # 首页访问出错时尝试重试
+                if retry_count < self._max_retries:
+                    logger.info(f"将在{self._retry_interval}秒后进行第{retry_count+1}次常规重试...")
+                    if self._notify:
+                        self.post_message(
+                            mtype=NotificationType.SiteMessage,
+                            title="【飞牛论坛签到重试】",
+                            text=f"❗ 访问论坛首页出错: {str(e)}，{self._retry_interval}秒后将进行第{retry_count+1}次常规重试"
+                        )
+                    time.sleep(self._retry_interval)
+                    return self.sign(retry_count + 1, extended_retry)
+                elif extended_retry < 2:
+                    # 延长重试逻辑...省略与上面相同的代码
+                    delay = 300  # 5分钟延迟
+                    next_retry = extended_retry + 1
+                    logger.info(f"已达最大常规重试次数，将在{delay}秒后进行第{next_retry}次延长重试...")
+                    if self._notify:
+                        self.post_message(
+                            mtype=NotificationType.SiteMessage,
+                            title="【飞牛论坛签到延长重试】",
+                            text=f"⚠️ 常规重试{self._max_retries}次后首页访问仍出错，将在5分钟后进行第{next_retry}次延长重试"
+                        )
+                    
+                    # 确保清理之前可能存在的延长重试任务
+                    self._clear_extended_retry_tasks()
+                    
+                    # 安排延迟任务
+                    scheduler = BackgroundScheduler(timezone=settings.TZ)
+                    retry_job_id = f"fnossign_extended_retry_{next_retry}"
+                    scheduler.add_job(
+                        func=self.sign,
+                        trigger='date',
+                        id=retry_job_id,
+                        run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=delay),
+                        args=[0, next_retry],
+                        name=f"飞牛论坛签到延长重试{next_retry}"
+                    )
+                    scheduler.start()
+                    
+                    # 记录当前重试任务ID
+                    self.save_data('current_retry_task', retry_job_id)
+                    
+                    sign_dict = {
+                        "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                        "status": f"首页访问错误: 已安排{next_retry}次延长重试",
+                    }
+                    self._save_sign_history(sign_dict)
+                    return sign_dict
+                
+                # 所有重试都失败
+                sign_dict = {
+                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                    "status": f"签到失败: 首页多次访问出错 - {str(e)}",
+                }
+                self._save_sign_history(sign_dict)
+                if self._notify:
+                    self.post_message(
+                        mtype=NotificationType.SiteMessage,
+                        title="【❌ 飞牛论坛签到失败】",
+                        text=f"❌ 访问论坛首页多次出错: {str(e)}，所有重试均失败"
+                    )
+                    notification_sent = True
+                return sign_dict
             
             logger.info("正在访问签到页面...")
             sign_page_url = "https://club.fnnas.com/plugin.php?id=zqlj_sign"
@@ -280,16 +499,24 @@ class fnossign(_PluginBase):
                             text=f"⚠️ 常规重试{self._max_retries}次后仍失败，将在5分钟后进行第{next_retry}次延长重试"
                         )
                     
+                    # 确保清理之前可能存在的延长重试任务
+                    self._clear_extended_retry_tasks()
+                    
                     # 安排延迟任务
                     scheduler = BackgroundScheduler(timezone=settings.TZ)
+                    retry_job_id = f"fnossign_extended_retry_{next_retry}"
                     scheduler.add_job(
                         func=self.sign,
                         trigger='date',
+                        id=retry_job_id,
                         run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=delay),
                         args=[0, next_retry],
                         name=f"飞牛论坛签到延长重试{next_retry}"
                     )
                     scheduler.start()
+                    
+                    # 记录当前重试任务ID
+                    self.save_data('current_retry_task', retry_job_id)
                     
                     sign_dict = {
                         "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
@@ -408,16 +635,24 @@ class fnossign(_PluginBase):
                             text=f"⚠️ 常规重试{self._max_retries}次后仍未找到签到参数，将在5分钟后进行第{next_retry}次延长重试"
                         )
                     
+                    # 确保清理之前可能存在的延长重试任务
+                    self._clear_extended_retry_tasks()
+                    
                     # 安排延迟任务
                     scheduler = BackgroundScheduler(timezone=settings.TZ)
+                    retry_job_id = f"fnossign_extended_retry_{next_retry}"
                     scheduler.add_job(
                         func=self.sign,
                         trigger='date',
+                        id=retry_job_id,
                         run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=delay),
                         args=[0, next_retry],
                         name=f"飞牛论坛签到延长重试{next_retry}"
                     )
                     scheduler.start()
+                    
+                    # 记录当前重试任务ID
+                    self.save_data('current_retry_task', retry_job_id)
                     
                     sign_dict = {
                         "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
@@ -596,119 +831,42 @@ class fnossign(_PluginBase):
                 # 签到可能失败
                 logger.error(f"签到请求发送成功，但结果异常: {debug_resp}")
                 
-                # 常规重试逻辑
-                if retry_count < self._max_retries:
-                    logger.info(f"将在{self._retry_interval}秒后进行第{retry_count+1}次常规重试...")
-                    if self._notify:
-                        self.post_message(
-                            mtype=NotificationType.SiteMessage,
-                            title="【飞牛论坛签到重试】",
-                            text=f"❗ 签到请求发送成功，但结果异常，{self._retry_interval}秒后将进行第{retry_count+1}次常规重试"
-                        )
-                    time.sleep(self._retry_interval)
-                    return self.sign(retry_count + 1, extended_retry)
-                # 延长重试逻辑
-                elif extended_retry < 2:
-                    delay = 300  # 5分钟延迟
-                    next_retry = extended_retry + 1
-                    logger.info(f"已达最大常规重试次数，将在{delay}秒后进行第{next_retry}次延长重试...")
-                    if self._notify:
-                        self.post_message(
-                            mtype=NotificationType.SiteMessage,
-                            title="【飞牛论坛签到延长重试】",
-                            text=f"⚠️ 常规重试{self._max_retries}次后仍遇到响应异常，将在5分钟后进行第{next_retry}次延长重试"
-                        )
-                    
-                    # 安排延迟任务
-                    scheduler = BackgroundScheduler(timezone=settings.TZ)
-                    scheduler.add_job(
-                        func=self.sign,
-                        trigger='date',
-                        run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=delay),
-                        args=[0, next_retry],
-                        name=f"飞牛论坛签到延长重试{next_retry}"
-                    )
-                    scheduler.start()
-                    
+                # 添加执行超时检查
+                if (datetime.now() - start_time).total_seconds() > sign_timeout:
+                    logger.error("签到执行时间超过5分钟，执行超时")
                     sign_dict = {
                         "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-                        "status": f"签到失败: 已安排{next_retry}次延长重试",
+                        "status": "签到失败: 执行超时",
                     }
                     self._save_sign_history(sign_dict)
-                    return sign_dict
+                    
+                    if self._notify and not notification_sent:
+                        self.post_message(
+                            mtype=NotificationType.SiteMessage,
+                            title="【❌ 飞牛论坛签到失败】",
+                            text="❌ 签到执行超时，已强制终止，请检查网络或站点状态"
+                        )
+                        notification_sent = True
                 
-                sign_dict = {
-                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-                    "status": "签到失败: 所有重试后仍遇到响应异常",
-                }
-                self._save_sign_history(sign_dict)
-                
-                if self._notify:
-                    self.post_message(
-                        mtype=NotificationType.SiteMessage,
-                        title="【❌ 飞牛论坛签到失败】",
-                        text="❌ 签到失败: 所有重试后仍遇到响应异常，请检查站点是否变更"
-                    )
-                    notification_sent = True
                 return sign_dict
         
         except requests.RequestException as req_exc:
             # 网络请求异常处理
             logger.error(f"网络请求异常: {str(req_exc)}")
-            # 常规重试逻辑
-            if retry_count < self._max_retries:
-                logger.info(f"将在{self._retry_interval}秒后进行第{retry_count+1}次常规重试...")
-                if self._notify:
-                    self.post_message(
-                        mtype=NotificationType.SiteMessage,
-                        title="【飞牛论坛签到重试】",
-                        text=f"❗ 网络请求异常: {str(req_exc)}，{self._retry_interval}秒后将进行第{retry_count+1}次常规重试"
-                    )
-                time.sleep(self._retry_interval)
-                return self.sign(retry_count + 1, extended_retry)
-            # 延长重试逻辑
-            elif extended_retry < 2:
-                delay = 300  # 5分钟延迟
-                next_retry = extended_retry + 1
-                logger.info(f"已达最大常规重试次数，将在{delay}秒后进行第{next_retry}次延长重试...")
-                if self._notify:
-                    self.post_message(
-                        mtype=NotificationType.SiteMessage,
-                        title="【飞牛论坛签到延长重试】",
-                        text=f"⚠️ 常规重试{self._max_retries}次后仍遇到网络异常，将在5分钟后进行第{next_retry}次延长重试"
-                    )
-                
-                # 安排延迟任务
-                scheduler = BackgroundScheduler(timezone=settings.TZ)
-                scheduler.add_job(
-                    func=self.sign,
-                    trigger='date',
-                    run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=delay),
-                    args=[0, next_retry],
-                    name=f"飞牛论坛签到延长重试{next_retry}"
-                )
-                scheduler.start()
-                
+            # 添加执行超时检查
+            if (datetime.now() - start_time).total_seconds() > sign_timeout:
+                logger.error("签到执行时间超过5分钟，执行超时")
                 sign_dict = {
                     "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-                    "status": f"签到失败: 网络异常，已安排{next_retry}次延长重试",
-                }
-                self._save_sign_history(sign_dict)
-                return sign_dict
-            else:
-                # 记录失败
-                sign_dict = {
-                    "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-                    "status": f"签到失败: 所有重试后仍遇到网络异常 - {str(req_exc)}",
+                    "status": "签到失败: 执行超时",
                 }
                 self._save_sign_history(sign_dict)
                 
-                # 发送失败通知
                 if self._notify and not notification_sent:
                     self.post_message(
                         mtype=NotificationType.SiteMessage,
                         title="【❌ 飞牛论坛签到失败】",
-                        text=f"❌ 所有重试后仍遇到网络异常: {str(req_exc)}，请检查网络或站点状态"
+                        text="❌ 签到执行超时，已强制终止，请检查网络或站点状态"
                     )
                     notification_sent = True
                 
@@ -960,7 +1118,7 @@ class fnossign(_PluginBase):
         credits_missing = fnb == "—" and nz == "—" and credit == "—" and login_days == "—"
         
         # 获取触发方式
-        trigger_type = "手动触发" if self._is_manual_trigger() else "定时触发"
+        trigger_type = self._current_trigger_type
         
         # 构建通知文本
         if "签到成功" in status:
@@ -1382,14 +1540,75 @@ class fnossign(_PluginBase):
             ]
 
     def stop_service(self):
+        """停止服务，清理所有任务"""
         try:
+            # 清理当前插件的主定时任务
             if self._scheduler:
                 self._scheduler.remove_all_jobs()
                 if self._scheduler.running:
                     self._scheduler.shutdown()
                 self._scheduler = None
+            
+            # 清理所有延长重试任务
+            self._clear_extended_retry_tasks()
+            
+            # 清除当前重试任务记录
+            self.save_data('current_retry_task', None)
+            
         except Exception as e:
             logger.error(f"退出插件失败: {str(e)}")
+            
+    def _clear_extended_retry_tasks(self):
+        """清理所有延长重试任务"""
+        try:
+            # 查找所有fnossign_extended_retry开头的任务，并停止它们
+            from apscheduler.schedulers.background import BackgroundScheduler
+            import apscheduler.schedulers
+            
+            # 获取当前记录的延长重试任务ID
+            current_retry_task = self.get_data('current_retry_task')
+            if current_retry_task:
+                logger.info(f"清理延长重试任务: {current_retry_task}")
+                
+                # 查找该任务并停止
+                for scheduler in apscheduler.schedulers.schedulers:
+                    if isinstance(scheduler, BackgroundScheduler) and scheduler.running:
+                        for job in scheduler.get_jobs():
+                            if job.id == current_retry_task:
+                                logger.info(f"找到并移除延长重试任务: {job.id}")
+                                job.remove()
+                
+                # 清除记录
+                self.save_data('current_retry_task', None)
+        except Exception as e:
+            logger.error(f"清理延长重试任务失败: {str(e)}")
+            
+    def _has_running_extended_retry(self):
+        """检查是否有正在运行的延长重试任务"""
+        current_retry_task = self.get_data('current_retry_task')
+        if not current_retry_task:
+            return False
+            
+        try:
+            # 检查该任务是否存在且未执行
+            import apscheduler.schedulers
+            for scheduler in apscheduler.schedulers.schedulers:
+                if hasattr(scheduler, 'get_jobs'):
+                    for job in scheduler.get_jobs():
+                        if job.id == current_retry_task:
+                            # 任务存在且未执行
+                            next_run_time = job.next_run_time
+                            if next_run_time and next_run_time > datetime.now(tz=pytz.timezone(settings.TZ)):
+                                logger.info(f"发现正在运行的延长重试任务: {job.id}, 下次执行时间: {next_run_time}")
+                                return True
+            
+            # 如果找不到任务或任务已执行，清除记录
+            self.save_data('current_retry_task', None)
+            return False
+        except Exception as e:
+            logger.error(f"检查延长重试任务状态失败: {str(e)}")
+            # 出错时为安全起见，返回False
+            return False
 
     def get_command(self) -> List[Dict[str, Any]]:
         return []
@@ -1400,94 +1619,46 @@ class fnossign(_PluginBase):
     def _check_cookie_valid(self, session):
         """检查Cookie是否有效"""
         try:
-            # 访问个人空间
-            profile_url = "https://club.fnnas.com/home.php?mod=space"
-            response = session.get(profile_url)
-            response.raise_for_status()
-
-            # 检查是否需要登录
-            if "请先登录后才能继续浏览" in response.text or "您需要登录后才能继续本操作" in response.text:
-                logger.error("Cookie无效或已过期")
-                return False
-
-            # 尝试获取UID
-            uid_pattern = r'home\.php\?mod=space&uid=(\d+)'
-            uid_match = re.search(uid_pattern, response.text)
-            
-            if uid_match:
-                uid = uid_match.group(1)
-                logger.info(f"Cookie有效，当前用户UID: {uid}")
-                
-                # 访问用户空间页面尝试获取用户名
+            # 使用更短的超时时间，防止卡住
+            response = session.get("https://club.fnnas.com/", timeout=(3, 10))
+            if "退出" in response.text:
+                # 尝试提取UID
                 try:
-                    user_url = f"https://club.fnnas.com/home.php?mod=space&uid={uid}"
-                    user_response = session.get(user_url)
-                    
-                    # 尝试多种方式获取用户名
-                    username_patterns = [
-                        r'<title>(.*?)的个人空间',
-                        r'<h2 class="mt">(.*?)</h2>',
-                        r'<strong class="mt">(.*?)</strong>'
-                    ]
-                    
-                    for pattern in username_patterns:
-                        username_match = re.search(pattern, user_response.text)
-                        if username_match:
-                            username = username_match.group(1).strip()
-                            if username:
-                                logger.info(f"识别到用户名: {username}")
-                                break
+                    # 添加超时机制，避免卡在正则匹配上
+                    uid_match = re.search(r'uid=(\d+)', response.text)
+                    if uid_match:
+                        self._uid = uid_match.group(1)
+                        return True
+                    else:
+                        logger.warning("Cookie有效，但未找到UID")
+                        # 虽然没找到UID，但Cookie有效，继续执行
+                        return True
                 except Exception as e:
-                    logger.debug(f"获取用户名失败: {str(e)}")
-                
-                return True
-            else:
-                # 尝试其他方式确认登录状态
-                if "天天打卡" in response.text or "安全退出" in response.text or "我的主页" in response.text:
-                    logger.warning("Cookie有效，但未找到UID")
+                    logger.warning(f"提取UID时出错: {str(e)}")
+                    # 即使提取UID失败，也继续尝试签到
                     return True
-                else:
-                    logger.error("Cookie无效，未检测到登录状态")
-                    return False
-                
+            return False
         except Exception as e:
-            logger.error(f"检查Cookie有效性时出错: {str(e)}")
-            return False 
+            logger.warning(f"检查Cookie有效性时出错: {str(e)}")
+            # 发生异常时，假设Cookie无效
+            return False
 
     def _extract_required_cookies(self, cookie_str):
-        """从完整Cookie字符串中提取必要的Cookie值"""
+        """从Cookie字符串中提取所需的值"""
+        # 此方法保留，用于向下兼容，实际不再调用
+        if not cookie_str:
+            return {}
+            
+        cookies = {}
         try:
-            cookies = {}
-            # 分割Cookie字符串
-            parts = cookie_str.split(';')
-            
-            # 提取必要的Cookie值
-            for part in parts:
-                part = part.strip()
-                if '=' not in part:
-                    continue
-                    
-                name, value = part.split('=', 1)
-                name = name.strip()
-                
-                # 只保留需要的Cookie
-                if name in ['pvRK_2132_saltkey', 'pvRK_2132_auth']:
+            for cookie_item in cookie_str.split(';'):
+                if '=' in cookie_item:
+                    name, value = cookie_item.strip().split('=', 1)
                     cookies[name] = value
-            
-            # 检查是否获取到必要的Cookie
-            required_cookies = ['pvRK_2132_saltkey', 'pvRK_2132_auth']
-            missing = [c for c in required_cookies if c not in cookies]
-            
-            if missing:
-                logger.error(f"Cookie中缺少必要的值: {', '.join(missing)}")
-                return None
-                
-            logger.info(f"成功提取必要的Cookie值: {', '.join(cookies.keys())}")
-            return cookies
-            
         except Exception as e:
             logger.error(f"解析Cookie时出错: {str(e)}")
-            return None 
+        
+        return cookies
 
     def _is_manual_trigger(self):
         """
@@ -1559,3 +1730,38 @@ class fnossign(_PluginBase):
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         self.save_data('last_sign_date', now)
         logger.info(f"记录签到成功时间: {now}") 
+
+    def _get_last_sign_time(self):
+        """获取上次签到的时间"""
+        try:
+            # 获取最后一次签到的日期和时间
+            last_sign_date = self.get_data('last_sign_date')
+            if last_sign_date:
+                try:
+                    last_sign_datetime = datetime.strptime(last_sign_date, '%Y-%m-%d %H:%M:%S')
+                    return last_sign_datetime.strftime('%H:%M:%S')
+                except Exception as e:
+                    logger.error(f"解析最后签到日期时出错: {str(e)}")
+            
+            # 如果没有记录或解析出错，查找今日的成功签到记录
+            history = self.get_data('sign_history') or []
+            today = datetime.now().strftime('%Y-%m-%d')
+            today_success = [
+                record for record in history 
+                if record.get("date", "").startswith(today) 
+                and record.get("status") in ["签到成功", "已签到"]
+            ]
+            
+            if today_success:
+                last_success = max(today_success, key=lambda x: x.get("date", ""))
+                try:
+                    last_time = datetime.strptime(last_success.get("date", ""), '%Y-%m-%d %H:%M:%S')
+                    return last_time.strftime('%H:%M:%S')
+                except:
+                    pass
+            
+            # 如果都没有找到，返回一个默认值
+            return "今天早些时候"
+        except Exception as e:
+            logger.error(f"获取上次签到时间出错: {str(e)}")
+            return "今天早些时候"
