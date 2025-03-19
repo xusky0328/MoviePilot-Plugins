@@ -1,4 +1,17 @@
 {
+  "twofahelper": {
+    "name": "两步验证助手",
+    "description": "生成TOTP两步验证码，配合浏览器扩展使用，支持自动填写验证码",
+    "labels": "TOTP,验证码,扩展",
+    "version": "1.0.0",
+    "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/2fa.png",
+    "author": "madrays",
+    "level": 1,
+    "v2": true,
+    "history": {
+      "v1.0.0": "首次发布，支持TOTP验证码生成、浏览器扩展集成、多站点管理"
+    }
+  },
   "fnossign": {
     "name": "飞牛论坛签到",
     "description": "自动完成飞牛论坛每日签到，支持失败重试和历史记录",
