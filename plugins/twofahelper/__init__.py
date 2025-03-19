@@ -780,7 +780,7 @@ class twofahelper(_PluginBase):
                                                             {
                                                                 'component': 'a',
                                                                 'props': {
-                                                                    'href': 'https://github.com/madrays/MoviePilot-Plugins/blob/main/README.md#totp-browser-extension',
+                                                                    'href': 'https://github.com/madrays/MoviePilot-Plugins/blob/main/README.md#totp浏览器扩展说明',
                                                                     'target': '_blank',
                                                                     'class': 'text-decoration-none mb-1',
                                                                     'style': 'color: #1976d2; display: inline-flex; align-items: center;'
