@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>MP TOTP助手 - 设置</title>
+  <style>
+    body {
+      width: 100%;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    
+    .container {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    h1, h2 {
+      margin-top: 0;
+      color: #1976d2;
+    }
+    
+    h2 {
+      font-size: 18px;
+      margin: 30px 0 15px;
+    }
+    
+    .form-group {
+      margin-bottom: 15px;
+    }
+    
+    label {
+      display: block;
+      margin-bottom: 5px;
+      color: #666;
+    }
+    
+    input[type="text"], input[type="password"], textarea {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    
+    .button-group {
+      margin-top: 20px;
+      display: flex;
+      gap: 10px;
+    }
+    
+    button {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 500;
+      background: #e0e0e0;
+      color: #333;
+    }
+    
+    button:hover {
+      opacity: 0.9;
+    }
+    
+    button[type="submit"], #testConnection, #addSite {
+      background-color: #1976d2;
+      color: white;
+    }
+    
+    #clearSettings {
+      background-color: #f44336;
+      color: white;
+    }
+    
+    .delete-btn {
+      background-color: #f44336;
+      color: white;
+      padding: 4px 8px;
+      font-size: 12px;
+      margin-left: 8px;
+    }
+    
+    .status {
+      margin-top: 15px;
+      padding: 10px;
+      border-radius: 4px;
+      display: none;
+    }
+    
+    .status.success {
+      background-color: #e8f5e9;
+      color: #2e7d32;
+    }
+    
+    .status.error {
+      background-color: #ffebee;
+      color: #c62828;
+    }
+    
+    .help-text {
+      margin-top: 5px;
+      font-size: 12px;
+      color: #666;
+    }
+    
+    .important-note {
+      background-color: #fff3cd;
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 15px;
+      border-left: 4px solid #ffc107;
+    }
+    
+    /* 站点列表样式 */
+    .sites-list {
+      list-style-type: none;
+      padding: 0;
+      margin: 0;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    
+    .site-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px;
+      border-bottom: 1px solid #eee;
+      margin-bottom: 8px;
+    }
+    
+    .site-info {
+      flex: 1;
+    }
+    
+    .site-name {
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
+    
+    .site-secret {
+      font-family: monospace;
+      color: #666;
+      margin-bottom: 4px;
+    }
+    
+    .site-urls {
+      font-size: 12px;
+      color: #666;
+    }
+    
+    .site-controls {
+      margin-left: 10px;
+    }
+    
+    .card {
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      margin-bottom: 10px;
+      position: relative;
+    }
+    
+    .card h3 {
+      margin-top: 0;
+      color: #333;
+    }
+    
+    .card.dragging {
+      opacity: 0.5;
+      border: 2px dashed #1976d2;
+    }
+    
+    .card:hover {
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .drag-handle {
+      cursor: move;
+      user-select: none;
+    }
+    
+    .sort-container {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      margin-bottom: 15px;
+    }
+    
+    .drag-sort-info {
+      background-color: #e3f2fd;
+      border-left: 4px solid #2196f3;
+      padding: 8px 12px;
+      margin-bottom: 15px;
+      font-size: 14px;
+      color: #0d47a1;
+    }
+    
+    .site-count-info {
+      margin-bottom: 15px;
+      background-color: #e0f2f1;
+      padding: 10px;
+      border-radius: 4px;
+      text-align: center;
+    }
+    
+    .export-import-section {
+      margin-top: 20px;
+      padding-top: 15px;
+      border-top: 1px solid #eee;
+    }
+    
+    /* 图标相关样式 */
+    .icon-upload {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 5px;
+    }
+    
+    .icon-preview {
+      width: 32px;
+      height: 32px;
+      border-radius: 4px;
+      background-color: #f5f5f5;
+      border: 1px dashed #ccc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    
+    .icon-preview img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+    
+    .btn-secondary {
+      background-color: #e0e0e0;
+      color: #333;
+      border: none;
+      border-radius: 4px;
+      padding: 6px 12px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    
+    .btn-secondary:hover {
+      background-color: #d0d0d0;
+    }
+    
+    .site-icon {
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      object-fit: contain;
+    }
+    
+    .footer {
+      margin-top: 30px;
+      text-align: center;
+      padding-top: 15px;
+      border-top: 1px solid #eee;
+      font-size: 12px;
+      color: #666;
+    }
+    
+    .footer a {
+      color: #1976d2;
+      text-decoration: none;
+    }
+    
+    .footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>MP TOTP助手设置</h1>
+    
+    <div class="important-note">
+      <strong>重要说明：</strong> 请确保输入正确的API密钥。API密钥需要与MP服务器上的API_TOKEN相匹配，否则会出现认证失败的错误。
+      <p>本插件使用API直接从MP服务器获取验证码，可以在这里管理站点配置。</p>
+    </div>
+    
+    <h2>服务器连接</h2>
+    <div id="status" class="status"></div>
+    
+    <div class="form-group">
+      <label for="baseUrl">MP服务器地址</label>
+      <input type="text" id="baseUrl" placeholder="例如: https://mp.example.com:3000">
+      <div class="help-text">输入MP服务器的完整地址，包含端口号（如果有）</div>
+    </div>
+    
+    <div class="form-group">
+      <label for="apiKey">API密钥</label>
+      <input type="text" id="apiKey" placeholder="请输入MP服务器的API_TOKEN">
+      <div class="help-text">此密钥必须与MP服务器上的<code>API_TOKEN</code>设置完全一致</div>
+    </div>
+    
+    <div class="button-group">
+      <button id="testConnection">测试连接</button>
+      <button id="clearSettings">清除设置</button>
+    </div>
+    
+    <h2>已配置站点</h2>
+    <div id="sitesList">
+      <!-- 站点列表将通过JavaScript动态添加 -->
+      <div class="help-text">连接服务器后，站点列表将显示在这里</div>
+    </div>
+    
+    <h2>添加站点</h2>
+    <div class="form-group">
+      <label for="siteName">站点名称</label>
+      <input type="text" id="siteName" placeholder="例如: Google">
+    </div>
+    
+    <div class="form-group">
+      <label for="secret">TOTP密钥</label>
+      <input type="text" id="secret" placeholder="例如: JBSWY3DPEHPK3PXP">
+      <div class="help-text">Base32编码的TOTP密钥</div>
+    </div>
+    
+    <div class="form-group">
+      <label for="urls">站点URL（每行一个）</label>
+      <textarea id="urls" rows="3" placeholder="例如: https://accounts.google.com"></textarea>
+      <div class="help-text">输入与此验证码关联的网站URL，每行一个</div>
+    </div>
+    
+    <div class="form-group">
+      <label for="siteIcon">站点图标</label>
+      <div class="icon-upload">
+        <div id="iconPreview" class="icon-preview"></div>
+        <input type="file" id="iconFile" accept="image/*" style="display: none;">
+        <button id="selectIconButton" class="btn-secondary">选择图标</button>
+        <button id="autoFetchIconButton" class="btn-secondary">自动获取</button>
+        <button id="removeIconButton" class="btn-secondary" style="display: none;">移除图标</button>
+      </div>
+      <div class="help-text">上传站点图标或根据URL自动获取图标（可选）。推荐尺寸：32x32px</div>
+    </div>
+    
+    <div class="button-group">
+      <button id="addSite">添加站点</button>
+    </div>
+    
+    <div class="export-import-section">
+      <h2>导入/导出配置</h2>
+      <div class="button-group">
+        <button id="exportConfig">导出配置</button>
+        <button id="importConfig">导入配置</button>
+        <input type="file" id="importFile" style="display: none;" accept=".json">
+      </div>
+    </div>
+    
+    <div class="footer">
+      <p>MP TOTP助手 © 2023-2024 <a href="https://github.com/madrays" target="_blank">madrays</a> | <a href="https://cocohe.cn" target="_blank">博客</a></p>
+      <p>简化您的二步验证体验，快速安全地获取TOTP验证码</p>
+    </div>
+  </div>
+  
+  <script src="options.js"></script>
+</body>
+</html>
