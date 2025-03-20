@@ -112,13 +112,24 @@ document.addEventListener('DOMContentLoaded', async function () {
         
         // 使用首字母作为初始占位图标
         const letter = siteName.charAt(0).toUpperCase();
-        const hue = Math.abs(siteName.split('').reduce((a, b) => a + b.charCodeAt(0), 0) % 360);
         siteIcon.textContent = letter;
-        siteIcon.style.backgroundColor = `hsl(${hue}, 70%, 60%)`;
+        siteIcon.style.backgroundColor = '#ffffff'; // 白色背景
+        siteIcon.style.color = '#757575'; // 灰色文字，适合白色背景
         
         // 尝试从URL获取图标
         if (data.urls && Array.isArray(data.urls) && data.urls.length > 0) {
           fetchSiteIcon(data.urls[0], siteIcon);
+        }
+        // 如果数据中有base64图标，直接显示
+        else if (data.icon && data.icon.startsWith('data:image')) {
+          // 直接使用base64图标
+          siteIcon.innerHTML = '';
+          const iconImg = document.createElement('img');
+          iconImg.src = data.icon;
+          iconImg.alt = 'Site Icon';
+          iconImg.style.width = '100%';
+          iconImg.style.height = '100%';
+          siteIcon.appendChild(iconImg);
         }
         
         siteRow.appendChild(siteIcon);

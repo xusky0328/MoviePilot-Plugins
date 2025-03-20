@@ -173,7 +173,7 @@ function isOTPPage() {
       url.includes('two-factor') || 
       url.includes('two-step') || 
       url.includes('security') ||
-      url.includes('verification')) {
+      url.includes('two-step-verification')) {
     return true;
   }
   
@@ -183,7 +183,7 @@ function isOTPPage() {
       pageText.includes('二步验证') ||
       pageText.includes('two-factor') ||
       pageText.includes('2fa') ||
-      pageText.includes('验证码')) {
+      pageText.includes('二级验证码')) {
     return true;
   }
   
@@ -323,6 +323,9 @@ function createOTPPanel() {
           font-size: 10px;
           font-weight: bold;
           overflow: hidden;
+          background-color: #ffffff;
+          border: 1px solid #e0e0e0;
+          color: #757575;
         `;
         
         // 获取站点名称
@@ -330,14 +333,21 @@ function createOTPPanel() {
         
         // 使用首字母作为初始占位图标
         const letter = siteName.charAt(0).toUpperCase();
-        const hue = Math.abs(letter.charCodeAt(0) * 5) % 360;
         siteIcon.textContent = letter;
-        siteIcon.style.backgroundColor = `hsl(${hue}, 70%, 60%)`;
-        siteIcon.style.color = 'white';
         
         // 尝试从URL获取图标
         if (code.urls && code.urls.length > 0) {
           fetchSiteIcon(code.urls[0], siteIcon);
+        }
+        // 如果数据中有base64图标，直接显示
+        else if (code.icon && code.icon.startsWith('data:image')) {
+          // 直接使用base64图标
+          siteIcon.innerHTML = '';
+          const iconImg = document.createElement('img');
+          iconImg.src = code.icon;
+          iconImg.alt = 'Site Icon';
+          iconImg.style.cssText = 'width: 100%; height: 100%; object-fit: cover;';
+          siteIcon.appendChild(iconImg);
         }
         
         // 添加站点名称

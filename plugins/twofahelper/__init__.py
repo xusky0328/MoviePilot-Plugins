@@ -24,7 +24,7 @@ class twofahelper(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/2fa.png"
     # 插件版本
-    plugin_version = "1.2"
+    plugin_version = "1.2.1"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -80,32 +80,39 @@ class twofahelper(_PluginBase):
         
         :return: 预设站点配置字典
         """
-        # 当前时间戳，用于确保新生成的秘钥每次都不同
-        timestamp = int(time.time())
+        # Google图标的Base64编码 - 确保背景为白色
+        google_icon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAABWhJREFUWEe9V2lsVFUU/u55dGY67XRo2cpmsaLQCilSFVkkDY0WFTdwAYwRpCIKERAkNaYgEpCGkNCIibKESFg0JphoJAixJDaQYlFoUAxiC5WwlLIVOtPpdN65cod5M+9Np50paby/2jnb98757j3nCCR4pJRpAKYw8yQpZZ4QIhuAK2R+U0p5RghRQ0Q/A/hRCHEzEdcinpKUchgzlwCYTkSOePpKzswtAHbf1l8rhDjdmU2HAKSUTmZeBWAhEWmJBI7WYeYAgA1EtFwIoUC1OzEBSCkfYObviCj3bgLHAHKCiKYKIf6JlrUDIKUczcw/EVHvaGX94nm0HtyPtmNHEaivAzfdAKQEpbmhZWXDljca9sLJ0AYOboebmRuJ6EkhxHGz0AIg9OWHooPrly7As+kztFZWBAN2eoSAfXwBUuYthJY5wKIaAjHOnIkwACllCjP/Gp1234G9aC4vg/TFLGGHWESyE64lH8Fe8EQ0CFWOMQYnwgB0XV9PRO+btb1ffwXPls/vmgaOoilwfbA8VjnWaZq2TAmCAEJX7U8z29WX3yr7OGbwHtlDYXt0HLT+AwEhoF84D3/1YQRqIzfO8cyLcC0qCcpj3Q4iylGlCEp1Xd9GRLMMRUW268UzIFt9FlsVMHVRCWz5Y2IC8x+twq31q2GfUIDU+Us6zRwzb9U0rVhIKd3MfMn8yHjK34P3hyqLg6ScEXCvKYdwGY9fbP/S64FwpsQtGzN7iShTAZgJYKdhIVvqoFfmwlvRH61H+wR/poxeSN+8C+ROj+u4iwrTha7rW4hojmHIZz8F164I/uv/qye8e7OQunAFFKG6+zDzJhEIBKo1TXs4XP/fiyCvHwzH4puDYHv2b6BHj+6Or7h3RGXgKhFlGN4DlYMBf0M4mOj3ErQRuzoMXrjGkzCw0hfsKMiNfIh6mBQAPxElhQFUOADJYac0pAR03yfdAmBOgQ0zx4VDqa7p/18BvD4hCbMm2iLlDQG4QkS9OixB32nQRu7ulgzMK7Th5TGWDDS2J+GxyZDXKsIBG2w56Dv+NyRR10h4ppFRvNnaP1ZMtWPi8Igfg4RR17AMXFsaBLCvdRDKbuVh6SML8Hx2YcJkU4rfVLVhU4XfYrNzvhOZ7sjTHLyGUsoZAMI0ly1n4Tuciw3NudjjGxJ0kOFwY1fRevRy9EwIRLNPYvaXLbjmibTue3oTts1NjrZ/VQFICz3FYemGqlXYWV9jUR6eno2NBaVw2zp/itt0oPRbH6rrdIv924U2vGKtv3qK+xnNaCsRvWlYXPQ0Yvq+xfAGrM0o09kby/LfwuMD8mNm4vSNepT9UoUzfzwFIDJGZqQIbH8nGck2S/o3a5o212jH9zPzSaII0/bVV6K0qjxmoCFpAzE28yEMTs2EEAKXW67i2OWTqLlyChISmm8onA0LIAJ3esfKaQ5MGBYBxMxtoXZcax5I1hHRUnPEHae+R/nx7QnVPVpJ6C4kN7yL2fl5lruv9Jh5raZpH6q/zSOZGsOPENEIs7P9/x7C6uov4A10bSTThIbinNdQPPI5CzZmVsvLY0KIYH2jh9KhzHyYiO704dC55L2CjTU7cODcIXC8oRRAft8HsWjUG1DENR9mbiAiNZTWGb/HGstHMfP+aBDKQJFTgahuOIHapnO43toUHJLddheyXAMwqs9wFA4ai2Hp97YrWyh4kVrfzMKOFhOViT1ENPKuCBBlFEq7WkzCX95hBgyBlDKZmVcCWGy+HV0BpNh+e4FV0/ZKo+btyBrPoZRSZUMtpzOIyBlPP8RyrxrziKhMCFHbmU3c7diUEfUEPh21nrtD8iYpZZ1pPd8rhGhOBOx/iMlsM+yNfVQAAAAASUVORK5CYII="
         
-        # Google图标的Base64编码
-        google_icon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAflBMVEVHcEw+qUb/3AAikf//yAD/ywD/3QAikv8vqERHr1b/3QBHr1Yikf//3ABHr1f///9Hr1b/zAD/3AAjkf//3QArn3hHr1YikaRHr1cik//tzwajyTMbpE3/ygAUo1j/0QAik6T/1QD/3gAjkqMikqT/4AD/2QD/1wD/0gD/zwAVaIySAAAAJnRSTlMA+r8grxA2/kb6d0b/////////////////RkaP//+v//+PRkf/r89PIHoAAAHbSURBVHgBfZPploMgDIUxUVyqdsO61Na27cL7P+AAgoC253j7+e4QSAD4j4OHk6LrHk6u/QM878cOk5NvPED7mT6ETr7tAfyVTYSuSoA/khsAd6YLoVsTcAZyL4AupOjqHuAcxhOBJgX/Bt7ozQms4aQA1vBmBOGE5fk8Q9gnQDbmZzfmVwIyIu8CdqNZBOStwBDvAvJN4IoXZJdidgdAXjJwjRngKgPE9Qp0z+se6ARAXDHgVuvc3Q2OiwJMsxZwc10rjQrfEnDvA6YhA6bsoYrXzFhdBs4EpJ5QFu5J5a4Jq2TgwkB0DyqX3FPnzWsG1gy4Ni1CTXbH/dTl8b4BLgzMpq1CTXKjwpZNXQ6rhYGV55LuDcnlwGUrgBUD/M5RkBwLm3MIeA9Q/RrQNcVHAHgUoPoVxdUPAAoB4yIGVEU+ALw6/DnZ0wG1Ae9aQe2nXmTAG4i8f8XPBKzXAuTvqYBJAPMvA6pvBpzXANXXoGyeBYYG2IaAzVcDLg1Q3QBuUwLuhGzXAKuvBrxLAa8bYOtGgPcJ2JWAeRoH9DfQgPk4YBgCAoBtUh0DzJMKmKc1UE5roJzWIGA8BIDlCGCbNMAyCTCPI2CZBhbGcQS8/wF7S25Y6uGfkAAAAABJRU5ErkJggg=="
+        # GitHub图标的Base64编码 - 确保背景为白色
+        github_icon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAABRFJREFUWEetl11sU2UYx//POV23sq18jHN61nZYxoQ4EjAqEC+UmZgI8TN6YaIRMV44MGpiYtAYZYgYNcavIBIuMH7EG2JiiIqJJMwYNAN3IcYNdcIYpT09ZRvpVmR07V9O6Zbu9HTdZOeiF32fj9/zvM/zvs8rmOHX2trqHT5//g4C94FsBRCkSNBWFzIGIAaRHgEOLly8+EhPT8/lmZiWSkIRTTMuiWwn+QgAfyX5wnpKRL6sIXf0J5PmdDplAVpaWqpHU6mXATxPsnaGjqeIiUj6CvS7dX7/rr6+vjE3G64Ahai/Jrnu/zh26ohIVw35gFs2SgDCur5qnPyWQHgunE/YECDqEbk7alkniu1OAchHDhyfa+fFEDXAmuJMTAIU9vzH4rQL0AvgBETuJNkwy4xcEOAHAMsI3DQJIdJV5/evn6iJSQBD118j+UqxE0Xkqbhl7Wtra/P09vZuArkLpAGRUQCnhRwGQIosBHkdgPkiMgRy+yJN22e3YqOuP5gjv5qSdpGdpmW9mm9h+6dQdH3OahdVXWua5vEJ5VZNqxtS1SXt7e0nOzo6csVGSUo4HL5eVdXkwMCADZb/AoHAUuRypxwA6Rqyxd6KPICh6x+TbHemWPF4bonH492zTP0U8WAwuCSbyZxx6Yy9pmVtEfuEG0wmk26HjCKyKW5Zn18LgGEYG5nNfudiI9WgaZo06vpdOfJ7F8K0qOrKeDxeQj8boFAo1JDNZE6SXFySYZENYuj6RyS3ugBsMy3r7dk4KydraNoTBPa7+NgjhqYdIdDmXKyqrl4ejUb/nguASCSy4N90erIwi86FThvgTwLLnVUaTyTqRYRzAVAo9DMkl0zxA/wlAV0fAVnnADhtWlbzXDnPA2jaMQJrptgUGbVrIE1ynsPZSCKZnOnVOyNOQ9dPkVzqCPSiDVCSmryQogQSiYQ1I+sVhCKRSM2lixcvkKx2AJyxAbpIrnVpkcfilvXFXABM0+pd0qhpH+SAZ0taBDget6x1c1GIhq4fIrmhJEjgQ/sgKrksJttE5AXTst65liwYmraZwCduNhSRh2TFihX1F4aGzgGodxGiiLweamra2d3dnZkNSEdHh7J3zx57nHsTgOqiO9IABCcuo90kn84LibynivyaJbeBXJX/CzgLkf0KcFTxeruj0eiQG0xzc/P8dDp9swLcmiM3g2wpBy2KsttMJJ7JA4Q1rWVc5A+SXgGGFZGHF5C/DIr8BPJGR+8e3bJ16+3O67jQ666nakl9iYxVASvPWtY/xQPJDpL5IeHKJJzyeL0rRcQ3fvnyz8UXiaoo98cSiYNukRmG0cZs9kilrRKRHaZldRSye1XcHslGUqljRWnfbyaTTxaGlUdJNikiPbV+/6flRuxwOLwoMzY2OC2AyIl6v39tyUhmKwWDwaZsJtMFoBFAVlT1XtM0D1WKqHg9oGl2sXrK6MTVqqp1sVjs7GSnOQVDur56nLSdXoUQOQzgsAAjBAK3rV+/68CBA9lyUAFNGy9T9XGPyMZzlvVbsa7rwyQUCoXHM5lvQK52OmrQtOrp3n0BTbPhFEfh/q56PPfEYrGBkoIsF0lhTH8JwIvFZ7ivttbX399/aZoM2MNqPjARsR+ob9XMm/dGOZ2Kj9MmXV+WEXmOudzjEFFuaG1d2NnZaafZ9TN0fZCA3c6febze9ysNNRUBJrzYI/moz1dVPHK7Edjb5/P5Un19famZFO9/2SAgrr8DEI4AAAAASUVORK5CYII="
         
-        # GitHub图标的Base64编码
-        github_icon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAflBMVEVHcEw2Njb///81NTU0NDQ2NjY1NTU4ODgzMzM3Nzf///8AAAD///////////////8fHx////////////////////8nJyf///////////////////////////////8xMTH///////////8sLCz///////////////////////8hISEzMzNJa6KsAAAAKXRSTlMA/rAQ79CEIEDPn2C/X++vcN+PQJ/fMFAgv8+PcM+AcO9gz4AgIP5wIJQ4PZsAAAKnSURBVFjD7ZbblqowDIZR5CAHUUTkIIpy0vd/wE2atrCcsVZm9pr5LhQ+m+ZP0xD9j8vN7avaxX8JQUR7dtPcrhEB73ucYX8nQJMF1jg7LoBa69wnfIYL9KrUWpMJ4gJwa7WqCG8LAW/VrZUE3AQ/VreWBIC3z77UCyrw56+x7gX4Vl2r3i1EoVK5g6gX6q3Ne41F8Npw3usOEuB9xzuZVeytw63MBYDCO905wFvgnAoHfq5zHRxQKZizYYD39EwJA2ZlUjpjQB4XMGZWiYYBs0KZYMCsFP1tCNBK0S8GzGp+6g1Y4NRWdQbQcwE/JrVV1VHWKbT+NJi9YytGZQdUQILsEdvj+yGZIu8QcGaALJhfYCzYV8C5xIA6FWBHJnrZQwAZKcDeBPDRRAXYjQDcnYoAMlHAfhNgRl0G8HsiQHfeBPDRRAGmFwAzGpIRoPs9FQAxJgO6IwOYKDAWbDLRPh0FUDfKgn2LbJY9GbwNM+AOPzuAtDTQOWkdAFg4mxfObw6/h80G/PzAABiPJy6BZA9x5Ckg+2dAD4Bz2TwGVgH3YwCswnlVcD9mZQHiDCCAbNgqhPOtbR4Yvx4GXl+cnyegCuGQb54FX6+vCQC4cFsKw2Gg+34I4CvKfTZ7MRSgZ62fC2/2BYDh5wV8fXzJILB+EID8WQDr+wFPCIcAj54DSL8WwGMgsXKnCk4WANIXAL4CUDQPISYDAOsLANsfANQ8hGgIwPo4Bejr3/MQogSA9QGwPnw9DyEiDkh9HMDRWPV+e+hxPx7YwTfDIz1G3JJ+8vLWEp72EwnPZkkC4jYQQEh7GyCkfRAgxOwRVYz2XYCQkyICyTYa4lHw2Y7+dLOEiCq7Pxvxfru5P8QQXNWb2/UH8iRFXS8ZbkgAAAAASUVORK5CYII="
+        # 微软图标的Base64编码 - 确保背景为白色
+        microsoft_icon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAAAXNSR0IArs4c6QAAAnpJREFUeF7t3W1RxDAYReHUADNYQBEC8IIZBPAXxGCBGQwsw0e22d06OA8Okl7y3nNSyvb1+HAasZ+714/taMnP7yO3F5sA7FEQgMhJ4ATYH7QTYAm9E8AJoAMUMmAEGAEo4D8DOoAOwAPMDCiBhQIwxtABdAAdQAe4Pe6MACOAByhkQAfQAXQAHUAH+NkBIogIIoKIoELzW9aoBCqBSqASqAQqgVcZYAIjXUAH0AF0AB1AB9ABdAAmcM2AEqgEug4uZAAFoAAUgAJQAApAASgABfhAxDkDMLCAAP4w5OIpeyXMK2FeCfNKWOTon8skgoggIogIIoKIICKICCKCiCAiKAYBvhCyPHAiiAgigoig2AwggoggIogIIoKIICKICCKCiCAiKAYBRBAR5J9GzQwwgUwgE8gExkoAE8gEMoFMIBPIBDKBTGDeBMb6n+Ve7cBhGbJLnR0QgM6zPlypAAhAfAfiy3cC5APw8pn7Nt54uj8M/ult5PZiGwJwPgMEoHIcOgHOT9oJsITeCeAE0AESGTACjICjoBsBiV//MWDg8kYQDNw3wwngBFACExlQApVAJfBvB4ggIshl0MyAEpgoADBwfcxGgBFgBBgBlaN/rhMGwkAYCANvMoACKqPACDACjAAjwAiggi8zoAPoAK6DExlQApVAJVAJVAKVQCXQbaDbQLeBbgMT1X9ZJApAASgABaAAFIACUAAKQAEoAAX87oDbwEoQYCAMhIEwEAbCQBgIA2EgDISBlfY/14kCUAAKQAEoAAWgABSAAlAACkABLoNSGYCBMBAGwkAYCANhIAyEgTAQBqYQwKdi18dtBBgBRoARYARkTeA3l4PYkqt6qqEAAAAASUVORK5CYII="
         
-        # 微软图标的Base64编码
-        microsoft_icon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAaVBMVEVHcEzjQjTlbGPiMiHjRzriMyPiMyLjQzXlbGPiMyLkWE3jRDbiMyLkW1DiMyLjQjTiMyLkWU7iMyLjQjTlbGPiMyLiMyLiMyLjRDbjRDbjQzXjQzXkWE3kWU7kW1DkXFHlamHlbGPmbmTg5zXPAAAAGHRSTlMAfw8/H1/vzzB/z0+vT39vb59Pj49vv28Lgj2WAAAA1ElEQVR4AbXQV3LDMAxF0QdRLKJkW3JJ75n9bzKZiQM7GRbB+R9wQQB/NStrmVVjjqVTSqVYmixNsWv0nWS6FrjLo9TFRWT9URJO51Rsbq4uVRE8B1hYpSgCZx8WBSG4QCAIDkKnEzg4CCenk12Mg9lBYLdJcLcL2dkMkfQmREaLdVgU4WRlPmRnVycTq5RhYSu8SWxCFOmVmhhZMKNrNRUzgzfSam5meBu0mZ9ZOkQWc8PLdnXh8B7KZz3Az/T7/ZFPdKRvl0/Ht/zF+QY4pgaeeukKLQAAAABJRU5ErkJggg=="
+        # 生成有效的Base32密钥
+        # Base32字符集只包含A-Z和2-7
+        def generate_valid_base32_key():
+            import random
+            import string
+            # 有效的Base32字符
+            valid_chars = string.ascii_uppercase + "234567"
+            # 生成16个随机字符作为密钥
+            return ''.join(random.choice(valid_chars) for _ in range(16))
         
-        # 默认站点配置 - 使用常见的网站作为示例
+        # 默认站点配置 - 使用标准Base32格式的密钥
         default_sites = {
             "Google": {
-                "secret": f"JBSWY3DPEHPK3PXP{timestamp}",  # 使用标准TOTP测试密钥加时间戳
+                "secret": generate_valid_base32_key(),  # 使用有效的Base32密钥
                 "urls": ["https://accounts.google.com"],
                 "icon": google_icon  # 使用Base64编码的图标
             },
             "GitHub": {
-                "secret": f"NBSWY3DPEHPK3PXQ{timestamp}",
+                "secret": generate_valid_base32_key(),
                 "urls": ["https://github.com"],
                 "icon": github_icon
             },
             "Microsoft": {
-                "secret": f"HBSWY3DPEHPK3PXT{timestamp}",
+                "secret": generate_valid_base32_key(),
                 "urls": ["https://account.microsoft.com"],
                 "icon": microsoft_icon
             }
@@ -298,7 +305,7 @@ class twofahelper(_PluginBase):
                                                 "component": "div",
                                                 "props": {
                                                     "class": "mr-2 d-flex align-center justify-center",
-                                                    "style": f"width: 16px; height: 16px; border-radius: 2px; background-color: {self._get_color_for_site(site)}; overflow: hidden;"
+                                                    "style": f"width: 16px; height: 16px; border-radius: 2px; background-color: #ffffff; overflow: hidden;"
                                                 },
                                                 "content": [
                                                     {
@@ -1176,7 +1183,7 @@ class twofahelper(_PluginBase):
                                         'component': 'div',
                                         'props': {
                                             'class': 'mr-2 d-flex align-center justify-center',
-                                            'style': f"width: 16px; height: 16px; border-radius: 2px; background-color: {self._get_color_for_site(site)}; overflow: hidden;"
+                                            'style': f"width: 16px; height: 16px; border-radius: 2px; background-color: #ffffff; overflow: hidden;"
                                         },
                                         'content': [
                                             {
@@ -1481,17 +1488,8 @@ class twofahelper(_PluginBase):
         :param site_name: 站点名称
         :return: HSL颜色字符串
         """
-        # 使用站点名称生成一个哈希值，确保相同的站点名称总是产生相同的颜色
-        hash_value = 0
-        for char in site_name:
-            hash_value += ord(char)
-        
-        # 生成HSL颜色，让颜色分布更均匀
-        hue = hash_value % 360
-        saturation = 70
-        lightness = 60
-        
-        return f"hsl({hue}, {saturation}%, {lightness}%)"
+        # 改为白色背景
+        return "#ffffff"
 
 
 # 插件类导出
