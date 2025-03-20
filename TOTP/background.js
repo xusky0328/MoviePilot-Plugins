@@ -25,6 +25,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         sendResponse({ success: false, error: error.message });
                     });
                 break;
+            case 'updateConfig':
+                // 处理配置更新请求
+                if (message.config) {
+                    // 直接返回成功，因为我们只需在前端保存配置
+                    sendResponse({ success: true, message: '配置已更新' });
+                } else {
+                    sendResponse({ success: false, message: '无效的配置数据' });
+                }
+                break;
             default:
                 console.log('未知消息类型:', message.action);
                 sendResponse({ success: false, message: '未知操作' });

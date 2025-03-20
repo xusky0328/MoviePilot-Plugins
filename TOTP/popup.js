@@ -297,7 +297,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         
         fallbackImg.crossOrigin = 'Anonymous';
         fallbackImg.src = googleFaviconUrl;
-      } catch (error) {
+  } catch (error) {
         console.error('备用图标加载失败:', error);
         tryDuckDuckGoIcon(domain, iconElement);
       }

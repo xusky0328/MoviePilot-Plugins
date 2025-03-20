@@ -15,8 +15,6 @@ let isExpiredRefreshing = false; // 控制过期刷新状态
 
 // 监听页面加载完成
 document.addEventListener('DOMContentLoaded', function() {
-  console.log('TOTP助手内容脚本已加载');
-  
   // 只在页面首次加载时初始化TOTP
   if (!isTotpInitialized) {
     setTimeout(checkAndInitTOTP, 1000);
@@ -67,7 +65,14 @@ function findOTPInput() {
     'input.form-control[maxlength="6"]', // 6位数字验证码的常见模式
     // 1ptba特定选择器
     'input[name="code"]',
-    'form[action*="security"] input[type="text"]'
+    'form[action*="security"] input[type="text"]',
+    // 特殊验证页面的输入框 - 适用于示例中的情况
+    '.input-content .input-item',  // 包含多个子输入框的布局
+    '.input-wrap .input-content .input-item', // 更具体的嵌套结构
+    '.input-wrap input.visible',   // 某些站点用于验证码的特殊输入框
+    // 常见的多个单字符输入框组合
+    'input[type="text"][maxlength="1"]:not([style*="display: none"])',
+    'input[type="number"][maxlength="1"]:not([style*="display: none"])'
   ];
   
   // 尝试所有选择器
@@ -76,6 +81,23 @@ function findOTPInput() {
     const inputs = document.querySelectorAll(selector);
     if (inputs.length > 0) {
       inputs.forEach(input => matchedInputs.push(input));
+    }
+  }
+  
+  // 检查是否有特殊的验证码布局 - 多个连续输入框
+  if (matchedInputs.length === 0) {
+    const multipleInputs = findMultipleInputsGroup();
+    if (multipleInputs && multipleInputs.length >= 4 && multipleInputs.length <= 8) {
+      matchedInputs = multipleInputs;
+    }
+  }
+  
+  // 如果找到的是包装了多个输入字段的单个容器，尝试找出实际的输入字段
+  if (matchedInputs.length === 1 && matchedInputs[0].classList.contains('input-content')) {
+    const container = matchedInputs[0];
+    const subInputs = container.querySelectorAll('.input-item');
+    if (subInputs.length > 0) {
+      matchedInputs = Array.from(subInputs);
     }
   }
   
@@ -116,6 +138,14 @@ function findOTPInput() {
         return true;
       }
       
+      // 检查周围上下文
+      const surroundingText = getSurroundingText(input);
+      if (surroundingText.includes('验证码') || 
+          surroundingText.includes('authentication') ||
+          surroundingText.includes('verification code')) {
+        return true;
+      }
+      
       // 常见的验证码input id或name
       const idOrName = (input.id || '') + (input.name || '');
       return (
@@ -128,8 +158,81 @@ function findOTPInput() {
     });
   }
   
+  // 如果是GitHub，只在验证页面上检测输入框
+  if (window.location.hostname.includes('github.com')) {
+    // 只有在二步验证页面才返回输入框
+    if (!isGitHubAuthPage()) {
+      return [];
+    }
+  }
+  
   // 返回找到的输入框
   return matchedInputs;
+}
+
+// 查找多个连续的输入框组 - 适用于将验证码分成单个数字输入的情况
+function findMultipleInputsGroup() {
+  // 查找所有可能是验证码一部分的单字符输入框
+  const potentialInputs = document.querySelectorAll('input[type="text"][maxlength="1"], input[type="number"][maxlength="1"]');
+  if (potentialInputs.length < 4) return null;
+  
+  // 转换为数组
+  const inputs = Array.from(potentialInputs);
+  
+  // 找到在DOM中连续的输入框组
+  for (let i = 0; i < inputs.length - 3; i++) {
+    // 检查是否至少有4个连续的输入框
+    let consecutive = 1;
+    for (let j = i; j < i + 5 && j < inputs.length - 1; j++) {
+      // 检查两个输入框是否相邻或处于同一容器中
+      if (areInputsRelated(inputs[j], inputs[j+1])) {
+        consecutive++;
+      } else {
+        break;
+      }
+    }
+    
+    if (consecutive >= 4) {
+      // 返回找到的连续输入框组
+      return inputs.slice(i, i + consecutive);
+    }
+  }
+  
+  return null;
+}
+
+// 检查两个输入框是否相关联 (相邻或在同一容器内)
+function areInputsRelated(input1, input2) {
+  // 检查是否有共同的父容器
+  let commonParent = input1.parentElement;
+  for (let i = 0; i < 3 && commonParent; i++) {
+    if (commonParent.contains(input2)) {
+      return true;
+    }
+    commonParent = commonParent.parentElement;
+  }
+  
+  // 检查是否相邻
+  return input1.nextElementSibling === input2 || 
+         input2.previousElementSibling === input1;
+}
+
+// 获取输入框周围的文本内容
+function getSurroundingText(element) {
+  // 获取包含该元素的表单或相近容器
+  const container = element.closest('form') || element.parentElement?.parentElement;
+  if (!container) return '';
+  
+  // 提取容器中的文本
+  return container.textContent.toLowerCase();
+}
+
+// 检查是否是GitHub的验证页面
+function isGitHubAuthPage() {
+  const path = window.location.pathname;
+  return path.includes('/sessions/two-factor') || 
+         path.includes('/sessions/verification') ||
+         path.includes('/authentication/verify');
 }
 
 // 主函数：检查并初始化TOTP
@@ -142,21 +245,27 @@ async function checkAndInitTOTP() {
     
     isCheckingTOTP = true;
 
+    // 0. 检查当前页面是否需要验证码
+    if (!isValidAuthPage()) {
+      isCheckingTOTP = false;
+      stopAllScansAndObservers();
+      return;
+    }
+
     // 1. 获取当前域名
     const currentDomain = window.location.hostname.toLowerCase();
     
     // 2. 获取配置的站点列表
     const result = await getApiConfig();
     if (!result || !result.sites || Object.keys(result.sites).length === 0) {
-      console.log('未找到站点配置或站点列表为空');
       isCheckingTOTP = false;
+      stopAllScansAndObservers();
       return;
     }
     
     // 3. 检查当前域名是否匹配任何配置的站点
     let matchedSite = null;
-    console.log(`当前网站域名: ${currentDomain}`);
-    console.log(`已配置站点:`, result.sites);
+    
     for (const [siteName, siteData] of Object.entries(result.sites)) {
       if (siteData.urls && Array.isArray(siteData.urls)) {
         for (const url of siteData.urls) {
@@ -171,13 +280,10 @@ async function checkAndInitTOTP() {
             const siteUrlObj = new URL(fullUrl);
             const siteDomain = siteUrlObj.hostname.toLowerCase();
             
-            console.log(`比较域名: ${currentDomain} 与 ${siteDomain}`);
-            
             // 使用包含匹配，而不是精确匹配
             if (currentDomain === siteDomain || 
                 currentDomain.includes(siteDomain) || 
                 siteDomain.includes(currentDomain)) {
-              console.log(`✅ 当前网站 ${currentDomain} 匹配配置的站点 ${siteName}`);
               matchedSite = {
                 name: siteName,
                 data: siteData
@@ -185,40 +291,34 @@ async function checkAndInitTOTP() {
           break;
         }
           } catch (e) {
-            console.error(`解析URL失败: ${url}`, e);
-            
             // 尝试直接比较域名部分
             const urlLower = url.toLowerCase();
             if (urlLower.includes(currentDomain) || currentDomain.includes(urlLower)) {
-              console.log(`✅ 通过简单比较匹配站点 ${siteName}`);
               matchedSite = {
                 name: siteName,
                 data: siteData
               };
-                break;
-              }
+              break;
             }
           }
+        }
       }
       if (matchedSite) break;
     }
     
     // 如果当前域名不匹配任何配置的站点，不显示面板
     if (!matchedSite) {
-      console.log(`当前网站 ${currentDomain} 不匹配任何配置的站点`);
       isCheckingTOTP = false;
+      stopAllScansAndObservers();
       return;
     }
     
     // 4. 检查页面是否有二级验证输入框
     const inputs = findOTPInput();
     if (!inputs || inputs.length === 0) {
-      console.log('未找到二级验证输入框');
       isCheckingTOTP = false;
       return;
     }
-    
-    console.log('找到二级验证输入框:', inputs);
     
     // 5. 显示弹出面板
     createOTPPanel();
@@ -227,11 +327,110 @@ async function checkAndInitTOTP() {
     // 如果成功初始化，断开MutationObserver
     mutationObserver.disconnect();
     
-    } catch (error) {
+  } catch (error) {
     console.error('初始化TOTP助手失败:', error);
   } finally {
     isCheckingTOTP = false;
   }
+}
+
+// 停止所有扫描和观察器
+function stopAllScansAndObservers() {
+  // 停止所有定时器
+  if (window.totpUpdateTimer) {
+    clearInterval(window.totpUpdateTimer);
+    window.totpUpdateTimer = null;
+  }
+  
+  if (window.totpCheckTimer) {
+    clearTimeout(window.totpCheckTimer);
+    window.totpCheckTimer = null;
+  }
+  
+  // 断开所有观察器
+  if (mutationObserver) {
+    mutationObserver.disconnect();
+  }
+  
+  // 用于停止initTOTPHelper中的定期扫描
+  window.stopPeriodicScan = true;
+}
+
+// 检查当前页面是否需要验证码
+function isValidAuthPage() {
+  const url = window.location.href;
+  const domain = window.location.hostname;
+  const path = window.location.pathname;
+  
+  // 特定网站的验证码页面路径
+  const authPaths = {
+    'github.com': ['/sessions/two-factor', '/authentication/verify'],
+    'gitlab.com': ['/users/sign_in', '/users/two_factor_auth'],
+    'bitbucket.org': ['/account/two-step-verification'],
+    'microsoft.com': ['/auth/requires-two-factor'],
+    'live.com': ['/login.srf'],
+    'office.com': ['/logincallback'],
+    'zhuque.in': ['/login.php', '/auth/login', '/auth.php'],
+    'piggo.me': ['/login.php', '/auth/login', '/auth.php'],
+    'pterclub.com': ['/login.php', '/auth/login', '/auth.php'],
+    '1ptba.com': ['/login.php', '/auth/login', '/auth.php']
+  };
+  
+  // 通用验证码页面URL关键词
+  const authKeywords = [
+    'two-factor', 'two_factor', '2fa', 'two-step', 'verification', 
+    'authenticate', 'security-code', 'otp', 'mfa', 'multi-factor',
+    'login.php?2fa=1', 'auth.php?code=1'
+  ];
+  
+  // 1. 检查是否匹配特定站点的验证码页面路径
+  for (const site in authPaths) {
+    if (domain.includes(site)) {
+      if (authPaths[site].some(authPath => path.includes(authPath))) {
+        return true;
+      }
+    }
+  }
+  
+  // 2. 检查URL是否包含验证码关键词
+  if (authKeywords.some(keyword => url.toLowerCase().includes(keyword))) {
+    return true;
+  }
+  
+  // 3. 检查页面内容是否包含验证码相关文本
+  const bodyText = document.body.innerText.toLowerCase();
+  const authTexts = [
+    'verification code', 'security code', 'two-factor', 'two factor',
+    '2fa', 'authenticator', 'authentication code', 'totp', 
+    '二步验证', '两步验证', '验证码', '安全验证', '双重验证',
+    'enter the code'
+  ];
+  
+  if (authTexts.some(text => bodyText.includes(text.toLowerCase()))) {
+    return true;
+  }
+  
+  // 4. 检查表单标题或结构
+  const formTitles = document.querySelectorAll('h1, h2, h3, h4, h5, h6, legend, .layui-field-title');
+  for (const title of formTitles) {
+    const titleText = title.textContent.toLowerCase();
+    if (titleText.includes('验证') || 
+        titleText.includes('安全') || 
+        titleText.includes('verification') || 
+        titleText.includes('security') ||
+        titleText.includes('authentication')) {
+      return true;
+    }
+  }
+  
+  // 5. PT站特有的样式特征
+  const ptAuthElements = document.querySelectorAll('.layui-tab-title, #input-form-box, .input-wrap');
+  if (ptAuthElements.length > 0) {
+    return true;
+  }
+  
+  // 没有匹配任何验证页面特征
+  return false;
 }
 
 // 创建验证码展示面板
@@ -239,7 +438,6 @@ function createOTPPanel() {
   // 确保页面中只有一个面板
   const existingPanel = document.querySelector('.totp-helper-panel');
   if (existingPanel) {
-    console.log('面板已存在，不再创建');
     return;
   }
   
@@ -345,7 +543,6 @@ function createOTPPanel() {
       
       // 非强制刷新时限制更新频率
       if (!forceRefresh && now - lastUpdateTime < MIN_UPDATE_INTERVAL) {
-        console.log('更新太频繁，跳过本次更新');
       return;
     }
     
@@ -512,12 +709,10 @@ function createOTPPanel() {
           
           // 当时间完全归零后，设置过期标志，小延迟后刷新
           if (remaining === 0 && !isExpiredRefreshing) {
-            console.log("验证码已过期，准备刷新");
             isExpiredRefreshing = true;
             
             // 延迟1秒后刷新，确保在过期后但不是立即刷新
             setTimeout(() => {
-              console.log("验证码过期后执行刷新");
               updateCodes(true); // 强制刷新
               isExpiredRefreshing = false;
             }, 1000);
@@ -542,7 +737,32 @@ function createOTPPanel() {
         copyButton.onclick = () => {
           navigator.clipboard.writeText(code.code);
           copyButton.textContent = '已复制';
-          setTimeout(() => copyButton.textContent = '复制', 1000);
+          
+          // 显示复制成功消息
+          const successMsg = document.createElement('div');
+          successMsg.textContent = '验证码已复制到剪贴板';
+          successMsg.style.cssText = `
+            font-size: 11px;
+            color: #4caf50;
+            text-align: center;
+            margin-top: 4px;
+          `;
+          
+          // 避免重复添加消息
+          const existingMsg = codeItem.querySelector('.copy-success-msg');
+          if (existingMsg) {
+            existingMsg.remove();
+          }
+          
+          successMsg.className = 'copy-success-msg';
+          codeItem.appendChild(successMsg);
+          
+          setTimeout(() => {
+            copyButton.textContent = '复制';
+            if (successMsg.parentNode) {
+              successMsg.remove();
+            }
+          }, 2000);
         };
         
         codeItem.appendChild(codeDisplay);
@@ -670,7 +890,7 @@ function createOTPPanel() {
       
       fallbackImg.crossOrigin = 'Anonymous';
       fallbackImg.src = googleFaviconUrl;
-    } catch (error) {
+  } catch (error) {
       console.error('备用图标加载失败:', error);
       tryDuckDuckGoIcon(domain, iconElement);
     }
@@ -746,7 +966,6 @@ async function getApiConfig() {
     // 如果已经有全局配置且未过期，直接使用缓存
     const now = Date.now();
     if (globalConfig && (now - lastConfigRefreshTime < CONFIG_REFRESH_INTERVAL)) {
-      console.log('使用缓存的配置信息');
       resolve(globalConfig);
       return;
     }
@@ -768,29 +987,22 @@ async function getApiConfig() {
           sites: {}
         };
       } else {
-        console.log('未找到API配置信息');
         resolve(null);
-        return;
-      }
-      
+      return;
+    }
+    
       // 尝试从API获取站点配置
       try {
-        console.log('尝试从API获取站点配置');
         const configResponse = await fetch(`${config.baseUrl}/api/v1/plugin/twofahelper/config?apikey=${config.apiKey}`);
         if (configResponse.ok) {
           const configData = await configResponse.json();
           if (configData && configData.data) {
-            console.log('成功从API获取站点配置');
             config.sites = configData.data;
             
             // 更新全局配置和刷新时间
             globalConfig = config;
             lastConfigRefreshTime = now;
-          } else {
-            console.log('API返回的站点配置为空');
           }
-        } else {
-          console.log(`获取站点配置失败, 状态码: ${configResponse.status}`);
         }
       } catch (configError) {
         console.error('获取站点配置出错:', configError);
@@ -802,7 +1014,6 @@ async function getApiConfig() {
 }
 
 // 从API获取TOTP验证码
-// 增加缓存，防止频繁请求，但确保在需要时强制刷新
 let cachedCodes = null;
 let lastCodeFetchTime = 0;
 const CODE_FETCH_INTERVAL = 25000; // 25秒缓存时间
@@ -813,7 +1024,6 @@ async function fetchTOTPCodes(forceRefresh = false) {
     
     // 只在非强制刷新时使用缓存
     if (!forceRefresh && cachedCodes && (now - lastCodeFetchTime < CODE_FETCH_INTERVAL)) {
-      console.log('使用缓存的验证码数据');
       return cachedCodes;
     }
     
@@ -825,7 +1035,6 @@ async function fetchTOTPCodes(forceRefresh = false) {
     }
     
     // 获取验证码
-    console.log('从API获取验证码数据');
     const response = await fetch(`${config.baseUrl}/api/v1/plugin/twofahelper/get_codes?apikey=${config.apiKey}`);
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
@@ -835,7 +1044,6 @@ async function fetchTOTPCodes(forceRefresh = false) {
     }
     
     const data = await response.json();
-    console.log("验证码API返回数据:", data);
     
     if (!data || !data.data) {
       throw new Error('无效的验证码数据');
@@ -1305,3 +1513,204 @@ function findCodesDirectly(response, result) {
   
   console.log('直接搜索完成，结果:', result);
 }
+
+// 自动填充验证码到输入框
+function fillCodeToInputs(code) {
+  // 禁用自动填充功能
+  console.log('自动填充功能已禁用，仅显示验证码面板供用户复制');
+  return false;
+}
+
+// 自动提交验证码
+function tryAutoSubmit() {
+  // 常见的提交按钮选择器
+  const buttonSelectors = [
+    'button[type="submit"]',
+    'input[type="submit"]',
+    'button.submit',
+    'button.confirm',
+    'button.verify',
+    'button.layui-btn',
+    'button:contains("提交")',
+    'button:contains("验证")',
+    'button:contains("Submit")',
+    'button:contains("Verify")'
+  ];
+  
+  // 尝试所有选择器
+  for (const selector of buttonSelectors) {
+    try {
+      const buttons = document.querySelectorAll(selector);
+      if (buttons.length > 0) {
+        // 找到了可能的提交按钮，但不自动点击
+        // 只记录找到的按钮，让用户手动点击
+        console.log('找到可能的提交按钮:', buttons);
+        return true;
+      }
+    } catch (e) {
+      // 某些选择器可能不支持，忽略错误
+    }
+  }
+  
+  return false;
+}
+
+// 初始化TOTP助手
+function initTOTPHelper() {
+  // 重置停止标志
+  window.stopPeriodicScan = false;
+  
+  // 监听页面加载完成
+  document.addEventListener('DOMContentLoaded', function() {
+    // 延迟检查，确保页面元素已完全加载
+    setTimeout(() => {
+      checkPTVerificationForm();
+    }, 500);
+  });
+  
+  // 定义一个函数检查PT站验证框
+  function checkPTVerificationForm() {
+    if (panelShown || document.querySelector('.totp-helper-panel')) {
+      return false;
+    }
+    
+    // 先检查特定的input-wrap结构
+    const inputWrap = document.querySelector('.input-wrap');
+    const inputFormBox = document.querySelector('#input-form-box');
+    
+    if (inputWrap || inputFormBox) {
+      createOTPPanel();
+      panelShown = true;
+      return true;
+    }
+    
+    // 如果没找到，则尝试正常的TOTP检查
+    if (!isTotpInitialized) {
+      setTimeout(checkAndInitTOTP, 500);
+      isTotpInitialized = true;
+    }
+    
+    return false;
+  }
+  
+  // 创建一个DOM监视器，监控验证框的出现
+  const formObserver = new MutationObserver(function(mutations) {
+    if (panelShown || document.querySelector('.totp-helper-panel') || window.stopPeriodicScan) {
+      return;
+    }
+    
+    for (const mutation of mutations) {
+      if (mutation.type === 'childList') {
+        // 检查是否有新添加的input-wrap或input-form-box元素
+        const addedNodes = Array.from(mutation.addedNodes);
+        for (const node of addedNodes) {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            if ((node.classList && node.classList.contains('input-wrap')) || 
+                (node.id === 'input-form-box')) {
+              createOTPPanel();
+              panelShown = true;
+              return;
+            }
+            
+            // 检查子元素
+            if (node.querySelector) {
+              const foundInputWrap = node.querySelector('.input-wrap');
+              const foundInputFormBox = node.querySelector('#input-form-box');
+              if (foundInputWrap || foundInputFormBox) {
+                createOTPPanel();
+                panelShown = true;
+                return;
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+  
+  // 开始观察DOM变化
+  formObserver.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+  
+  // 立即进行第一次检查
+  setTimeout(checkPTVerificationForm, 300);
+  
+  // 定期扫描，防止其他检测方法失效
+  let scanCount = 0;
+  const maxScans = 10; // 最多扫描10次
+  
+  const periodicScan = setInterval(() => {
+    // 如果设置了停止标志，立即停止扫描
+    if (window.stopPeriodicScan) {
+      clearInterval(periodicScan);
+      return;
+    }
+    
+    scanCount++;
+    
+    if (panelShown || document.querySelector('.totp-helper-panel')) {
+      clearInterval(periodicScan);
+      return;
+    }
+    
+    if (scanCount >= maxScans) {
+      clearInterval(periodicScan);
+      return;
+    }
+    
+    // 检查页面中的PT站验证框
+    const inputWrap = document.querySelector('.input-wrap');
+    const inputFormBox = document.querySelector('#input-form-box');
+    
+    if (inputWrap || inputFormBox) {
+      createOTPPanel();
+      panelShown = true;
+      clearInterval(periodicScan);
+    }
+  }, 1500); // 每1.5秒扫描一次
+  
+  // 常规的DOM变化观察，用于其他类型的验证页面
+  const mutationObserver = new MutationObserver(function(mutations) {
+    // 如果设置了停止标志，不再处理
+    if (window.stopPeriodicScan) {
+      return;
+    }
+    
+    // 只有在未显示面板且未初始化时才检查
+    if (!panelShown && !document.querySelector('.totp-helper-panel') && !isCheckingTOTP && !isTotpInitialized) {
+      clearTimeout(window.totpCheckTimer);
+      window.totpCheckTimer = setTimeout(() => {
+        // 再次检查PT站结构
+        if (!checkPTVerificationForm()) {
+          checkAndInitTOTP();
+        }
+        isTotpInitialized = true;
+      }, 1000);
+    }
+  });
+  
+  // 配置观察器
+  mutationObserver.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+}
+
+// 添加全局辅助函数，允许用户手动触发
+window.showTOTPHelper = function() {
+  if (!panelShown && !document.querySelector('.totp-helper-panel')) {
+    createOTPPanel();
+    panelShown = true;
+    return '已显示TOTP助手面板，请查看右下角';
+  } else {
+    return 'TOTP助手面板已经显示';
+  }
+};
+
+// 简化初始化消息
+console.log('TOTP助手已加载，如需手动显示面板，请在控制台执行: window.showTOTPHelper()');
+
+// 启动初始化
+initTOTPHelper();

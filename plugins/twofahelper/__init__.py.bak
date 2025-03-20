@@ -9,7 +9,6 @@ import threading
 import pyotp
 from typing import Any, List, Dict, Tuple, Optional
 import requests
-import urllib.parse
 
 from app.core.config import settings
 from app.plugins import _PluginBase
@@ -21,11 +20,11 @@ class twofahelper(_PluginBase):
     # 插件名称
     plugin_name = "两步验证助手"
     # 插件描述
-    plugin_desc = "懒人板2FA，配合浏览器扩展使用，支持自动弹出验证码一键复制"
+    plugin_desc = "管理两步验证码"
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/2fa.png"
     # 插件版本
-    plugin_version = "1.2.5"
+    plugin_version = "1.0.0"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -35,7 +34,7 @@ class twofahelper(_PluginBase):
     # 加载顺序
     plugin_order = 20
     # 可使用的用户级别
-    auth_level = 2
+    auth_level = 1
 
     # 私有属性
     _sites = {}
@@ -47,115 +46,116 @@ class twofahelper(_PluginBase):
         """
         插件初始化 - 简化版，不再需要同步任务
         """
+        logger.info("两步验证助手插件开始初始化...")
         # 直接使用settings获取配置路径
         data_path = self.get_data_path()
+        logger.info(f"数据目录路径: {data_path}")
         
         # 确保目录存在
         if not os.path.exists(data_path):
             try:
                 os.makedirs(data_path)
+                logger.info(f"创建数据目录: {data_path}")
             except Exception as e:
                 logger.error(f"创建数据目录失败: {str(e)}")
         
         self.config_file = os.path.join(data_path, "twofahelper_sites.json")
+        logger.info(f"配置文件路径: {self.config_file}")
         
         # 初始化时从文件加载配置到内存
         self._sync_from_file()
         
-        # 如果内存中没有配置，添加预设站点配置
+        # 如果内存中没有配置，尝试初始化空配置并保存
         if not self._sites:
-            # 生成预设站点配置
-            self._sites = self._generate_default_sites()
-            # 写入配置文件
+            logger.info("内存中没有配置，初始化空配置")
+            self._sites = {}
+            # 写入空配置文件
             try:
                 with open(self.config_file, 'w', encoding='utf-8') as f:
                     json.dump(self._sites, f, ensure_ascii=False, indent=2)
+                logger.info("成功写入空配置文件")
             except Exception as e:
-                logger.error(f"写入配置文件失败: {str(e)}")
+                logger.error(f"写入空配置文件失败: {str(e)}")
         
-        logger.info(f"两步验证码助手初始化完成，已加载 {len(self._sites)} 个站点")
+        if self._sites:
+            logger.info(f"两步验证码管理插件初始化完成，已加载 {len(self._sites)} 个站点: {list(self._sites.keys())}")
+        else:
+            logger.info("两步验证码管理插件初始化完成，暂无配置")
             
-    def _generate_default_sites(self):
-        """
-        生成预设站点配置，用于新用户初始化
-        
-        :return: 预设站点配置字典
-        """
-        # Google图标的Base64编码 - 确保背景为白色
-        google_icon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAABWhJREFUWEe9V2lsVFUU/u55dGY67XRo2cpmsaLQCilSFVkkDY0WFTdwAYwRpCIKERAkNaYgEpCGkNCIibKESFg0JphoJAixJDaQYlFoUAxiC5WwlLIVOtPpdN65cod5M+9Np50paby/2jnb98757j3nCCR4pJRpAKYw8yQpZZ4QIhuAK2R+U0p5RghRQ0Q/A/hRCHEzEdcinpKUchgzlwCYTkSOePpKzswtAHbf1l8rhDjdmU2HAKSUTmZeBWAhEWmJBI7WYeYAgA1EtFwIoUC1OzEBSCkfYObviCj3bgLHAHKCiKYKIf6JlrUDIKUczcw/EVHvaGX94nm0HtyPtmNHEaivAzfdAKQEpbmhZWXDljca9sLJ0AYOboebmRuJ6EkhxHGz0AIg9OWHooPrly7As+kztFZWBAN2eoSAfXwBUuYthJY5wKIaAjHOnIkwACllCjP/Gp1234G9aC4vg/TFLGGHWESyE64lH8Fe8EQ0CFWOMQYnwgB0XV9PRO+btb1ffwXPls/vmgaOoilwfbA8VjnWaZq2TAmCAEJX7U8z29WX3yr7OGbwHtlDYXt0HLT+AwEhoF84D3/1YQRqIzfO8cyLcC0qCcpj3Q4iylGlCEp1Xd9GRLMMRUW268UzIFt9FlsVMHVRCWz5Y2IC8x+twq31q2GfUIDU+Us6zRwzb9U0rVhIKd3MfMn8yHjK34P3hyqLg6ScEXCvKYdwGY9fbP/S64FwpsQtGzN7iShTAZgJYKdhIVvqoFfmwlvRH61H+wR/poxeSN+8C+ROj+u4iwrTha7rW4hojmHIZz8F164I/uv/qye8e7OQunAFFKG6+zDzJhEIBKo1TXs4XP/fiyCvHwzH4puDYHv2b6BHj+6Or7h3RGXgKhFlGN4DlYMBf0M4mOj3ErQRuzoMXrjGkzCw0hfsKMiNfIh6mBQAPxElhQFUOADJYac0pAR03yfdAmBOgQ0zx4VDqa7p/18BvD4hCbMm2iLlDQG4QkS9OixB32nQRu7ulgzMK7Th5TGWDDS2J+GxyZDXKsIBG2w56Dv+NyRR10h4ppFRvNnaP1ZMtWPi8Igfg4RR17AMXFsaBLCvdRDKbuVh6SML8Hx2YcJkU4rfVLVhU4XfYrNzvhOZ7sjTHLyGUsoZAMI0ly1n4Tuciw3NudjjGxJ0kOFwY1fRevRy9EwIRLNPYvaXLbjmibTue3oTts1NjrZ/VQFICz3FYemGqlXYWV9jUR6eno2NBaVw2zp/itt0oPRbH6rrdIv924U2vGKtv3qK+xnNaCsRvWlYXPQ0Yvq+xfAGrM0o09kby/LfwuMD8mNm4vSNepT9UoUzfzwFIDJGZqQIbH8nGck2S/o3a5o212jH9zPzSaII0/bVV6K0qjxmoCFpAzE28yEMTs2EEAKXW67i2OWTqLlyChISmm8onA0LIAJ3esfKaQ5MGBYBxMxtoXZcax5I1hHRUnPEHae+R/nx7QnVPVpJ6C4kN7yL2fl5lruv9Jh5raZpH6q/zSOZGsOPENEIs7P9/x7C6uov4A10bSTThIbinNdQPPI5CzZmVsvLY0KIYH2jh9KhzHyYiO704dC55L2CjTU7cODcIXC8oRRAft8HsWjUG1DENR9mbiAiNZTWGb/HGstHMfP+aBDKQJFTgahuOIHapnO43toUHJLddheyXAMwqs9wFA4ai2Hp97YrWyh4kVrfzMKOFhOViT1ENPKuCBBlFEq7WkzCX95hBgyBlDKZmVcCWGy+HV0BpNh+e4FV0/ZKo+btyBrPoZRSZUMtpzOIyBlPP8RyrxrziKhMCFHbmU3c7diUEfUEPh21nrtD8iYpZZ1pPd8rhGhOBOx/iMlsM+yNfVQAAAAASUVORK5CYII="
-        
-        # GitHub图标的Base64编码 - 确保背景为白色
-        github_icon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAABRFJREFUWEetl11sU2UYx//POV23sq18jHN61nZYxoQ4EjAqEC+UmZgI8TN6YaIRMV44MGpiYtAYZYgYNcavIBIuMH7EG2JiiIqJJMwYNAN3IcYNdcIYpT09ZRvpVmR07V9O6Zbu9HTdZOeiF32fj9/zvM/zvs8rmOHX2trqHT5//g4C94FsBRCkSNBWFzIGIAaRHgEOLly8+EhPT8/lmZiWSkIRTTMuiWwn+QgAfyX5wnpKRL6sIXf0J5PmdDplAVpaWqpHU6mXATxPsnaGjqeIiUj6CvS7dX7/rr6+vjE3G64Ahai/Jrnu/zh26ohIVw35gFs2SgDCur5qnPyWQHgunE/YECDqEbk7alkniu1OAchHDhyfa+fFEDXAmuJMTAIU9vzH4rQL0AvgBETuJNkwy4xcEOAHAMsI3DQJIdJV5/evn6iJSQBD118j+UqxE0Xkqbhl7Wtra/P09vZuArkLpAGRUQCnhRwGQIosBHkdgPkiMgRy+yJN22e3YqOuP5gjv5qSdpGdpmW9mm9h+6dQdH3OahdVXWua5vEJ5VZNqxtS1SXt7e0nOzo6csVGSUo4HL5eVdXkwMCADZb/AoHAUuRypxwA6Rqyxd6KPICh6x+TbHemWPF4bonH492zTP0U8WAwuCSbyZxx6Yy9pmVtEfuEG0wmk26HjCKyKW5Zn18LgGEYG5nNfudiI9WgaZo06vpdOfJ7F8K0qOrKeDxeQj8boFAo1JDNZE6SXFySYZENYuj6RyS3ugBsMy3r7dk4KydraNoTBPa7+NgjhqYdIdDmXKyqrl4ejUb/nguASCSy4N90erIwi86FThvgTwLLnVUaTyTqRYRzAVAo9DMkl0zxA/wlAV0fAVnnADhtWlbzXDnPA2jaMQJrptgUGbVrIE1ynsPZSCKZnOnVOyNOQ9dPkVzqCPSiDVCSmryQogQSiYQ1I+sVhCKRSM2lixcvkKx2AJyxAbpIrnVpkcfilvXFXABM0+pd0qhpH+SAZ0taBDget6x1c1GIhq4fIrmhJEjgQ/sgKrksJttE5AXTst65liwYmraZwCduNhSRh2TFihX1F4aGzgGodxGiiLweamra2d3dnZkNSEdHh7J3zx57nHsTgOqiO9IABCcuo90kn84LibynivyaJbeBXJX/CzgLkf0KcFTxeruj0eiQG0xzc/P8dDp9swLcmiM3g2wpBy2KsttMJJ7JA4Q1rWVc5A+SXgGGFZGHF5C/DIr8BPJGR+8e3bJ16+3O67jQ666nakl9iYxVASvPWtY/xQPJDpL5IeHKJJzyeL0rRcQ3fvnyz8UXiaoo98cSiYNukRmG0cZs9kilrRKRHaZldRSye1XcHslGUqljRWnfbyaTTxaGlUdJNikiPbV+/6flRuxwOLwoMzY2OC2AyIl6v39tyUhmKwWDwaZsJtMFoBFAVlT1XtM0D1WKqHg9oGl2sXrK6MTVqqp1sVjs7GSnOQVDur56nLSdXoUQOQzgsAAjBAK3rV+/68CBA9lyUAFNGy9T9XGPyMZzlvVbsa7rwyQUCoXHM5lvQK52OmrQtOrp3n0BTbPhFEfh/q56PPfEYrGBkoIsF0lhTH8JwIvFZ7ivttbX399/aZoM2MNqPjARsR+ob9XMm/dGOZ2Kj9MmXV+WEXmOudzjEFFuaG1d2NnZaafZ9TN0fZCA3c6febze9ysNNRUBJrzYI/moz1dVPHK7Edjb5/P5Un19famZFO9/2SAgrr8DEI4AAAAASUVORK5CYII="
-        
-        # 微软图标的Base64编码 - 确保背景为白色
-        microsoft_icon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAAAXNSR0IArs4c6QAAAnpJREFUeF7t3W1RxDAYReHUADNYQBEC8IIZBPAXxGCBGQwsw0e22d06OA8Okl7y3nNSyvb1+HAasZ+714/taMnP7yO3F5sA7FEQgMhJ4ATYH7QTYAm9E8AJoAMUMmAEGAEo4D8DOoAOwAPMDCiBhQIwxtABdAAdQAe4Pe6MACOAByhkQAfQAXQAHUAH+NkBIogIIoKIoELzW9aoBCqBSqASqAQqgVcZYAIjXUAH0AF0AB1AB9ABdAAmcM2AEqgEug4uZAAFoAAUgAJQAApAASgABfhAxDkDMLCAAP4w5OIpeyXMK2FeCfNKWOTon8skgoggIogIIoKIICKICCKCiCAiKAYBvhCyPHAiiAgigoig2AwggoggIogIIoKIICKICCKCiCAiKAYBRBAR5J9GzQwwgUwgE8gExkoAE8gEMoFMIBPIBDKBTGDeBMb6n+Ve7cBhGbJLnR0QgM6zPlypAAhAfAfiy3cC5APw8pn7Nt54uj8M/ult5PZiGwJwPgMEoHIcOgHOT9oJsITeCeAE0AESGTACjICjoBsBiV//MWDg8kYQDNw3wwngBFACExlQApVAJfBvB4ggIshl0MyAEpgoADBwfcxGgBFgBBgBlaN/rhMGwkAYCANvMoACKqPACDACjAAjwAiggi8zoAPoAK6DExlQApVAJVAJVAKVQCXQbaDbQLeBbgMT1X9ZJApAASgABaAAFIACUAAKQAEoAAX87oDbwEoQYCAMhIEwEAbCQBgIA2EgDISBlfY/14kCUAAKQAEoAAWgABSAAlAACkABLoNSGYCBMBAGwkAYCANhIAyEgTAQBqYQwKdi18dtBBgBRoARYARkTeA3l4PYkqt6qqEAAAAASUVORK5CYII="
-        
-        # 生成有效的Base32密钥
-        # Base32字符集只包含A-Z和2-7
-        def generate_valid_base32_key():
-            import random
-            import string
-            # 有效的Base32字符
-            valid_chars = string.ascii_uppercase + "234567"
-            # 生成16个随机字符作为密钥
-            return ''.join(random.choice(valid_chars) for _ in range(16))
-        
-        # 默认站点配置 - 使用标准Base32格式的密钥
-        default_sites = {
-            "Google": {
-                "secret": generate_valid_base32_key(),  # 使用有效的Base32密钥
-                "urls": ["https://accounts.google.com"],
-                "icon": google_icon  # 使用Base64编码的图标
-            },
-            "GitHub": {
-                "secret": generate_valid_base32_key(),
-                "urls": ["https://github.com"],
-                "icon": github_icon
-            },
-            "Microsoft": {
-                "secret": generate_valid_base32_key(),
-                "urls": ["https://account.microsoft.com"],
-                "icon": microsoft_icon
-            }
-        }
-        
-        return default_sites
-            
+        # 打印API注册信息
+        logger.info("准备注册API接口...")
+        api_endpoints = self.get_api()
+        for api in api_endpoints:
+            logger.info(f"API接口: {api.get('path', 'unknown')} - {api.get('summary', 'unknown')} - 方法: {api.get('methods', [])}")
+
     def _sync_from_file(self):
         """
-        从配置文件同步到内存 - 精简版，移除多余日志
+        从配置文件同步到内存 - 增强版，添加更详细的日志
         """
         if not os.path.exists(self.config_file):
+            logger.warning(f"配置文件不存在: {self.config_file}")
             # 清空内存中的配置
             if self._sites:
+                logger.info("清空内存中的配置")
                 self._sites = {}
             return False
 
         try:
+            # 读取文件修改时间
+            file_mtime = os.path.getmtime(self.config_file)
+            file_mtime_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(file_mtime))
+            
             # 读取文件内容
             with open(self.config_file, 'r', encoding='utf-8') as f:
                 file_content = f.read()
             
+            content_length = len(file_content)
+            logger.info(f"读取配置文件成功，内容长度: {content_length}，最后修改时间: {file_mtime_str}")
+            
             # 解析JSON
             new_sites = json.loads(file_content)
+            new_sites_count = len(new_sites)
+            new_site_names = list(new_sites.keys())
+            
+            # 检查配置是否有变化
+            old_sites_count = len(self._sites) if self._sites else 0
+            old_site_names = list(self._sites.keys()) if self._sites else []
+            
+            if new_sites_count != old_sites_count or set(new_site_names) != set(old_site_names):
+                logger.info(f"检测到配置变化: 站点数量 {old_sites_count} -> {new_sites_count}")
+                
+                # 查找新增的站点
+                added_sites = [site for site in new_site_names if site not in old_site_names]
+                if added_sites:
+                    logger.info(f"新增站点: {added_sites}")
+                
+                # 查找移除的站点
+                removed_sites = [site for site in old_site_names if site not in new_site_names]
+                if removed_sites:
+                    logger.info(f"移除站点: {removed_sites}")
             
             # 更新内存中的配置
             self._sites = new_sites
+            logger.info(f"配置文件解析成功并更新到内存，共 {new_sites_count} 个站点: {new_site_names}")
+            
             return True
         except json.JSONDecodeError as e:
             logger.error(f"配置文件JSON格式解析失败: {str(e)}")
+            # 保持内存中的现有配置不变
             return False
         except Exception as e:
             logger.error(f"读取配置文件失败: {str(e)}")
+            # 保持内存中的现有配置不变
             return False
 
     def _sync_to_file(self):
         """
-        将内存中的配置同步到文件 - 精简版
+        将内存中的配置同步到文件
         """
         try:
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(self._sites, f, ensure_ascii=False, indent=2)
+            logger.info(f"成功将内存配置同步到文件，站点数: {len(self._sites)}")
             return True
         except Exception as e:
             logger.error(f"将内存配置同步到文件失败: {str(e)}")
@@ -266,9 +266,8 @@ class twofahelper(_PluginBase):
             color = colors[color_index % len(colors)]
             color_index += 1
             
-            # 获取站点图标信息 - 优先使用配置中的图标
-            site_data = self._sites.get(site, {})
-            favicon_info = self._get_favicon_url(urls, site, site_data)
+            # 获取站点图标
+            favicon_info = self._get_favicon_url(urls, site)
             
             # 为每个站点创建一个卡片，保证内容完整显示
             card = {
@@ -307,7 +306,7 @@ class twofahelper(_PluginBase):
                                                 "component": "div",
                                                 "props": {
                                                     "class": "mr-2 d-flex align-center justify-center",
-                                                    "style": f"width: 16px; height: 16px; border-radius: 2px; background-color: #ffffff; overflow: hidden;"
+                                                    "style": f"width: 16px; height: 16px; border-radius: 2px; background-color: {self._get_color_for_site(site)}; overflow: hidden;"
                                                 },
                                                 "content": [
                                                     {
@@ -331,18 +330,6 @@ class twofahelper(_PluginBase):
                                                           
                                                           const container = document.currentScript.parentNode;
                                                           container.removeChild(document.currentScript);
-                                                          
-                                                          // 首先尝试base64图标
-                                                          const base64Icon = "{favicon_info.get('base64', '')}";
-                                                          if (base64Icon) {{
-                                                            const img = new Image();
-                                                            img.style.width = '100%';
-                                                            img.style.height = '100%';
-                                                            img.src = base64Icon;
-                                                            container.innerHTML = '';
-                                                            container.appendChild(img);
-                                                            return;
-                                                          }}
                                                           
                                                           // 尝试 favicon.ico
                                                           loadImage("{favicon_info.get('ico', '')}", (img, success) => {{
@@ -534,141 +521,189 @@ class twofahelper(_PluginBase):
         
         return col_config, global_config, elements
 
-    def _get_favicon_url(self, urls: List[str], site_name: str, site_data: dict = None) -> dict:
+    def _get_favicon_url(self, urls, site_name):
         """
-        获取站点的图标URL
+        从站点URL获取网站图标，使用三重获取机制
         
-        参数:
-            urls: 站点URL列表
-            site_name: 站点名称
-            site_data: 站点配置数据，可能包含base64编码的图标
-            
-        返回:
-            包含各种图标URL的字典
+        :param urls: 站点URL列表
+        :param site_name: 站点名称
+        :return: 图标URL
         """
-        if not urls:
-            return {
-                'ico': '',
-                'png': '',
-                'google': '',
-                'ddg': '',
-                'base64': ''
-            }
+        # 默认图标 - 使用站点名称首字母替代
+        default_icon = ""
         
-        # 首先检查是否在配置中有base64图标
-        base64_icon = ''
-        if site_data and isinstance(site_data, dict) and site_data.get("icon"):
-            base64_icon = site_data.get("icon")
-            # 确保base64图标有正确前缀
-            if base64_icon and not base64_icon.startswith('data:image'):
-                base64_icon = f'data:image/png;base64,{base64_icon}'
+        if not urls or not isinstance(urls, list) or len(urls) == 0:
+            return default_icon
         
-        # 获取第一个URL，用于其他图标服务
-        url = urls[0] if urls else ""
-        
-        # 处理URL，确保包含协议前缀
-        if url and not url.startswith(('http://', 'https://')):
-            url = f"https://{url}"
-            
         try:
-            # 解析URL以提取域名
-            parsed_url = urllib.parse.urlparse(url)
+            # 获取第一个URL
+            url = urls[0]
+            
+            # 解析域名
+            from urllib.parse import urlparse
+            parsed_url = urlparse(url)
             domain = parsed_url.netloc
             
-            # 如果域名为空（可能URL格式不正确），则使用原始URL
             if not domain:
-                domain = url
-                
-            # 去除www前缀
-            if domain.startswith('www.'):
-                domain = domain[4:]
-                
-            # 构建favicon URL
-            favicon_ico = f"{parsed_url.scheme}://{domain}/favicon.ico" if parsed_url.scheme else f"https://{domain}/favicon.ico"
-            favicon_png = f"{parsed_url.scheme}://{domain}/favicon.png" if parsed_url.scheme else f"https://{domain}/favicon.png"
+                return default_icon
             
-            # 使用Google和DuckDuckGo的favicon服务
-            google_favicon = f"https://www.google.com/s2/favicons?domain={domain}&sz=32"
+            # 方法1: 直接尝试网站的favicon.ico (直接返回URL，让前端处理加载)
+            favicon_ico = f"https://{domain}/favicon.ico"
+            
+            # 方法2: 尝试favicon.png
+            favicon_png = f"https://{domain}/favicon.png"
+            
+            # 方法3: 使用Google的favicon服务获取图标
+            google_favicon = f"https://www.google.com/s2/favicons?domain={domain}&sz=64"
+            
+            # 方法4: 使用DuckDuckGo的图标服务
             ddg_favicon = f"https://icons.duckduckgo.com/ip3/{domain}.ico"
             
+            # 返回所有可能的图标URL，让前端按顺序尝试
             return {
-                'ico': favicon_ico,
-                'png': favicon_png,
-                'google': google_favicon,
-                'ddg': ddg_favicon,
-                'base64': base64_icon
+                "ico": favicon_ico,
+                "png": favicon_png,
+                "google": google_favicon,
+                "ddg": ddg_favicon,
+                "domain": domain,
+                "site_name": site_name
             }
+            
         except Exception as e:
-            logger.error(f"解析站点 {site_name} 的URL出错: {e}")
-            return {
-                'ico': '',
-                'png': '',
-                'google': '',
-                'ddg': '',
-                'base64': base64_icon  # 仍然保留base64图标，如果有的话
-            }
+            logger.error(f"获取站点 {site_name} 的图标失败: {str(e)}")
+            return default_icon
 
     def get_api(self) -> List[Dict[str, Any]]:
         """
         获取插件API
         """
-        return [{
+        logger.info("正在注册两步验证助手插件API...")
+        
+        api_list = [{
             "path": "/config",
             "endpoint": self.get_config,
             "methods": ["GET"],
             "summary": "获取配置",
             "description": "获取2FA配置数据",
+            "auth": False
         }, {
             "path": "/update_config",
             "endpoint": self.update_config,
             "methods": ["POST"],
             "summary": "更新配置",
             "description": "更新2FA配置数据",
+            "auth": False
         }, {
             "path": "/get_codes",
             "endpoint": self.get_totp_codes,
             "methods": ["GET"],
             "summary": "获取所有TOTP验证码",
             "description": "获取所有站点的TOTP验证码",
+            "auth": False
+        }, {
+            "path": "/codes",
+            "endpoint": self.get_totp_codes,
+            "methods": ["GET"],
+            "summary": "获取所有TOTP验证码",
+            "description": "获取所有站点的TOTP验证码（简化路径版本）",
+            "auth": False
+        }, {
+            "path": "/refresh_dashboard",
+            "endpoint": self.refresh_dashboard,
+            "methods": ["GET"],
+            "summary": "刷新仪表盘数据",
+            "description": "强制从文件同步并生成新的验证码",
+            "auth": False
+        }, {
+            "path": "/debug_dashboard",
+            "endpoint": self.debug_dashboard,
+            "methods": ["GET"],
+            "summary": "调试仪表盘",
+            "description": "获取仪表盘调试信息",
+            "auth": False
+        }, {
+            "path": "/all_codes",
+            "endpoint": self.api_all_codes,
+            "methods": ["GET"],
+            "summary": "简化版获取所有TOTP验证码",
+            "description": "直接返回所有验证码，简化结构",
+            "auth": False
+        }, {
+            "path": "/debug_api",
+            "endpoint": self.debug_api,
+            "methods": ["GET"],
+            "summary": "调试API注册状态",
+            "description": "用于检查API注册是否成功",
+            "auth": False
+        }, {
+            "path": "/test",
+            "endpoint": self.api_test,
+            "methods": ["GET"],
+            "summary": "测试API连接",
+            "description": "测试API连接是否正常",
+            "auth": False
         }]
+        
+        # 打印API注册信息
+        logger.info(f"共注册 {len(api_list)} 个API接口:")
+        for idx, api in enumerate(api_list, start=1):
+            logger.info(f"  [{idx}] {api.get('path', 'unknown')} - {api.get('summary', 'unknown')} - 方法: {api.get('methods', [])} - 需要认证: {api.get('auth', True)}")
+            if not api.get("endpoint"):
+                logger.error(f"  注意: API {api.get('path', 'unknown')} 缺少endpoint方法!")
+            elif not callable(api.get("endpoint")):
+                logger.error(f"  注意: API {api.get('path', 'unknown')} 的endpoint不是可调用对象: {type(api.get('endpoint'))}")
+        
+        logger.info("API注册完成，如果没有显示错误信息则注册成功")
+        return api_list
 
     def get_config(self, apikey: str) -> Response:
         """
         获取配置文件内容
         """
+        logger.info(f"API调用: get_config - 接收到参数 apikey: {'已设置' if apikey else '未设置'}")
+        
         if apikey != settings.API_TOKEN:
+            logger.warning(f"API调用: get_config - API密钥验证失败")
             return Response(success=False, message="API令牌错误!")
         
         try:
             # 读取配置文件
+            logger.info(f"API调用: get_config - 开始读取配置文件: {self.config_file}")
             if os.path.exists(self.config_file):
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     config_data = json.load(f)
+                logger.info(f"API调用: get_config - 成功读取配置文件，包含 {len(config_data)} 个站点")
                 return Response(success=True, message="获取成功", data=config_data)
             else:
+                logger.warning(f"API调用: get_config - 配置文件不存在: {self.config_file}")
                 return Response(success=True, message="配置文件不存在", data={})
         except Exception as e:
-            logger.error(f"读取配置文件失败: {str(e)}")
+            logger.error(f"API调用: get_config - 读取配置文件失败: {str(e)}", exc_info=True)
             return Response(success=False, message=f"读取配置失败: {str(e)}")
 
     def update_config(self, apikey: str, request: dict) -> Response:
         """
         更新配置文件内容
         """
+        logger.info(f"API调用: update_config - 接收到参数 apikey: {'已设置' if apikey else '未设置'}, request: {type(request)}")
+        
         if apikey != settings.API_TOKEN:
+            logger.warning(f"API调用: update_config - API密钥验证失败")
             return Response(success=False, message="API令牌错误!")
         
         try:
-            # 更新内存中的配置
-            self._sites = request
-            
             # 写入配置文件
+            logger.info(f"API调用: update_config - 开始写入配置文件: {self.config_file}, 数据大小: {len(request) if request else 0}")
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(request, f, ensure_ascii=False, indent=2)
             
+            # 更新内存
+            self._sites = request.copy()
+            
+            logger.info(f"API调用: update_config - 成功更新配置文件和内存，站点数: {len(self._sites)}")
             return Response(success=True, message="更新成功")
         except Exception as e:
-            logger.error(f"更新配置文件失败: {str(e)}")
+            logger.error(f"API调用: update_config - 更新配置失败: {str(e)}", exc_info=True)
             return Response(success=False, message=f"更新配置失败: {str(e)}")
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
@@ -719,29 +754,6 @@ class twofahelper(_PluginBase):
                             font-family: monospace; 
                             max-height: 600px;
                         }
-                        .security-alert {
-                            background-color: #fffbef;
-                            border: 2px solid #ffc107;
-                            border-radius: 4px;
-                            padding: 12px;
-                            margin-bottom: 16px;
-                        }
-                        .security-title {
-                            color: #e65100;
-                            font-weight: bold;
-                            margin-bottom: 8px;
-                            font-size: 1.1rem;
-                        }
-                        .security-item {
-                            margin-bottom: 6px;
-                            padding-left: 20px;
-                            position: relative;
-                        }
-                        .security-item:before {
-                            content: "•";
-                            position: absolute;
-                            left: 6px;
-                        }
                         """
                     },
                     {
@@ -754,107 +766,48 @@ class twofahelper(_PluginBase):
                                 },
                                 'content': [
                                     {
-                                        'component': 'div',
-                                        'props': {
-                                            'class': 'security-alert'
-                                        },
-                                        'content': [
-                                            {
-                                                'component': 'div',
-                                                'props': {
-                                                    'class': 'security-title'
-                                                },
-                                                'text': '⚠️ 重要安全提示 ⚠️'
-                                            },
-                                            {
-                                                'component': 'div',
-                                                'props': {
-                                                    'class': 'security-item'
-                                                },
-                                                'text': '本插件的主要目的：节省掏出手机打开验证器APP的时间，提高使用体验'
-                                            },
-                                            {
-                                                'component': 'div',
-                                                'props': {
-                                                    'class': 'security-item',
-                                                    'style': 'color: #d32f2f; font-weight: bold;'
-                                                },
-                                                'text': '数据安全警告：请勿仅依赖本插件保存TOTP密钥，这可能导致无法挽回的数据丢失！'
-                                            },
-                                            {
-                                                'component': 'div',
-                                                'props': {
-                                                    'class': 'security-item'
-                                                },
-                                                'text': '强烈建议：将相同密钥同时绑定到可靠的手机验证器APP上(如Authy/Google Authenticator)作为最终备份'
-                                            },
-                                            {
-                                                'component': 'div',
-                                                'props': {
-                                                    'class': 'security-item'
-                                                },
-                                                'text': '定期备份：使用浏览器插件中的【导出配置】按钮导出JSON配置文件，并妥善保存'
-                                            },
-                                            {
-                                                'component': 'div',
-                                                'props': {
-                                                    'class': 'security-item'
-                                                },
-                                                'text': '安全知识：相同的TOTP密钥在不同的验证器中会生成完全相同的验证码，多处备份不会影响使用'
-                                            },
-                                            {
-                                                'component': 'div',
-                                                'props': {
-                                                    'class': 'security-item',
-                                                    'style': 'margin-top: 10px;'
-                                                },
-                                                'text': '当前浏览器插件的最新版本为v1.2，请及时更新'
-                                            }
-                                        ]
-                                    },
-                                    {
                                         'component': 'VAlert',
                                         'props': {
                                             'type': 'info',
                                             'variant': 'tonal',
                                             'density': 'compact'
                                         },
-                                        'content': [
-                                            {
+                        'content': [
+                            {
                                                 'component': 'div',
                                                 'text': f'两步验证助手 - 共 {sites_count} 个站点'
                                             },
                                             {
                                                 'component': 'div',
-                                                'props': {
+                                        'props': {
                                                     'class': 'mt-2',
                                                     'style': 'border: 1px solid #e0f7fa; padding: 8px; border-radius: 4px; background-color: #e1f5fe;'
-                                                },
-                                                'content': [
-                                                    {
+                                },
+                                'content': [
+                                    {
                                                         'component': 'div',
-                                                        'props': {
+                                        'props': {
                                                             'class': 'font-weight-bold mb-1'
                                                         },
                                                         'text': '📌 浏览器扩展'
                                                     },
-                                                    {
-                                                        'component': 'div',
-                                                        'props': {
+                            {
+                                                'component': 'div',
+                                'props': {
                                                             'class': 'text-body-2'
                                                         },
                                                         'text': '本插件必须安装配套的浏览器扩展配合：'
-                                                    },
-                                                    {
-                                                        'component': 'div',
+                                            },
+                                            {
+                                                'component': 'div',
                                                         'props': {
                                                             'class': 'mt-1 d-flex align-center flex-wrap'
-                                                        },
+                                            },
                                                         'content': [
-                                                            {
+                                            {
                                                                 'component': 'a',
-                                                                'props': {
-                                                                    'href': 'https://github.com/madrays/MoviePilot-Plugins/releases',
+                                        'props': {
+                                                                    'href': 'https://github.com/madrays/MoviePilot-Plugins/raw/main/TOTP-Extension.zip',
                                                                     'target': '_blank',
                                                                     'class': 'text-decoration-none mr-3 mb-1',
                                                                     'style': 'color: #1976d2; display: inline-flex; align-items: center;'
@@ -867,25 +820,25 @@ class twofahelper(_PluginBase):
                                                                             'size': 'small',
                                                                             'class': 'mr-1'
                                                                         }
-                                                                    },
-                                                                    {
-                                                                        'component': 'span',
+                                            },
+                                            {
+                                                'component': 'span',
                                                                         'text': '下载扩展'
-                                                                    }
-                                                                ]
-                                                            },
-                                                            {
+                            }
+                        ]
+                    },
+                    {
                                                                 'component': 'a',
-                                                                'props': {
+                                'props': {
                                                                     'href': 'https://github.com/madrays/MoviePilot-Plugins/blob/main/README.md#totp浏览器扩展说明',
                                                                     'target': '_blank',
                                                                     'class': 'text-decoration-none mb-1',
                                                                     'style': 'color: #1976d2; display: inline-flex; align-items: center;'
-                                                                },
-                                                                'content': [
-                                                                    {
+                                },
+                                'content': [
+                                    {
                                                                         'component': 'v-icon',
-                                                                        'props': {
+                                        'props': {
                                                                             'icon': 'mdi-information-outline',
                                                                             'size': 'small',
                                                                             'class': 'mr-1'
@@ -894,14 +847,14 @@ class twofahelper(_PluginBase):
                                                                     {
                                                                         'component': 'span',
                                                                         'text': '安装说明'
-                                                                    }
-                                                                ]
-                                                            }
-                                                        ]
-                                                    },
-                                                    {
-                                                        'component': 'div',
-                                                        'props': {
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                                    {
+                                        'component': 'div',
+                                        'props': {
                                                             'class': 'text-caption mt-1',
                                                             'style': 'color: #546e7a;'
                                                         },
@@ -1248,17 +1201,14 @@ class twofahelper(_PluginBase):
                 # 使用计数器值生成验证码
                 now_code = totp.generate_otp(counter)  # 直接使用计数器生成验证码
                 
-                # 创建或更新站点的验证码信息
-                if site in verification_codes and 'progress_percent' in verification_codes[site]:
-                    verification_codes[site]["progress_percent"] = int(verification_codes[site]["progress_percent"])  # 转换为整数
-                else:
-                    verification_codes[site] = {
-                        "code": now_code,
-                        "site_name": site,
-                        "urls": data.get("urls", []),
-                        "remaining_seconds": remaining_seconds,
-                        "progress_percent": int(((time_step - remaining_seconds) / time_step) * 100)
-                    }
+                # 保存验证码到临时字典中
+                verification_codes[site] = {
+                    "code": now_code,
+                    "site_name": site,
+                    "urls": data.get("urls", []),
+                    "remaining_seconds": remaining_seconds,
+                    "progress_percent": int(((time_step - remaining_seconds) / time_step) * 100)
+                }
                 
                 logger.info(f"站点 {site} 生成验证码成功: counter={counter}, remaining={remaining_seconds}s")
                 
@@ -1266,24 +1216,23 @@ class twofahelper(_PluginBase):
                 color = colors[card_index % len(colors)]
                 card_index += 1
                 
-                # 获取站点URL和图标信息
+                # 获取站点URL和图标
                 urls = data.get("urls", [])
                 site_url = ""
                 if urls and isinstance(urls, list) and len(urls) > 0:
                     site_url = urls[0]
                 
-                # 获取站点图标信息 - 优先使用配置中的图标
-                favicon_info = self._get_favicon_url(urls, site, data)
+                favicon_info = self._get_favicon_url(urls, site)
                 
                 # 构建美观卡片，确保验证码完整显示
                 cards.append({
                     'component': 'VCol',
                     'props': {
-                        'cols': 12,     # 移动设备上每行1个
-                        'sm': 6,        # 小屏幕每行2个
-                        'md': 4,        # 中等屏幕每行3个
-                        'lg': 3,        # 大屏幕每行4个
-                        'class': 'pa-2'  # 增加内边距使卡片间距更均匀
+                        'cols': 16,  # 匹配总列数
+                        'sm': 8,     # 小屏幕每行2个
+                        'md': 4,     # 每行4个
+                        'lg': 4,     # 大屏幕每行4个
+                        'class': 'pa-1'  # 减小内边距
                     },
                     'content': [{
                         'component': 'VCard',
@@ -1291,26 +1240,26 @@ class twofahelper(_PluginBase):
                             'variant': 'outlined',
                             'class': 'ma-0 totp-card',  # 减小外边距
                             'elevation': 1,             # 减小阴影
-                            'height': '160px'           # 固定高度确保所有卡片大小一致
+                            'min-height': '160px'       # 增加最小高度确保显示完整
                         },
                         'content': [
                             {
                                 'component': 'VCardTitle',
                                 'props': {
-                                    'class': 'd-flex align-center py-2'  # 统一内边距
+                                    'class': 'd-flex align-center py-0'  # 减小顶部内边距
                                 },
                                 'content': [
                                     {
                                         'component': 'div',
                                         'props': {
                                             'class': 'mr-2 d-flex align-center justify-center',
-                                            'style': f"width: 20px; height: 20px; border-radius: 3px; background-color: #ffffff; overflow: hidden;"
+                                            'style': f"width: 16px; height: 16px; border-radius: 2px; background-color: {self._get_color_for_site(site)}; overflow: hidden;"
                                         },
                                         'content': [
                                             {
                                                 'component': 'span',
                                                 'props': {
-                                                    'style': 'color: white; font-size: 12px; font-weight: bold;'
+                                                    'style': 'color: white; font-size: 10px; font-weight: bold;'
                                                 },
                                                 'text': site[0].upper() if site else "?"
                                             },
@@ -1328,18 +1277,6 @@ class twofahelper(_PluginBase):
                                                   
                                                   const container = document.currentScript.parentNode;
                                                   container.removeChild(document.currentScript);
-                                                  
-                                                  // 首先尝试base64图标
-                                                  const base64Icon = "{favicon_info.get('base64', '')}";
-                                                  if (base64Icon) {{
-                                                    const img = new Image();
-                                                    img.style.width = '100%';
-                                                    img.style.height = '100%';
-                                                    img.src = base64Icon;
-                                                    container.innerHTML = '';
-                                                    container.appendChild(img);
-                                                    return;
-                                                  }}
                                                   
                                                   // 尝试 favicon.ico
                                                   loadImage("{favicon_info.get('ico', '')}", (img, success) => {{
@@ -1390,11 +1327,11 @@ class twofahelper(_PluginBase):
                                         'props': {
                                             'href': site_url,
                                             'target': '_blank',
-                                            'class': 'text-decoration-none text-body-2 text-truncate flex-grow-1',  # 使用一致的字体大小
+                                            'class': 'text-decoration-none text-caption text-truncate flex-grow-1',  # 使用更小的文字
                                             'style': 'max-width: 100%; color: inherit;',
                                             'title': f'访问 {site}'
-                                        },
-                                        'text': site
+                                },
+                                'text': site
                                     }
                                 ]
                             },
@@ -1404,25 +1341,31 @@ class twofahelper(_PluginBase):
                             {
                                 'component': 'VCardText',
                                 'props': {
-                                    'class': 'text-center py-2 px-2'  # 统一内边距
+                                    'class': 'text-center py-1 px-2'  # 减小内边距
                                 },
-                                'content': [
-                                    {
+                                'content': [{
                                     'component': 'div',
                                     'props': {
                                         'class': 'otp-code font-weight-bold',
                                         'id': f'code-{site}',
-                                        'style': 'white-space: pre; overflow: visible; font-family: monospace; letter-spacing: 2px; font-size: 1.5rem;'  # 统一字体大小
+                                        'style': 'white-space: pre; overflow: visible; font-family: monospace; letter-spacing: 2px; font-size: 1.6rem;'  # 增大字体和间距
                                     },
                                     'text': now_code
-                                    },
+                                }]
+                            },
+                            {
+                                'component': 'VCardText',
+                                'props': {
+                                    'class': 'py-1 px-2'  # 减小内边距
+                                },
+                                'content': [
                                     {
                                         'component': 'VProgressLinear',
                                         'props': {
                                             'model-value': progress_percent,
                                             'color': color,
-                                            'height': 3,  # 统一进度条高度
-                                            'class': 'progress-bar mt-1',
+                                            'height': 2,  # 减小进度条高度
+                                            'class': 'progress-bar',
                                             'rounded': True
                                         }
                                     },
@@ -1438,13 +1381,13 @@ class twofahelper(_PluginBase):
                             {
                                 'component': 'VCardActions',
                                 'props': {
-                                    'class': 'py-1 px-2 d-flex justify-center'  # 统一内边距
+                                    'class': 'py-0 px-2 d-flex justify-center'  # 减小内边距
                                 },
                                 'content': [
                                     {
                                         'component': 'VBtn',
                                         'props': {
-                                            'size': 'small',  
+                                            'size': 'small',  # 增大按钮尺寸
                                             'variant': 'tonal',
                                             'color': color,
                                             'class': 'copy-button',
@@ -1563,32 +1506,125 @@ class twofahelper(_PluginBase):
         logger.info(f"接收到用户提交的参数: {params}")
         return {"code": 0, "message": "设置已保存"}
 
+    def api_get_status(self, **kwargs):
+        """
+        API接口：获取插件状态信息
+        """
+        # 获取配置文件修改时间
+        file_mtime = "文件不存在"
+        if os.path.exists(self.config_file):
+            file_mtime = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(os.path.getmtime(self.config_file)))
+            
+        # 构建状态信息
+        status_info = {
+            "plugin_version": self.plugin_version,
+            "sites_count": len(self._sites) if self._sites else 0,
+            "sites_list": list(self._sites.keys()) if self._sites else [],
+            "config_file": self.config_file,
+            "config_file_mtime": file_mtime,
+            "system_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        }
+        
+        return {"code": 0, "message": "成功", "data": status_info}
+
+    def api_test(self, apikey: str = None, **kwargs) -> Any:
+        """
+        测试API连接
+        """
+        logger.info(f"API调用: api_test - 接收到参数 apikey: {'已设置' if apikey else '未设置'}")
+        
+        if not apikey or apikey != settings.API_TOKEN:
+            logger.warning(f"API调用: api_test - API密钥验证失败")
+            return {"code": 401, "message": "认证失败，请检查API密钥"}
+        
+        logger.info(f"API调用: api_test - API连接测试成功")
+        return {"code": 0, "message": "连接成功", "data": {
+            "plugin_version": self.plugin_version,
+            "api_token": "验证通过",
+            "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        }}
+
+    def api_dump_sites(self, **kwargs):
+        """
+        API接口：转储内存中的站点配置用于调试
+        """
+        logger.info("接收到转储站点请求")
+        try:
+            # 获取内存配置
+            memory_sites = self._sites.copy() if self._sites else {}
+            memory_sites_count = len(memory_sites)
+            memory_sites_list = list(memory_sites.keys())
+            
+            # 读取文件配置
+            file_sites = {}
+            file_sites_count = 0
+            file_sites_list = []
+            if os.path.exists(self.config_file):
+                try:
+                    with open(self.config_file, 'r', encoding='utf-8') as f:
+                        file_sites = json.load(f)
+                    file_sites_count = len(file_sites)
+                    file_sites_list = list(file_sites.keys())
+                except Exception as e:
+                    logger.error(f"读取配置文件失败: {str(e)}")
+            
+            # 比较差异
+            only_in_memory = [site for site in memory_sites_list if site not in file_sites_list]
+            only_in_file = [site for site in file_sites_list if site not in memory_sites_list]
+            
+            return {
+                "code": 0,
+                "message": "成功",
+                "data": {
+                    "memory": {
+                        "sites_count": memory_sites_count,
+                        "sites_list": memory_sites_list,
+                        "sites_data": memory_sites
+                    },
+                    "file": {
+                        "sites_count": file_sites_count,
+                        "sites_list": file_sites_list,
+                        "sites_data": file_sites
+                    },
+                    "diff": {
+                        "only_in_memory": only_in_memory,
+                        "only_in_file": only_in_file,
+                        "is_identical": memory_sites == file_sites
+                    }
+                }
+            }
+        except Exception as e:
+            logger.error(f"转储站点配置失败: {str(e)}")
+            return {"code": 500, "message": f"转储站点配置失败: {str(e)}"}
+
     def get_totp_codes(self, apikey: str = None):
         """
         API接口: 获取所有TOTP验证码
         """
+        logger.info(f"API调用: get_totp_codes - 接收到参数 apikey: {'已设置' if apikey else '未设置'}")
+        
         if apikey and apikey != settings.API_TOKEN:
+            logger.warning(f"API调用: get_totp_codes - API密钥验证失败")
             return {"code": 2, "message": "API令牌错误!"}
             
         try:
             # 确保首先加载最新配置
+            logger.info("API调用: get_totp_codes - 开始从文件同步配置")
             self._sync_from_file()
             
             # 获取验证码列表
+            logger.info("API调用: get_totp_codes - 开始生成验证码")
             codes = self.get_all_codes()
             
             # 增强输出内容
+            logger.info(f"API调用: get_totp_codes - 成功生成 {len(codes)} 个验证码，准备返回")
             for site, data in codes.items():
                 # 添加额外信息
                 data["site_name"] = site
                 
-                # 处理图标 - 优先使用配置中的base64图标
-                if site in self._sites and "icon" in self._sites[site] and self._sites[site]["icon"].startswith("data:"):
-                    # 直接使用配置中的base64图标
-                    data["icon"] = self._sites[site]["icon"]
-                # 如果没有图标但有URL，尝试获取favicon
-                elif "urls" in data and data["urls"]:
-                    favicon_info = self._get_favicon_url(data["urls"], site, self._sites.get(site, {}))
+                # 增强图标处理 - 提供多个图标URL选项
+                if "urls" in data and data["urls"]:
+                    favicon_info = self._get_favicon_url(data["urls"], site)
                     if isinstance(favicon_info, dict):
                         data["favicon_options"] = favicon_info
                         # 保留原始图标url以保持兼容性
@@ -1596,17 +1632,122 @@ class twofahelper(_PluginBase):
                     else:
                         data["icon"] = favicon_info
             
+            logger.info(f"API调用: get_totp_codes - 成功完成，返回 {len(codes)} 个站点的验证码")
             return {
-                "code": 0, 
+                "code": 0,
                 "message": "成功",
                 "data": codes
             }
         except Exception as e:
-            logger.error(f"获取TOTP验证码失败: {str(e)}")
+            logger.error(f"API调用: get_totp_codes - 获取TOTP验证码失败: {str(e)}", exc_info=True)
             return {
                 "code": 1,
                 "message": f"获取TOTP验证码失败: {str(e)}"
             }
+
+    def refresh_dashboard(self, apikey: str = None):
+        """
+        API接口：刷新仪表盘数据
+        """
+        logger.info(f"API调用: refresh_dashboard - 接收到参数 apikey: {'已设置' if apikey else '未设置'}")
+        
+        # 检查API密钥
+        if apikey != settings.API_TOKEN:
+            logger.warning(f"API调用: refresh_dashboard - API密钥验证失败")
+            return {"code": 401, "message": "API令牌错误!", "success": False}
+            
+        logger.info("API调用: refresh_dashboard - 开始刷新仪表盘数据...")
+        
+        # 从文件同步到内存
+        logger.info("API调用: refresh_dashboard - 开始从文件同步配置")
+        self._sync_from_file()
+        
+        # 获取验证码
+        logger.info("API调用: refresh_dashboard - 开始生成验证码")
+        codes = self.get_all_codes()
+        
+        logger.info(f"API调用: refresh_dashboard - 成功完成，返回 {len(codes)} 个站点的验证码")
+        return {
+            "code": 0, 
+            "message": "刷新成功", 
+            "data": {
+                "sites_count": len(self._sites),
+                "codes": codes
+            }
+        }
+
+    def debug_dashboard(self, apikey: str = None):
+        """
+        API接口：调试仪表盘
+        """
+        # 检查API密钥
+        if apikey != settings.API_TOKEN:
+            return {"code": 401, "message": "API令牌错误!", "success": False}
+            
+        logger.info("调试仪表盘...")
+        
+        # 检查dashboard_meta
+        dashboard_meta = self.get_dashboard_meta()
+        
+        # 测试获取dashboard
+        dashboard_data = None
+        if dashboard_meta and len(dashboard_meta) > 0:
+            key = dashboard_meta[0]["key"]
+            try:
+                dashboard_data = self.get_dashboard(key)
+            except Exception as e:
+                logger.error(f"获取仪表盘数据失败: {str(e)}")
+
+        return {
+            "code": 0,
+            "message": "调试信息",
+            "data": {
+                "dashboard_meta": dashboard_meta,
+                "sites_count": len(self._sites) if self._sites else 0,
+                "sites_keys": list(self._sites.keys()) if self._sites else [],
+                "config_file_exists": os.path.exists(self.config_file),
+                "dashboard_data_type": str(type(dashboard_data)) if dashboard_data else None,
+                "dashboard_structure": {
+                    "col_config": dashboard_data[0] if dashboard_data else None,
+                    "global_config": dashboard_data[1] if dashboard_data else None,
+                    "elements_count": len(dashboard_data[2]) if dashboard_data and len(dashboard_data) > 2 else 0
+                } if dashboard_data else None
+            }
+        }
+
+    def api_all_codes(self, apikey: str = None):
+        """
+        API接口：简化版获取所有验证码
+        """
+        logger.info(f"API调用: api_all_codes - 接收到参数 apikey: {'已设置' if apikey else '未设置'}")
+        
+        # 检查API密钥
+        if apikey != settings.API_TOKEN:
+            logger.warning(f"API调用: api_all_codes - API密钥验证失败")
+            return {"code": 401, "message": "API令牌错误!", "success": False}
+            
+        logger.info("API调用: api_all_codes - 开始获取所有简化版TOTP验证码...")
+        
+        # 从文件同步到内存
+        logger.info("API调用: api_all_codes - 开始从文件同步配置")
+        self._sync_from_file()
+        
+        # 使用get_all_codes获取验证码
+        logger.info("API调用: api_all_codes - 开始生成验证码")
+        codes = self.get_all_codes()
+        
+        # 转换为前端更容易处理的格式
+        result = []
+        for site_name, data in codes.items():
+            result.append({
+                "name": site_name,
+                "code": data.get("code", ""),
+                "remaining": data.get("remaining_seconds", 0),
+                "icon": data.get("icon", "")
+            })
+            
+        logger.info(f"API调用: api_all_codes - 成功完成，返回 {len(result)} 个站点的验证码")
+        return {"code": 0, "message": "成功", "data": result}
 
     def _get_color_for_site(self, site_name):
         """
@@ -1615,8 +1756,63 @@ class twofahelper(_PluginBase):
         :param site_name: 站点名称
         :return: HSL颜色字符串
         """
-        # 改为白色背景
-        return "#ffffff"
+        # 使用站点名称生成一个哈希值，确保相同的站点名称总是产生相同的颜色
+        hash_value = 0
+        for char in site_name:
+            hash_value += ord(char)
+        
+        # 生成HSL颜色，让颜色分布更均匀
+        hue = hash_value % 360
+        saturation = 70
+        lightness = 60
+        
+        return f"hsl({hue}, {saturation}%, {lightness}%)"
+
+    def debug_api(self, apikey: str = None):
+        """
+        API接口：调试API注册状态
+        """
+        logger.info(f"API调用: debug_api - 接收到调试API请求 - apikey: {'已设置' if apikey else '未设置'}")
+        
+        # 获取所有API
+        api_list = self.get_api()
+        
+        # 生成API信息
+        api_info = {
+            "api_count": len(api_list),
+            "api_details": [],
+            "plugin_info": {
+                "name": self.plugin_name,
+                "version": self.plugin_version,
+            "config_file": self.config_file,
+                "config_file_exists": os.path.exists(self.config_file),
+                "sites_count": len(self._sites) if self._sites else 0
+            },
+            "system_info": {
+                "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+                "platform": os.name,
+                "python_version": os.sys.version
+            }
+        }
+        
+        # 添加API详情
+        for api in api_list:
+            api_detail = {
+                "path": api.get("path", "unknown"),
+                "summary": api.get("summary", "unknown"),
+                "methods": api.get("methods", []),
+                "endpoint": str(api.get("endpoint", "None")),
+                "endpoint_exists": api.get("endpoint") is not None,
+                "endpoint_callable": callable(api.get("endpoint")) if api.get("endpoint") else False
+            }
+            api_info["api_details"].append(api_detail)
+        
+        logger.info(f"API调用: debug_api - 返回调试信息，API数量: {len(api_list)}")
+        return {
+            "code": 0,
+            "message": "API调试信息",
+            "data": api_info
+        }
 
 
 # 插件类导出
