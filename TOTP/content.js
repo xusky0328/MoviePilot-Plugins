@@ -1,29 +1,51 @@
 // 当前页面URL
 const currentUrl = window.location.href;
 
+// 全局变量，防止重复弹出
+let panelShown = false;
+let isTotpInitialized = false;
+
+// 添加全局配置对象
+let globalConfig = null;
+let lastConfigRefreshTime = 0;
+const CONFIG_REFRESH_INTERVAL = 300000; // 配置刷新间隔，5分钟
+
+// 全局变量，控制验证码刷新
+let isExpiredRefreshing = false; // 控制过期刷新状态
+
 // 监听页面加载完成
 document.addEventListener('DOMContentLoaded', function() {
   console.log('TOTP助手内容脚本已加载');
   
-  // 添加按钮到页面上的特定输入框旁边
-  setTimeout(init, 1000);
+  // 只在页面首次加载时初始化TOTP
+  if (!isTotpInitialized) {
+    setTimeout(checkAndInitTOTP, 1000);
+    isTotpInitialized = true;
+  }
 });
+
+// 防止重复检查的标志
+let isCheckingTOTP = false;
 
 // 监听DOM变化，以便在动态加载的页面上添加按钮
 const mutationObserver = new MutationObserver(function(mutations) {
-  mutations.forEach(function(mutation) {
-    if (mutation.addedNodes && mutation.addedNodes.length > 0) {
-      // 检测到DOM变化，可能有新的输入框
-      setTimeout(init, 500);
-    }
-  });
+  // 只有在未显示面板且未初始化时才检查
+  if (!panelShown && !document.querySelector('.totp-helper-panel') && !isCheckingTOTP && !isTotpInitialized) {
+    clearTimeout(window.totpCheckTimer);
+    window.totpCheckTimer = setTimeout(() => {
+      checkAndInitTOTP();
+      isTotpInitialized = true;
+    }, 1000);
+  }
 });
 
-// 配置观察器
+// 配置观察器，只在没有初始化时观察
+if (!isTotpInitialized) {
 mutationObserver.observe(document.body, {
   childList: true,
   subtree: true
 });
+}
 
 // 查找验证码输入框
 function findOTPInput() {
@@ -110,93 +132,121 @@ function findOTPInput() {
   return matchedInputs;
 }
 
-// 主函数
-async function init() {
+// 主函数：检查并初始化TOTP
+async function checkAndInitTOTP() {
   try {
-    // 防止重复初始化
-    if (document.querySelector('.totp-helper-initialized')) {
-      return;
-    }
-
-    // 检查是否为MP插件或仪表盘页面，如果是则不显示
-    if (isMoviePilotPage()) {
-      return;
-    }
-
-    // 检查页面是否包含二步验证相关内容
-    if (!isOTPPage()) {
+    // 如果已经显示过面板或正在检查，不再重复显示
+    if (panelShown || document.querySelector('.totp-helper-panel') || isCheckingTOTP) {
       return;
     }
     
-    // 创建验证码展示面板
+    isCheckingTOTP = true;
+
+    // 1. 获取当前域名
+    const currentDomain = window.location.hostname.toLowerCase();
+    
+    // 2. 获取配置的站点列表
+    const result = await getApiConfig();
+    if (!result || !result.sites || Object.keys(result.sites).length === 0) {
+      console.log('未找到站点配置或站点列表为空');
+      isCheckingTOTP = false;
+      return;
+    }
+    
+    // 3. 检查当前域名是否匹配任何配置的站点
+    let matchedSite = null;
+    console.log(`当前网站域名: ${currentDomain}`);
+    console.log(`已配置站点:`, result.sites);
+    for (const [siteName, siteData] of Object.entries(result.sites)) {
+      if (siteData.urls && Array.isArray(siteData.urls)) {
+        for (const url of siteData.urls) {
+          try {
+            // 处理URL，确保它有协议前缀
+            let fullUrl = url;
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+              fullUrl = 'https://' + url;
+            }
+            
+            // 解析URL获取域名
+            const siteUrlObj = new URL(fullUrl);
+            const siteDomain = siteUrlObj.hostname.toLowerCase();
+            
+            console.log(`比较域名: ${currentDomain} 与 ${siteDomain}`);
+            
+            // 使用包含匹配，而不是精确匹配
+            if (currentDomain === siteDomain || 
+                currentDomain.includes(siteDomain) || 
+                siteDomain.includes(currentDomain)) {
+              console.log(`✅ 当前网站 ${currentDomain} 匹配配置的站点 ${siteName}`);
+              matchedSite = {
+                name: siteName,
+                data: siteData
+              };
+          break;
+        }
+          } catch (e) {
+            console.error(`解析URL失败: ${url}`, e);
+            
+            // 尝试直接比较域名部分
+            const urlLower = url.toLowerCase();
+            if (urlLower.includes(currentDomain) || currentDomain.includes(urlLower)) {
+              console.log(`✅ 通过简单比较匹配站点 ${siteName}`);
+              matchedSite = {
+                name: siteName,
+                data: siteData
+              };
+                break;
+              }
+            }
+          }
+      }
+      if (matchedSite) break;
+    }
+    
+    // 如果当前域名不匹配任何配置的站点，不显示面板
+    if (!matchedSite) {
+      console.log(`当前网站 ${currentDomain} 不匹配任何配置的站点`);
+      isCheckingTOTP = false;
+      return;
+    }
+    
+    // 4. 检查页面是否有二级验证输入框
+    const inputs = findOTPInput();
+    if (!inputs || inputs.length === 0) {
+      console.log('未找到二级验证输入框');
+      isCheckingTOTP = false;
+      return;
+    }
+    
+    console.log('找到二级验证输入框:', inputs);
+    
+    // 5. 显示弹出面板
     createOTPPanel();
+    panelShown = true;
     
-  } catch (error) {
+    // 如果成功初始化，断开MutationObserver
+    mutationObserver.disconnect();
+    
+    } catch (error) {
     console.error('初始化TOTP助手失败:', error);
+  } finally {
+    isCheckingTOTP = false;
   }
-}
-
-// 检查是否为MoviePilot页面
-function isMoviePilotPage() {
-  // 检查URL
-  const url = window.location.href.toLowerCase();
-  
-  // 检查是否包含MoviePilot相关内容
-  if (url.includes('plugins') || 
-      url.includes('dashboard') || 
-      url.includes('/mp/')) {
-    return true;
-  }
-  
-  // 检查页面标题是否包含MoviePilot
-  const title = document.title.toLowerCase();
-  if (title.includes('moviepilot') || 
-      title.includes('mp仪表盘')) {
-    return true;
-  }
-  
-  // 检查页面内容是否包含MoviePilot特征
-  const bodyContent = document.body.textContent.toLowerCase();
-  if (bodyContent.includes('moviepilot仪表盘') || 
-      bodyContent.includes('mp控制台')) {
-    return true;
-  }
-  
-  return false;
-}
-
-// 检查页面是否包含二步验证相关内容
-function isOTPPage() {
-  // 检查URL
-  const url = window.location.href.toLowerCase();
-  if (url.includes('2fa') || 
-      url.includes('two-factor') || 
-      url.includes('two-step') || 
-      url.includes('security') ||
-      url.includes('two-step-verification')) {
-    return true;
-  }
-  
-  // 检查页面内容
-  const pageText = document.body.textContent.toLowerCase();
-  if (pageText.includes('两步验证') ||
-      pageText.includes('二步验证') ||
-      pageText.includes('two-factor') ||
-      pageText.includes('2fa') ||
-      pageText.includes('二级验证码')) {
-    return true;
-  }
-  
-  // 检查是否存在验证码输入框
-  const inputs = findOTPInput();
-  return inputs && inputs.length > 0;
 }
 
 // 创建验证码展示面板
 function createOTPPanel() {
+  // 确保页面中只有一个面板
+  const existingPanel = document.querySelector('.totp-helper-panel');
+  if (existingPanel) {
+    console.log('面板已存在，不再创建');
+    return;
+  }
+  
   // 创建面板容器
   const panel = document.createElement('div');
-  panel.className = 'totp-helper-panel totp-helper-initialized';
+  panel.className = 'totp-helper-panel';
+  panel.id = 'totp-helper-panel';
   panel.style.cssText = `
     position: fixed;
     bottom: 20px;
@@ -245,7 +295,22 @@ function createOTPPanel() {
     cursor: pointer;
     padding: 0 4px;
   `;
-  closeButton.onclick = () => panel.remove();
+  closeButton.onclick = () => {
+    panel.remove();
+    // 重置面板显示标记，允许在下次条件满足时再次显示
+    panelShown = false;
+    isTotpInitialized = false;
+    
+    // 清除所有定时器
+    if (window.totpUpdateTimer) {
+      clearInterval(window.totpUpdateTimer);
+      window.totpUpdateTimer = null;
+    }
+    if (window.totpCheckTimer) {
+      clearTimeout(window.totpCheckTimer);
+      window.totpCheckTimer = null;
+    }
+  };
   title.appendChild(closeButton);
   
   // 创建内容区域
@@ -271,28 +336,59 @@ function createOTPPanel() {
   `;
   
   // 更新验证码函数
-  async function updateCodes() {
+  let lastUpdateTime = 0;
+  const MIN_UPDATE_INTERVAL = 5000; // 最小更新间隔，5秒
+  
+  async function updateCodes(forceRefresh = false) {
     try {
-      const codes = await fetchTOTPCodes();
-      content.innerHTML = '';
+      const now = Date.now();
       
-      // 确保codes是数组
-      const codesArray = Array.isArray(codes) ? codes : [];
-      
-      // 获取当前域名
-      const domain = window.location.hostname;
-      
-      // 过滤出匹配当前域名的验证码
-      const matchedCodes = codesArray.filter(code => 
-        code.urls && code.urls.some(url => url.includes(domain))
-      );
-      
-      if (matchedCodes.length === 0) {
-        content.innerHTML = '<div style="color: #999; text-align: center; padding: 8px;">未找到匹配的验证码</div>';
+      // 非强制刷新时限制更新频率
+      if (!forceRefresh && now - lastUpdateTime < MIN_UPDATE_INTERVAL) {
+        console.log('更新太频繁，跳过本次更新');
       return;
     }
     
+      lastUpdateTime = now;
+      
+      const result = await fetchTOTPCodes(forceRefresh);
+      const { codes, sites } = result;
+      content.innerHTML = '';
+      
+      // 获取当前域名
+      const domain = window.location.hostname;
+      let matchedCodes = [];
+      
+      // 处理数据格式
+      if (Array.isArray(codes)) {
+        // 数组格式处理
+        matchedCodes = codes.filter(code => 
+          code.urls && Array.isArray(code.urls) && code.urls.some(url => url.includes(domain))
+        );
+      } else {
+        // 对象格式处理
+        matchedCodes = Object.entries(codes)
+          .filter(([siteName, codeData]) => 
+            codeData.urls && Array.isArray(codeData.urls) && codeData.urls.some(url => url.includes(domain))
+          )
+          .map(([siteName, codeData]) => ({
+            siteName,
+            ...codeData
+          }));
+      }
+      
+      if (matchedCodes.length === 0) {
+        content.innerHTML = '<div style="color: #999; text-align: center; padding: 8px;">未找到匹配的验证码</div>';
+        return;
+      }
+      
       matchedCodes.forEach(code => {
+        // 确定站点名称
+        const siteName = code.siteName || '未命名站点';
+        
+        // 获取站点配置（包含图标）
+        const siteConfig = sites[siteName] || {};
+        
         const codeItem = document.createElement('div');
         codeItem.style.cssText = `
           padding: 8px;
@@ -328,26 +424,18 @@ function createOTPPanel() {
           color: #757575;
         `;
         
-        // 获取站点名称
-        const siteName = code.siteName || '未命名站点';
-        
-        // 使用首字母作为初始占位图标
-        const letter = siteName.charAt(0).toUpperCase();
-        siteIcon.textContent = letter;
-        
-        // 尝试从URL获取图标
-        if (code.urls && code.urls.length > 0) {
-          fetchSiteIcon(code.urls[0], siteIcon);
-        }
-        // 如果数据中有base64图标，直接显示
-        else if (code.icon && code.icon.startsWith('data:image')) {
-          // 直接使用base64图标
+        // 优先使用配置中的base64图标
+        if (siteConfig.icon && siteConfig.icon.startsWith('data:image')) {
           siteIcon.innerHTML = '';
           const iconImg = document.createElement('img');
-          iconImg.src = code.icon;
+          iconImg.src = siteConfig.icon;
           iconImg.alt = 'Site Icon';
           iconImg.style.cssText = 'width: 100%; height: 100%; object-fit: cover;';
           siteIcon.appendChild(iconImg);
+        } else {
+          // 如果没有base64图标，使用首字母作为占位
+          const letter = siteName.charAt(0).toUpperCase();
+          siteIcon.textContent = letter;
         }
         
         // 添加站点名称
@@ -410,21 +498,29 @@ function createOTPPanel() {
           const period = 30; // TOTP 默认周期为30秒
           const elapsed = now % period;
           const remaining = period - elapsed;
-          const progress = (remaining / period) * 100;
+          const progress = (elapsed / period) * 100;
           
-          progressBar.style.width = `${progress}%`;
+          progressBar.style.width = `${100 - progress}%`;
           timeDisplay.textContent = `${remaining}秒后更新`;
           
           // 当剩余时间小于5秒时改变颜色
           if (remaining <= 5) {
             progressBar.style.background = '#ff9800';
-        } else {
+          } else {
             progressBar.style.background = '#4caf50';
           }
           
-          // 当时间到时自动刷新
-          if (remaining <= 1) {
-            updateCodes();
+          // 当时间完全归零后，设置过期标志，小延迟后刷新
+          if (remaining === 0 && !isExpiredRefreshing) {
+            console.log("验证码已过期，准备刷新");
+            isExpiredRefreshing = true;
+            
+            // 延迟1秒后刷新，确保在过期后但不是立即刷新
+            setTimeout(() => {
+              console.log("验证码过期后执行刷新");
+              updateCodes(true); // 强制刷新
+              isExpiredRefreshing = false;
+            }, 1000);
           }
         };
         
@@ -614,7 +710,8 @@ function createOTPPanel() {
     refreshButton.style.opacity = '0.7';
     refreshButton.disabled = true;
     
-    updateCodes().finally(() => {
+    // 点击刷新按钮时强制刷新
+    updateCodes(true).finally(() => {
       refreshButton.textContent = '刷新';
       refreshButton.style.opacity = '1';
       refreshButton.disabled = false;
@@ -629,27 +726,108 @@ function createOTPPanel() {
   // 添加到页面
   document.body.appendChild(panel);
   
+  // 设置全局标志
+  panelShown = true;
+  
   // 初始更新验证码
   updateCodes();
   
   // 设置定时更新（每30秒）
-  setInterval(updateCodes, 30000);
+  // 存储定时器ID以便能够清除
+  if (window.totpUpdateTimer) {
+    clearInterval(window.totpUpdateTimer);
+  }
+  window.totpUpdateTimer = setInterval(updateCodes, 30000);
+}
+
+// 获取API配置
+async function getApiConfig() {
+  return new Promise((resolve) => {
+    // 如果已经有全局配置且未过期，直接使用缓存
+    const now = Date.now();
+    if (globalConfig && (now - lastConfigRefreshTime < CONFIG_REFRESH_INTERVAL)) {
+      console.log('使用缓存的配置信息');
+      resolve(globalConfig);
+      return;
+    }
+    
+    chrome.storage.sync.get(['apiBaseUrl', 'apiKey', 'apiConfig'], async (result) => {
+      let config = {};
+      
+      // 检查主要配置
+      if (result.apiBaseUrl && result.apiKey) {
+        config = {
+          baseUrl: result.apiBaseUrl,
+          apiKey: result.apiKey,
+          sites: {}
+        };
+      } else if (result.apiConfig && result.apiConfig.baseUrl && result.apiConfig.apiKey) {
+        config = {
+          baseUrl: result.apiConfig.baseUrl,
+          apiKey: result.apiConfig.apiKey,
+          sites: {}
+        };
+      } else {
+        console.log('未找到API配置信息');
+        resolve(null);
+        return;
+      }
+      
+      // 尝试从API获取站点配置
+      try {
+        console.log('尝试从API获取站点配置');
+        const configResponse = await fetch(`${config.baseUrl}/api/v1/plugin/twofahelper/config?apikey=${config.apiKey}`);
+        if (configResponse.ok) {
+          const configData = await configResponse.json();
+          if (configData && configData.data) {
+            console.log('成功从API获取站点配置');
+            config.sites = configData.data;
+            
+            // 更新全局配置和刷新时间
+            globalConfig = config;
+            lastConfigRefreshTime = now;
+          } else {
+            console.log('API返回的站点配置为空');
+          }
+        } else {
+          console.log(`获取站点配置失败, 状态码: ${configResponse.status}`);
+        }
+      } catch (configError) {
+        console.error('获取站点配置出错:', configError);
+      }
+      
+      resolve(config);
+    });
+  });
 }
 
 // 从API获取TOTP验证码
-async function fetchTOTPCodes() {
+// 增加缓存，防止频繁请求，但确保在需要时强制刷新
+let cachedCodes = null;
+let lastCodeFetchTime = 0;
+const CODE_FETCH_INTERVAL = 25000; // 25秒缓存时间
+
+async function fetchTOTPCodes(forceRefresh = false) {
   try {
-    // 获取配置（从popup传入或用户手动输入）
+    const now = Date.now();
+    
+    // 只在非强制刷新时使用缓存
+    if (!forceRefresh && cachedCodes && (now - lastCodeFetchTime < CODE_FETCH_INTERVAL)) {
+      console.log('使用缓存的验证码数据');
+      return cachedCodes;
+    }
+    
+    // 获取配置
     const config = await getApiConfig();
     
     if (!config || !config.baseUrl || !config.apiKey) {
       throw new Error('未配置连接信息');
     }
     
-    // 直接从API获取验证码，不使用缓存
+    // 获取验证码
+    console.log('从API获取验证码数据');
     const response = await fetch(`${config.baseUrl}/api/v1/plugin/twofahelper/get_codes?apikey=${config.apiKey}`);
     if (!response.ok) {
-      // 只有在明确的授权错误时才提示重新配置
       if (response.status === 401 || response.status === 403) {
         throw new Error('授权失败，请重新配置');
       }
@@ -657,72 +835,24 @@ async function fetchTOTPCodes() {
     }
     
     const data = await response.json();
+    console.log("验证码API返回数据:", data);
     
-    // 确保返回的是数组格式
     if (!data || !data.data) {
-      return [];
+      throw new Error('无效的验证码数据');
     }
     
-    // 如果data.data不是数组，尝试转换
-    if (!Array.isArray(data.data)) {
-      if (typeof data.data === 'object') {
-        return Object.entries(data.data).map(([siteName, info]) => ({
-          siteName,
-          code: info.code,
-          urls: info.urls || []
-        }));
-      }
-      return [];
-    }
+    // 更新缓存
+    cachedCodes = {
+      codes: data.data,
+      sites: config.sites
+    };
+    lastCodeFetchTime = now;
     
-    return data.data;
+    return cachedCodes;
   } catch (error) {
     console.error('获取验证码失败:', error);
     throw error;
   }
-}
-
-// 从设置中获取API配置
-async function getApiConfig() {
-  // 尝试从popup.js传入的消息获取配置
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ action: 'getApiConfig' }, (response) => {
-      if (response && response.config) {
-        resolve(response.config);
-      } else {
-        // 如果没有获取到配置，从存储中读取
-        chrome.storage.sync.get(['apiBaseUrl', 'apiKey'], (result) => {
-          if (result.apiBaseUrl && result.apiKey) {
-            resolve({
-              baseUrl: result.apiBaseUrl,
-              apiKey: result.apiKey
-            });
-          } else {
-            // 最后尝试从localStorage获取
-            try {
-              const savedConfig = localStorage.getItem('totp_connection');
-              if (savedConfig) {
-                const parsedConfig = JSON.parse(savedConfig);
-                if (parsedConfig.serverUrl && parsedConfig.apiKey) {
-                  resolve({
-                    baseUrl: parsedConfig.serverUrl,
-                    apiKey: parsedConfig.apiKey
-                  });
-                } else {
-                  resolve(null);
-                }
-              } else {
-                resolve(null);
-              }
-            } catch (e) {
-              console.warn('从localStorage获取配置失败:', e);
-              resolve(null);
-            }
-          }
-        });
-      }
-    });
-  });
 }
 
 // 从页面响应提取验证码

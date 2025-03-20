@@ -3,13 +3,13 @@
     "name": "两步验证助手",
     "description": "生成TOTP两步验证码，配合浏览器扩展使用，支持自动弹出验证码一键复制",
     "labels": "TOTP,验证码,扩展",
-    "version": "1.2.1",
+    "version": "1.2.2",
     "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/2fa.png",
     "author": "madrays",
     "level": 1,
     "v2": true,
     "history": {
-      "v1.2.1": "升级测试，api有问题，谨慎尝试"
+      "v1.2.2": "升级测试，api有问题，初步成功，谨慎尝试"
     }
   },
   "fnossign": {

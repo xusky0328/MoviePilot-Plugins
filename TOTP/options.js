@@ -1,5 +1,38 @@
 // 获取UI元素
 document.addEventListener('DOMContentLoaded', function() {
+    // 版本信息
+    const CURRENT_VERSION = '1.1';
+    const versionElement = document.getElementById('currentVersion');
+    const updateNotice = document.getElementById('updateNotice');
+    
+    // 设置当前版本显示
+    if (versionElement) {
+        versionElement.textContent = `v${CURRENT_VERSION}`;
+        
+        // 为版本信息标签添加点击事件
+        versionElement.style.cursor = 'pointer';
+        versionElement.title = '点击查看版本信息';
+        versionElement.addEventListener('click', function() {
+            // 打开GitHub仓库release页面
+            chrome.tabs.create({
+                url: 'https://github.com/madrays/MoviePilot-Plugins/releases'
+            });
+        });
+    }
+    
+    // 初始化时检查更新
+    checkForUpdates();
+    
+    // 点击更新提示
+    if (updateNotice) {
+        updateNotice.addEventListener('click', function() {
+            // 打开GitHub仓库或下载页面
+            chrome.tabs.create({
+                url: 'https://github.com/madrays/MoviePilot-Plugins/releases'
+            });
+        });
+    }
+    
     const baseUrlInput = document.getElementById('baseUrl');
     const apiKeyInput = document.getElementById('apiKey');
     const testConnectionBtn = document.getElementById('testConnection');
@@ -14,16 +47,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const importConfigBtn = document.getElementById('importConfig');
     const importFileInput = document.getElementById('importFile');
     
-    // 添加修复按钮
-    const fixConnectionBtn = document.createElement('button');
-    fixConnectionBtn.id = 'fixConnection';
-    fixConnectionBtn.textContent = '修复连接问题';
-    fixConnectionBtn.style.marginLeft = '10px';
-    fixConnectionBtn.style.backgroundColor = '#ff9800';
+    // 初始化自定义排序数组
+    let customOrder = [];
     
-    // 将修复按钮添加到测试连接按钮旁边
-    testConnectionBtn.parentNode.insertBefore(fixConnectionBtn, testConnectionBtn.nextSibling);
-
     // 图标相关元素
     const iconPreview = document.getElementById('iconPreview');
     const iconFileInput = document.getElementById('iconFile');
@@ -37,8 +63,7 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('选项页面已加载，DOM元素获取状态:', {
         baseUrlInput: !!baseUrlInput,
         apiKeyInput: !!apiKeyInput,
-        testConnectionBtn: !!testConnectionBtn,
-        fixConnectionBtn: !!fixConnectionBtn
+        testConnectionBtn: !!testConnectionBtn
     });
 
     // 存储当前配置
@@ -50,58 +75,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 初始化
     loadConfig();
-    
-    // 修复连接按钮点击事件
-    fixConnectionBtn.addEventListener('click', fixConnection);
-    
-    // 修复连接函数
-    async function fixConnection() {
-        try {
-            showStatus('正在修复连接问题...');
-            
-            // 获取当前配置
-            const baseUrl = baseUrlInput.value.trim();
-            const apiKey = apiKeyInput.value.trim();
-            
-            if (!baseUrl || !apiKey) {
-                showStatus('请先输入服务器地址和API密钥', true);
-                return;
-            }
-            
-            // 强制重置后台的配置
-            const result = await new Promise(resolve => {
-                chrome.runtime.sendMessage(
-                    { 
-                        action: 'resetApiConfig',
-                        config: {
-                            baseUrl: normalizeUrl(baseUrl),
-                            apiKey: apiKey
-                        }
-                    },
-                    resolve
-                );
-            });
-            
-            if (result && result.success) {
-                showStatus('连接问题已修复，请尝试刷新插件页面');
-                
-                // 保存配置到本地存储
-                currentConfig.baseUrl = normalizeUrl(baseUrl);
-                currentConfig.apiKey = apiKey;
-                saveConfig();
-                
-                // 延迟2秒后刷新站点列表
-                setTimeout(() => {
-                    refreshSitesList();
-                }, 2000);
-            } else {
-                showStatus('修复失败: ' + (result ? result.message : '未知错误'), true);
-            }
-        } catch (error) {
-            console.error('修复连接失败:', error);
-            showStatus('修复失败: ' + error.message, true);
-        }
-    }
     
     // 图标选择按钮点击事件
     if (selectIconButton) {
@@ -503,242 +476,147 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 渲染站点列表
     function renderSitesList(sites) {
-        console.log('渲染站点列表, 传入数据:', sites);
+        const container = document.getElementById('sitesList');
+        container.innerHTML = '';
         
-        // 获取站点列表容器 - 兼容两种可能的ID
-        const sitesListDiv = document.getElementById('sites-list') || document.getElementById('sitesList');
-        console.log('站点列表容器元素:', sitesListDiv);
+        // 更新站点计数
+        const sitesCount = Object.keys(sites).length;
+        document.getElementById('sitesCount').textContent = `${sitesCount}个站点`;
         
-        if (!sitesListDiv) {
-            console.error('找不到站点列表容器元素');
+        if (sitesCount === 0) {
+            container.innerHTML = '<div class="help-text">尚未配置任何站点。点击"添加站点"来开始。</div>';
                 return;
             }
             
-        // 清空站点列表
-        sitesListDiv.innerHTML = '';
-            
-            if (!sites || Object.keys(sites).length === 0) {
-                sitesListDiv.innerHTML = '<div class="help-text">暂无配置的站点</div>';
-                return;
-            }
-            
-            // 显示站点总数
-            const totalSites = Object.keys(sites).length;
-        console.log(`渲染 ${totalSites} 个站点`);
+        // 初始排序顺序：保持自定义顺序
+        let sortOrder = 'custom';
         
-            const siteCountInfo = document.createElement('div');
-            siteCountInfo.className = 'site-count-info';
-            siteCountInfo.innerHTML = `当前已配置 <strong>${totalSites}</strong> 个站点`;
-            sitesListDiv.appendChild(siteCountInfo);
-        
-        // 添加排序功能
-        const sortContainer = document.createElement('div');
-        sortContainer.className = 'sort-container';
-        sortContainer.style.marginBottom = '15px';
-        sortContainer.style.display = 'flex';
-        sortContainer.style.justifyContent = 'flex-end';
-        sortContainer.style.alignItems = 'center';
-        
-        const sortLabel = document.createElement('span');
-        sortLabel.textContent = '排序: ';
-        sortLabel.style.marginRight = '8px';
-        sortLabel.style.fontSize = '14px';
-        sortContainer.appendChild(sortLabel);
-        
-        const sortSelect = document.createElement('select');
-        sortSelect.id = 'sort-select';
-        sortSelect.style.padding = '4px 8px';
-        sortSelect.style.borderRadius = '4px';
-        sortSelect.style.border = '1px solid #ddd';
-        
-        const sortOptions = [
-            { value: 'default', text: '默认顺序' },
-            { value: 'name-asc', text: '名称 (A-Z)' },
-            { value: 'name-desc', text: '名称 (Z-A)' }
-        ];
-        
-        sortOptions.forEach(option => {
-            const optElement = document.createElement('option');
-            optElement.value = option.value;
-            optElement.textContent = option.text;
-            sortSelect.appendChild(optElement);
-        });
-        
-        sortSelect.addEventListener('change', () => {
-            renderSites(sites, sortSelect.value);
-        });
-        
-        sortContainer.appendChild(sortSelect);
-        sitesListDiv.appendChild(sortContainer);
-        
-        // 添加拖拽排序提示
-        const dragSortInfo = document.createElement('div');
-        dragSortInfo.className = 'drag-sort-info';
-        dragSortInfo.style.padding = '8px';
-        dragSortInfo.style.marginBottom = '15px';
-        dragSortInfo.style.backgroundColor = '#e3f2fd';
-        dragSortInfo.style.borderRadius = '4px';
-        dragSortInfo.style.fontSize = '14px';
-        dragSortInfo.textContent = '提示: 您可以通过拖拽卡片来自定义排序顺序';
-        sitesListDiv.appendChild(dragSortInfo);
-        
-        // 创建站点卡片容器
-        const sitesContainer = document.createElement('div');
-        sitesContainer.id = 'sites-container';
-        sitesContainer.style.marginTop = '10px';
-        sitesListDiv.appendChild(sitesContainer);
-        
-        // 渲染站点
-        renderSites(sites, 'default');
+        // 提供站点数据和排序方式
+        renderSites(sites, sortOrder);
         
         // 启用拖拽排序
-        enableDragSort(sitesContainer);
+        enableDragSort(container);
     }
     
     // 渲染站点列表
     function renderSites(sites, sortOrder) {
-        const sitesContainer = document.getElementById('sites-container');
-        if (!sitesContainer) return;
+        const container = document.getElementById('sitesList');
+        container.innerHTML = '';
         
-        // 清空容器
-        sitesContainer.innerHTML = '';
+        let siteNames = Object.keys(sites);
         
-        // 按照指定顺序排序站点
-        let siteEntries = Object.entries(sites);
-        
-        switch (sortOrder) {
-            case 'name-asc':
-                siteEntries.sort((a, b) => a[0].localeCompare(b[0]));
-                break;
-            case 'name-desc':
-                siteEntries.sort((a, b) => b[0].localeCompare(a[0]));
-                break;
-            case 'default':
-            default:
-                // 保持当前配置的顺序
-                // 不做任何排序操作，使用原始顺序
-                break;
+        // 根据排序方式对站点名称进行排序
+        if (sortOrder === 'alphabetical') {
+            siteNames.sort();
+        } else if (sortOrder === 'custom' && customOrder && customOrder.length > 0) {
+            // 使用自定义排序
+            siteNames.sort((a, b) => {
+                const indexA = customOrder.indexOf(a);
+                const indexB = customOrder.indexOf(b);
+                
+                // 如果两个站点都在自定义顺序中，按照自定义顺序排列
+                if (indexA !== -1 && indexB !== -1) {
+                    return indexA - indexB;
+                }
+                
+                // 如果其中一个站点不在自定义顺序中，将其排在后面
+                if (indexA === -1) return 1;
+                if (indexB === -1) return -1;
+                
+                // 默认按字母排序
+                return a.localeCompare(b);
+            });
         }
         
-        console.log('排序后的站点顺序:', siteEntries.map(entry => entry[0]));
+        // 更新自定义排序数组
+        customOrder = [...siteNames];
+        
+        // 遍历站点并创建卡片
+        siteNames.forEach(siteName => {
+            const site = sites[siteName];
             
             // 创建站点卡片
-        siteEntries.forEach(([siteName, data], index) => {
-                const card = document.createElement('div');
-                card.className = 'card';
+            const card = document.createElement('div');
+            card.className = 'site-card';
             card.dataset.siteName = siteName;
-            card.dataset.sortIndex = index;
-            card.draggable = true;
+            card.draggable = true; // 启用拖拽
+            
+            // 站点头部（图标和名称）
+            const header = document.createElement('div');
+            header.className = 'site-header';
             
             // 添加拖动手柄
             const dragHandle = document.createElement('div');
             dragHandle.className = 'drag-handle';
-            dragHandle.innerHTML = '&#9776;'; // Unicode for "三" (menu/grip icon)
+            dragHandle.innerHTML = '⋮';
+            dragHandle.title = '拖动调整顺序';
             dragHandle.style.cursor = 'move';
-            dragHandle.style.color = '#999';
-            dragHandle.style.position = 'absolute';
-            dragHandle.style.top = '10px';
-            dragHandle.style.left = '10px';
-            card.appendChild(dragHandle);
-                
-                // 站点名称行 - 包含图标和名称
-                const titleRow = document.createElement('div');
-                titleRow.className = 'title-row';
-                titleRow.style.display = 'flex';
-                titleRow.style.alignItems = 'center';
-                titleRow.style.marginBottom = '10px';
-            titleRow.style.paddingLeft = '25px'; // 为拖动手柄留出空间
-                
-                // 站点图标（如果有）
-                if (data.icon) {
-                    const iconImg = document.createElement('img');
-                    iconImg.src = data.icon;
-                    iconImg.alt = `${siteName} 图标`;
-                    iconImg.className = 'site-icon';
-                    iconImg.style.width = '24px';
-                    iconImg.style.height = '24px';
-                    iconImg.style.marginRight = '8px';
-                    iconImg.style.borderRadius = '4px';
-                    titleRow.appendChild(iconImg);
-                } else {
-                    // 占位图标
-                    const iconPlaceholder = document.createElement('div');
-                    iconPlaceholder.className = 'icon-placeholder';
-                    iconPlaceholder.style.width = '24px';
-                    iconPlaceholder.style.height = '24px';
-                    iconPlaceholder.style.backgroundColor = '#ddd';
-                    iconPlaceholder.style.marginRight = '8px';
-                    iconPlaceholder.style.borderRadius = '4px';
-                    iconPlaceholder.style.display = 'flex';
-                    iconPlaceholder.style.alignItems = 'center';
-                    iconPlaceholder.style.justifyContent = 'center';
-                    iconPlaceholder.textContent = siteName.charAt(0).toUpperCase();
-                    titleRow.appendChild(iconPlaceholder);
-                }
-                
-                // 站点名称
-                const title = document.createElement('h3');
-                title.textContent = siteName;
-                title.style.margin = '0';
-                title.style.flex = '1';
-                titleRow.appendChild(title);
-                
-                card.appendChild(titleRow);
-                
-                // 密钥 (隐藏实际值)
-                const secret = document.createElement('div');
-                secret.className = 'site-secret';
-                secret.textContent = `密钥: ${data.secret.substring(0, 3)}****${data.secret.substring(data.secret.length - 3)}`;
-                card.appendChild(secret);
-                
-                // URLs
-                if (data.urls && data.urls.length > 0) {
-                    const urlsContainer = document.createElement('div');
-                    urlsContainer.className = 'site-urls';
-                    urlsContainer.innerHTML = '<strong>URLs:</strong>';
-                    
-                    const urlsList = document.createElement('ul');
-                    data.urls.forEach(url => {
-                        const li = document.createElement('li');
-                        li.textContent = url;
-                        urlsList.appendChild(li);
-                    });
-                    
-                    urlsContainer.appendChild(urlsList);
-                    card.appendChild(urlsContainer);
-                }
-                
-                // 按钮容器
-                const buttonContainer = document.createElement('div');
-                buttonContainer.className = 'site-buttons';
-                buttonContainer.style.display = 'flex';
-                buttonContainer.style.justifyContent = 'flex-end';
-                buttonContainer.style.marginTop = '10px';
-                buttonContainer.style.gap = '8px';
-                
-                // 编辑按钮
-                const editBtn = document.createElement('button');
-                editBtn.className = 'edit-btn';
-                editBtn.textContent = '编辑';
-                editBtn.style.backgroundColor = '#1976d2';
-                editBtn.style.color = 'white';
-                editBtn.style.padding = '4px 8px';
-                editBtn.style.fontSize = '12px';
-                editBtn.dataset.site = siteName;
-                editBtn.addEventListener('click', () => editSite(siteName));
-                buttonContainer.appendChild(editBtn);
-                
-                // 删除按钮
-                const deleteBtn = document.createElement('button');
-                deleteBtn.className = 'delete-btn';
-                deleteBtn.textContent = '删除';
-                deleteBtn.dataset.site = siteName;
-                deleteBtn.addEventListener('click', () => deleteSite(siteName));
-                buttonContainer.appendChild(deleteBtn);
-                
-                card.appendChild(buttonContainer);
-                
-            sitesContainer.appendChild(card);
+            dragHandle.style.marginRight = '5px';
+            header.appendChild(dragHandle);
+            
+            // 站点图标
+            const iconContainer = document.createElement('div');
+            iconContainer.className = 'site-icon-sm';
+            
+            if (site.icon && site.icon.startsWith('data:')) {
+                const iconImg = document.createElement('img');
+                iconImg.src = site.icon;
+                iconImg.alt = siteName;
+                iconContainer.appendChild(iconImg);
+            } else {
+                // 使用首字母作为占位符
+                iconContainer.textContent = siteName.charAt(0).toUpperCase();
+            }
+            
+            header.appendChild(iconContainer);
+            
+            // 站点名称
+            const nameEl = document.createElement('div');
+            nameEl.className = 'site-name-sm';
+            nameEl.textContent = siteName;
+            header.appendChild(nameEl);
+            
+            card.appendChild(header);
+            
+            // 密钥（默认隐藏）
+            const secretEl = document.createElement('div');
+            secretEl.className = 'site-secret-sm';
+            secretEl.style.display = 'none'; // 默认隐藏密钥
+            secretEl.textContent = site.secret;
+            card.appendChild(secretEl);
+            
+            // URL列表
+            if (site.urls && site.urls.length > 0) {
+                const urlsEl = document.createElement('div');
+                urlsEl.className = 'site-urls-sm';
+                urlsEl.textContent = site.urls[0] + (site.urls.length > 1 ? ` +${site.urls.length - 1}个网址` : '');
+                card.appendChild(urlsEl);
+            }
+            
+            // 操作按钮
+            const actions = document.createElement('div');
+            actions.className = 'site-actions';
+            
+            // 编辑按钮
+            const editBtn = document.createElement('button');
+            editBtn.textContent = '编辑';
+            editBtn.className = 'btn-secondary';
+            editBtn.onclick = () => editSite(siteName);
+            
+            // 删除按钮
+            const deleteBtn = document.createElement('button');
+            deleteBtn.textContent = '删除';
+            deleteBtn.className = 'delete-btn';
+            deleteBtn.style.backgroundColor = '#f44336';
+            deleteBtn.style.color = 'white';
+            deleteBtn.onclick = () => deleteSite(siteName);
+            
+            actions.appendChild(editBtn);
+            actions.appendChild(deleteBtn);
+            card.appendChild(actions);
+            
+            // 添加到容器
+            container.appendChild(card);
         });
     }
     
@@ -748,17 +626,29 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // 添加拖拽事件监听器
         container.addEventListener('dragstart', function(e) {
-            draggedItem = e.target;
+            // 确保我们拖拽的是卡片元素
+            draggedItem = e.target.closest('.site-card');
+            if (!draggedItem) return;
+            
             e.dataTransfer.effectAllowed = 'move';
             e.dataTransfer.setData('text/plain', ''); // 必须设置一些数据才能拖拽
+            
+            // 添加拖拽中的样式
             setTimeout(() => {
+                draggedItem.classList.add('dragging');
                 draggedItem.style.opacity = '0.5';
             }, 0);
         });
         
         container.addEventListener('dragend', function(e) {
             if (draggedItem) {
+                // 移除拖拽中的样式
+                draggedItem.classList.remove('dragging');
                 draggedItem.style.opacity = '1';
+                
+                // 保存新的排序顺序
+                saveCustomOrder();
+                
                 draggedItem = null;
             }
         });
@@ -766,77 +656,89 @@ document.addEventListener('DOMContentLoaded', function() {
         container.addEventListener('dragover', function(e) {
             e.preventDefault();
             e.dataTransfer.dropEffect = 'move';
-        });
-        
-        container.addEventListener('dragenter', function(e) {
-            e.preventDefault();
-            const target = e.target.closest('.card');
-            if (target && target !== draggedItem) {
-                target.style.borderTop = '2px solid #1976d2';
+            
+            // 获取当前鼠标下的卡片
+            const targetCard = e.target.closest('.site-card');
+            if (!targetCard || targetCard === draggedItem) return;
+            
+            // 计算鼠标位置在卡片上半部分还是下半部分
+            const targetRect = targetCard.getBoundingClientRect();
+            const mouseY = e.clientY;
+            const isInUpperHalf = mouseY < targetRect.top + targetRect.height / 2;
+            
+            // 清除所有卡片的边框样式
+            const cards = container.querySelectorAll('.site-card');
+            cards.forEach(card => {
+                card.style.borderTop = '';
+                card.style.borderBottom = '';
+            });
+            
+            // 根据鼠标位置显示放置指示器
+            if (isInUpperHalf) {
+                targetCard.style.borderTop = '2px solid #1976d2';
+            } else {
+                targetCard.style.borderBottom = '2px solid #1976d2';
             }
         });
         
         container.addEventListener('dragleave', function(e) {
-            const target = e.target.closest('.card');
-            if (target) {
-                target.style.borderTop = '';
+            // 当鼠标离开卡片时，清除边框样式
+            const targetCard = e.target.closest('.site-card');
+            if (targetCard) {
+                targetCard.style.borderTop = '';
+                targetCard.style.borderBottom = '';
             }
         });
         
-        container.addEventListener('drop', async function(e) {
+        container.addEventListener('drop', function(e) {
             e.preventDefault();
-            const dropTarget = e.target.closest('.card');
             
-            if (dropTarget && draggedItem && dropTarget !== draggedItem) {
-                // 清除所有卡片的边框样式
-                const cards = container.querySelectorAll('.card');
-                cards.forEach(card => card.style.borderTop = '');
-                
-                // 获取所有卡片元素
-                const cardElements = Array.from(container.querySelectorAll('.card'));
-                
-                // 找到目标位置
-                const dropIndex = cardElements.indexOf(dropTarget);
-                const dragIndex = cardElements.indexOf(draggedItem);
-                
-                // 移动元素
-                if (dragIndex < dropIndex) {
-                    container.insertBefore(draggedItem, dropTarget.nextSibling);
-                } else {
-                    container.insertBefore(draggedItem, dropTarget);
-                }
-                
-                // 更新卡片的排序指数
-                cardElements.forEach((card, index) => {
-                    card.dataset.sortIndex = index;
-                });
-                
-                // 保存新的排序顺序
-                await saveCustomOrder();
+            // 获取目标卡片
+            const targetCard = e.target.closest('.site-card');
+            if (!targetCard || !draggedItem || targetCard === draggedItem) return;
+            
+            // 清除所有卡片的边框样式
+            const cards = container.querySelectorAll('.site-card');
+            cards.forEach(card => {
+                card.style.borderTop = '';
+                card.style.borderBottom = '';
+            });
+            
+            // 计算鼠标位置在卡片上半部分还是下半部分
+            const targetRect = targetCard.getBoundingClientRect();
+            const mouseY = e.clientY;
+            const isInUpperHalf = mouseY < targetRect.top + targetRect.height / 2;
+            
+            // 插入拖拽的卡片到目标位置
+            if (isInUpperHalf) {
+                container.insertBefore(draggedItem, targetCard);
+            } else {
+                container.insertBefore(draggedItem, targetCard.nextSibling);
             }
+            
+            // 更新自定义排序数组
+            updateCustomOrderFromDOM();
+            
+            // 保存新的排序顺序
+            saveCustomOrder();
         });
+    }
+    
+    // 从DOM中更新自定义排序数组
+    function updateCustomOrderFromDOM() {
+        const container = document.getElementById('sitesList');
+        const cards = Array.from(container.querySelectorAll('.site-card'));
+        
+        // 创建新的排序数组
+        customOrder = cards.map(card => card.dataset.siteName);
+        console.log('Updated custom order:', customOrder);
     }
     
     // 保存自定义排序
     async function saveCustomOrder() {
         try {
-            // 获取当前排序
-            const sitesContainer = document.getElementById('sites-container');
-            const cards = Array.from(sitesContainer.querySelectorAll('.card'));
-            
-            // 创建有序的站点对象 - 使用ES2015+的对象属性顺序特性
-            const orderedSites = {};
-            
-            // 按照DOM中的顺序遍历卡片，创建新的有序对象
-            cards.forEach((card) => {
-                const siteName = card.dataset.siteName;
-                if (siteName && currentConfig.sites[siteName]) {
-                    // 复制原始站点数据，保持顺序
-                    orderedSites[siteName] = {...currentConfig.sites[siteName]};
-                }
-            });
-            
-            console.log('保存的排序顺序:', Object.keys(orderedSites));
+            // 确保已更新自定义排序数组
+            updateCustomOrderFromDOM();
             
             // 获取API配置
             const config = await loadApiConfig();
@@ -846,6 +748,21 @@ document.addEventListener('DOMContentLoaded', function() {
             
             console.log('正在保存自定义排序...');
             showStatus('正在保存排序...');
+            
+            // 获取所有站点
+            if (!currentConfig.sites || Object.keys(currentConfig.sites).length === 0) {
+                throw new Error('没有站点数据可供排序');
+            }
+            
+            // 创建有序的站点对象
+            const orderedSites = {};
+            
+            // 按照自定义顺序遍历站点名称
+            customOrder.forEach(siteName => {
+                if (currentConfig.sites[siteName]) {
+                    orderedSites[siteName] = currentConfig.sites[siteName];
+                }
+            });
             
             // 直接调用API更新配置
             const response = await fetch(`${config.baseUrl}/api/v1/plugin/twofahelper/update_config?apikey=${config.apiKey}`, {
@@ -1017,6 +934,48 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // 编辑站点
+    async function editSite(siteName) {
+        try {
+            // 确保有站点数据
+            if (!currentConfig.sites || !currentConfig.sites[siteName]) {
+                showStatus(`站点 ${siteName} 不存在`, true);
+                return;
+            }
+            
+            // 获取站点数据
+            const siteData = currentConfig.sites[siteName];
+            
+            // 填充表单
+            siteNameInput.value = siteName;
+            secretInput.value = siteData.secret || '';
+            urlsTextarea.value = (siteData.urls || []).join('\n');
+            
+            // 设置图标
+            currentIconDataUrl = siteData.icon || null;
+            updateIconPreview();
+            
+            // 滚动到添加站点表单
+            const siteSectionTitle = document.getElementById('siteSectionTitle');
+            if (siteSectionTitle) {
+                siteSectionTitle.textContent = `编辑站点: ${siteName}`;
+                siteSectionTitle.scrollIntoView({ behavior: 'smooth' });
+            }
+            
+            // 聚焦到第一个输入框
+            siteNameInput.focus();
+            
+            // 更改按钮文本为"更新站点"
+            addSiteBtn.textContent = '更新站点';
+            addSiteBtn.dataset.editing = siteName;
+            
+            showStatus(`正在编辑站点 ${siteName}`);
+        } catch (error) {
+            console.error('编辑站点失败:', error);
+            showStatus(`编辑站点失败: ${error.message}`, true);
+        }
+    }
+
     // 添加站点
     async function addSite() {
         try {
@@ -1074,16 +1033,16 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             
             // 检查站点是否已存在
-            const isUpdate = !!sites[siteName];
+            const isUpdate = !!sites[siteName] || addSiteBtn.dataset.editing;
             
             // 保存或更新站点
             if (isUpdate) {
                 // 如果是更新，保持原有站点属性，只更新需要修改的内容
-            sites[siteName] = {
+                sites[siteName] = {
                     ...sites[siteName],
-                secret: secret,
-                urls: urls,
-                    icon: currentIconDataUrl || sites[siteName].icon
+                    secret: secret,
+                    urls: urls,
+                    icon: currentIconDataUrl || (sites[siteName] ? sites[siteName].icon : null)
                 };
             } else {
                 // 如果是新增，创建一个新的站点配置
@@ -1139,6 +1098,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 currentIconDataUrl = null;
                 updateIconPreview();
                 
+                // 重置按钮文本和标题
+                addSiteBtn.textContent = '添加站点';
+                delete addSiteBtn.dataset.editing;
+                
+                const siteSectionTitle = document.getElementById('siteSectionTitle');
+                if (siteSectionTitle) {
+                    siteSectionTitle.textContent = '添加/编辑站点';
+                }
+                
                 // 刷新站点列表
                 await refreshSitesList();
             } else {
@@ -1147,43 +1115,6 @@ document.addEventListener('DOMContentLoaded', function() {
         } catch (error) {
             console.error('添加/更新站点失败:', error);
             showStatus(`添加/更新站点失败: ${error.message}`, true);
-        }
-    }
-
-    // 编辑站点
-    async function editSite(siteName) {
-        try {
-            // 确保有站点数据
-            if (!currentConfig.sites || !currentConfig.sites[siteName]) {
-                showStatus(`站点 ${siteName} 不存在`, true);
-                return;
-            }
-            
-            // 获取站点数据
-            const siteData = currentConfig.sites[siteName];
-            
-            // 填充表单
-            siteNameInput.value = siteName;
-            secretInput.value = siteData.secret || '';
-            urlsTextarea.value = (siteData.urls || []).join('\n');
-            
-            // 设置图标
-            currentIconDataUrl = siteData.icon || null;
-            updateIconPreview();
-            
-            // 滚动到添加站点表单
-            const addSiteHeading = Array.from(document.querySelectorAll('h2')).find(h => h.textContent.includes('添加站点'));
-            if (addSiteHeading) {
-                addSiteHeading.scrollIntoView({ behavior: 'smooth' });
-            }
-            
-            // 聚焦到第一个输入框
-            siteNameInput.focus();
-            
-            showStatus(`正在编辑站点 ${siteName}`);
-        } catch (error) {
-            console.error('编辑站点失败:', error);
-            showStatus(`编辑站点失败: ${error.message}`, true);
         }
     }
 
@@ -1334,6 +1265,171 @@ document.addEventListener('DOMContentLoaded', function() {
     exportConfigBtn.addEventListener('click', exportConfig);
     importConfigBtn.addEventListener('click', importConfig);
     importFileInput.addEventListener('change', handleImportFile);
+
+    // 添加图标URL获取按钮事件监听
+    document.getElementById('fetchIconButton').addEventListener('click', function() {
+        const iconUrl = document.getElementById('iconUrl').value.trim();
+        if (iconUrl) {
+            fetchAndSetIconFromUrl(iconUrl);
+        } else {
+            showStatus('请输入有效的图标URL', true);
+        }
+    });
+
+    // 检查更新
+    async function checkForUpdates() {
+        try {
+            const response = await fetch('https://api.github.com/repos/madrays/MoviePilot-Plugins/releases/latest');
+            if (!response.ok) {
+                console.error('获取版本信息失败:', response.statusText);
+                return;
+            }
+            
+            const releaseInfo = await response.json();
+            const latestVersion = releaseInfo.tag_name;
+            
+            // 从release名称中解析版本号
+            if (latestVersion) {
+                const cleanLatestVersion = latestVersion.replace(/^v/, '');
+                console.log('最新版本:', cleanLatestVersion, '当前版本:', CURRENT_VERSION);
+                
+                // 检查是否有更新（简单的字符串比较，假设版本号格式为x.y.z）
+                if (isNewerVersion(cleanLatestVersion, CURRENT_VERSION)) {
+                    // 显示更新通知
+                    showUpdateNotice(cleanLatestVersion);
+                }
+            }
+        } catch (error) {
+            console.error('检查更新失败:', error);
+            
+            // 尝试备用方案：解析压缩包名称来检查版本
+            fallbackVersionCheck();
+        }
+    }
+    
+    // 备用方案：解析压缩包名称来检查版本
+    function fallbackVersionCheck() {
+        try {
+            // 尝试通过备用方式获取版本信息 - 解析zip文件名
+            fetch('https://api.github.com/repos/madrays/MoviePilot-Plugins/releases')
+                .then(response => response.json())
+                .then(releases => {
+                    if (releases && releases.length > 0) {
+                        // 过滤出TOTP相关的资产
+                        for (const release of releases) {
+                            const totpAssets = release.assets.filter(asset => 
+                                asset.name.toLowerCase().includes('totp') && 
+                                asset.name.endsWith('.zip'));
+                            
+                            if (totpAssets.length > 0) {
+                                // 从文件名中提取版本信息
+                                const fileName = totpAssets[0].name;
+                                const versionMatch = fileName.match(/[vV]?(\d+\.\d+\.\d+)/);
+                                
+                                if (versionMatch && versionMatch[1]) {
+                                    const zipVersion = versionMatch[1];
+                                    console.log('从ZIP文件名中检测到版本:', zipVersion);
+                                    
+                                    if (isNewerVersion(zipVersion, CURRENT_VERSION)) {
+                                        showUpdateNotice(zipVersion);
+                                    }
+                                    return;
+                                }
+                                
+                                // 如果没有找到版本号，但找到了新的ZIP文件
+                                const createdAt = new Date(totpAssets[0].created_at);
+                                const nowMinus30Days = new Date();
+                                nowMinus30Days.setDate(nowMinus30Days.getDate() - 30);
+                                
+                                // 如果文件是最近30天创建的，则认为有更新
+                                if (createdAt > nowMinus30Days) {
+                                    showUpdateWithoutVersion();
+                                }
+                            }
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('获取发布资产失败:', error);
+                    tryManifestCheck();
+                });
+        } catch (error) {
+            console.error('备用版本检查失败:', error);
+            tryManifestCheck();
+        }
+    }
+    
+    // 尝试从manifest.json获取版本信息
+    function tryManifestCheck() {
+        try {
+            // 尝试获取插件的版本信息
+            chrome.runtime.getPackageDirectoryEntry(function(root) {
+                root.getFile('manifest.json', {}, function(fileEntry) {
+                    fileEntry.file(function(file) {
+                        const reader = new FileReader();
+                        reader.onloadend = function(e) {
+                            const manifest = JSON.parse(this.result);
+                            const manifestVersion = manifest.version;
+                            
+                            // 如果当前版本与manifest版本不同，可能是更新了
+                            if (manifestVersion && manifestVersion !== CURRENT_VERSION) {
+                                showUpdateNotice(manifestVersion);
+                            }
+                        };
+                        reader.readAsText(file);
+                    });
+                });
+            });
+        } catch (error) {
+            console.error('清单文件版本检查失败:', error);
+        }
+    }
+    
+    // 显示有更新但没有具体版本号的通知
+    function showUpdateWithoutVersion() {
+        const updateNotice = document.getElementById('updateNotice');
+        if (updateNotice) {
+            updateNotice.textContent = `发现新版本`;
+            updateNotice.style.display = 'inline-block';
+            
+            // 在状态区域也显示通知
+            showStatus(`TOTP助手有新版本可用，点击右上角更新按钮了解详情`, false);
+        }
+    }
+    
+    // 比较版本号
+    function isNewerVersion(latest, current) {
+        const latestParts = latest.split('.').map(Number);
+        const currentParts = current.split('.').map(Number);
+        
+        for (let i = 0; i < Math.max(latestParts.length, currentParts.length); i++) {
+            const latestPart = latestParts[i] || 0;
+            const currentPart = currentParts[i] || 0;
+            
+            if (latestPart > currentPart) {
+                return true;
+            } else if (latestPart < currentPart) {
+                return false;
+            }
+        }
+        
+        return false; // 版本相同
+    }
+    
+    // 显示更新通知
+    function showUpdateNotice(newVersion) {
+        const updateNotice = document.getElementById('updateNotice');
+        if (updateNotice) {
+            updateNotice.textContent = `发现新版本 v${newVersion}`;
+            updateNotice.style.display = 'inline-block';
+            
+            // 在状态区域也显示通知
+            showStatus(`TOTP助手有新版本 v${newVersion} 可用，点击右上角更新按钮了解详情`, false);
+            
+            // 存储新版本信息
+            chrome.storage.sync.set({ 'latestVersion': newVersion });
+        }
+    }
 });
 
 // 保存API配置
@@ -1410,4 +1506,67 @@ async function updateSitesList(updatedSites) {
         showStatus(`更新站点列表失败: ${error.message}`, true);
         return false;
     }
+}
+
+// 添加直接从URL获取图标的功能
+function fetchAndSetIconFromUrl(url) {
+    if (!url) return;
+    
+    // 显示加载状态
+    const fetchButton = document.getElementById('fetchIconButton');
+    const originalText = fetchButton.textContent;
+    fetchButton.textContent = '获取中...';
+    fetchButton.disabled = true;
+    
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+    
+    img.onload = function() {
+        try {
+            // 创建canvas来调整和压缩图像
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // 设置画布大小为32x32（最佳图标尺寸）
+            canvas.width = 32;
+            canvas.height = 32;
+            
+            // 绘制并调整图像大小
+            ctx.drawImage(img, 0, 0, 32, 32);
+            
+            // 转换为base64
+            const base64 = canvas.toDataURL('image/png');
+            
+            // 更新预览
+            const iconPreview = document.getElementById('iconPreview');
+            iconPreview.innerHTML = '';
+            const iconImg = document.createElement('img');
+            iconImg.src = base64;
+            iconPreview.appendChild(iconImg);
+            
+            // 显示移除按钮
+            document.getElementById('removeIconButton').style.display = 'inline-block';
+            
+            // 存储base64图标
+            currentIconDataUrl = base64;
+            
+            showStatus('图标已成功获取并压缩', false);
+        } catch (error) {
+            console.error('处理图标时出错:', error);
+            showStatus('处理图标时出错: ' + error.message, true);
+        } finally {
+            // 恢复按钮状态
+            fetchButton.textContent = originalText;
+            fetchButton.disabled = false;
+        }
+    };
+    
+    img.onerror = function() {
+        console.error('无法加载图标URL:', url);
+        showStatus('无法加载图标，请检查URL是否有效', true);
+        fetchButton.textContent = originalText;
+        fetchButton.disabled = false;
+    };
+    
+    img.src = url;
 }

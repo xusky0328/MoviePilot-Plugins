@@ -10,6 +10,7 @@
       margin: 0 auto;
       padding: 20px;
       font-family: system-ui, -apple-system, sans-serif;
+      background-color: #f5f5f5;
     }
     
     .container {
@@ -17,6 +18,46 @@
       padding: 20px;
       border-radius: 8px;
       box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      position: relative;
+    }
+    
+    .version-info {
+      position: absolute;
+      top: 10px;
+      right: 20px;
+      font-size: 12px;
+      color: #666;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .version-badge {
+      background-color: #e3f2fd;
+      padding: 2px 8px;
+      border-radius: 10px;
+      color: #0d47a1;
+      transition: background-color 0.2s;
+    }
+    
+    .version-badge:hover {
+      background-color: #bbdefb;
+      cursor: pointer;
+    }
+    
+    .update-available {
+      background-color: #ffab91;
+      color: #d84315;
+      padding: 2px 8px;
+      border-radius: 10px;
+      cursor: pointer;
+      animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+      0% { opacity: 0.7; }
+      50% { opacity: 1; }
+      100% { opacity: 0.7; }
     }
     
     h1, h2 {
@@ -27,6 +68,18 @@
     h2 {
       font-size: 18px;
       margin: 30px 0 15px;
+      display: flex;
+      align-items: center;
+    }
+    
+    h2 .badge {
+      margin-left: 10px;
+      font-size: 12px;
+      background: #e3f2fd;
+      padding: 2px 8px;
+      border-radius: 10px;
+      color: #0d47a1;
+      font-weight: normal;
     }
     
     .form-group {
@@ -77,14 +130,6 @@
       color: white;
     }
     
-    .delete-btn {
-      background-color: #f44336;
-      color: white;
-      padding: 4px 8px;
-      font-size: 12px;
-      margin-left: 8px;
-    }
-    
     .status {
       margin-top: 15px;
       padding: 10px;
@@ -116,111 +161,173 @@
       border-left: 4px solid #ffc107;
     }
     
-    /* 站点列表样式 */
-    .sites-list {
-      list-style-type: none;
-      padding: 0;
-      margin: 0;
-      max-height: 300px;
-      overflow-y: auto;
+    /* 站点列表样式 - 优化为紧凑的卡片布局 */
+    .sites-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+      gap: 12px;
+      margin-top: 15px;
     }
     
-    .site-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 10px;
-      border-bottom: 1px solid #eee;
-      margin-bottom: 8px;
-    }
-    
-    .site-info {
-      flex: 1;
-    }
-    
-    .site-name {
-      font-weight: bold;
-      margin-bottom: 4px;
-    }
-    
-    .site-secret {
-      font-family: monospace;
-      color: #666;
-      margin-bottom: 4px;
-    }
-    
-    .site-urls {
-      font-size: 12px;
-      color: #666;
-    }
-    
-    .site-controls {
-      margin-left: 10px;
-    }
-    
-    .card {
-      padding: 15px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      margin-bottom: 10px;
+    .site-card {
+      background: #ffffff;
+      border-radius: 6px;
+      padding: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.12);
       position: relative;
+      border: 1px solid #e0e0e0;
+      transition: all 0.2s ease;
+      cursor: move; /* 显示可拖动的光标 */
     }
     
-    .card h3 {
-      margin-top: 0;
-      color: #333;
+    .site-card:hover {
+      box-shadow: 0 3px 6px rgba(0,0,0,0.16);
+      transform: translateY(-2px);
     }
     
-    .card.dragging {
+    .site-card.dragging {
       opacity: 0.5;
-      border: 2px dashed #1976d2;
-    }
-    
-    .card:hover {
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      border: 1px dashed #1976d2;
     }
     
     .drag-handle {
       cursor: move;
-      user-select: none;
-    }
-    
-    .sort-container {
+      color: #666;
+      font-size: 16px;
       display: flex;
       align-items: center;
-      justify-content: flex-end;
-      margin-bottom: 15px;
     }
     
-    .drag-sort-info {
-      background-color: #e3f2fd;
-      border-left: 4px solid #2196f3;
-      padding: 8px 12px;
-      margin-bottom: 15px;
-      font-size: 14px;
-      color: #0d47a1;
+    /* 拖拽过程中的样式 */
+    .site-card[draggable="true"]:hover {
+      cursor: grab;
     }
     
-    .site-count-info {
-      margin-bottom: 15px;
-      background-color: #e0f2f1;
-      padding: 10px;
+    .site-card[draggable="true"]:active {
+      cursor: grabbing;
+    }
+    
+    .site-header {
+      display: flex;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    
+    .site-icon-sm {
+      width: 24px;
+      height: 24px;
       border-radius: 4px;
-      text-align: center;
+      margin-right: 8px;
+      background: #f0f0f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    
+    .site-icon-sm img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+    
+    .site-name-sm {
+      font-weight: bold;
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    
+    .site-secret-sm {
+      font-family: monospace;
+      font-size: 12px;
+      color: #666;
+      background: #f5f5f5;
+      padding: 4px;
+      border-radius: 3px;
+      margin-bottom: 6px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    
+    .site-urls-sm {
+      font-size: 11px;
+      color: #666;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    
+    .site-actions {
+      display: flex;
+      gap: 5px;
+      margin-top: 8px;
+    }
+    
+    .site-actions button {
+      padding: 4px 8px;
+      font-size: 11px;
+      flex: 1;
+    }
+    
+    .icon-group {
+      display: flex;
+      gap: 10px;
+      margin-top: 5px;
+      flex-wrap: wrap;
+    }
+    
+    .icon-method {
+      flex: 1;
+      min-width: 200px;
     }
     
     .export-import-section {
       margin-top: 20px;
-      padding-top: 15px;
+      padding: 15px;
       border-top: 1px solid #eee;
+      background-color: #f8f9fa;
+      border-radius: 6px;
     }
     
-    /* 图标相关样式 */
+    .backup-tip {
+      margin-top: 10px;
+      padding: 10px;
+      background-color: #e8f5e9;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+    
+    .backup-tip ul {
+      margin: 5px 0 0 20px;
+      padding: 0;
+    }
+    
+    .footer {
+      margin-top: 30px;
+      text-align: center;
+      padding-top: 15px;
+      border-top: 1px solid #eee;
+      font-size: 12px;
+      color: #666;
+    }
+    
+    .footer a {
+      color: #1976d2;
+      text-decoration: none;
+    }
+    
+    .footer a:hover {
+      text-decoration: underline;
+    }
+    
     .icon-upload {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 10px;
       margin-top: 5px;
+      flex-direction: column;
     }
     
     .icon-preview {
@@ -241,49 +348,21 @@
       object-fit: contain;
     }
     
-    .btn-secondary {
-      background-color: #e0e0e0;
-      color: #333;
-      border: none;
-      border-radius: 4px;
-      padding: 6px 12px;
-      font-size: 12px;
-      cursor: pointer;
-    }
-    
-    .btn-secondary:hover {
-      background-color: #d0d0d0;
-    }
-    
-    .site-icon {
-      width: 24px;
-      height: 24px;
-      border-radius: 4px;
-      object-fit: contain;
-    }
-    
-    .footer {
-      margin-top: 30px;
-      text-align: center;
-      padding-top: 15px;
-      border-top: 1px solid #eee;
-      font-size: 12px;
-      color: #666;
-    }
-    
-    .footer a {
-      color: #1976d2;
-      text-decoration: none;
-    }
-    
-    .footer a:hover {
-      text-decoration: underline;
+    .icon-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>MP TOTP助手设置</h1>
+    
+    <div class="version-info">
+      <span class="version-badge" id="currentVersion">v1.0.0</span>
+      <span class="update-available" id="updateNotice" style="display:none">发现新版本</span>
+    </div>
     
     <div class="important-note">
       <strong>重要说明：</strong> 请确保输入正确的API密钥。API密钥需要与MP服务器上的API_TOKEN相匹配，否则会出现认证失败的错误。
@@ -310,13 +389,13 @@
       <button id="clearSettings">清除设置</button>
     </div>
     
-    <h2>已配置站点</h2>
-    <div id="sitesList">
+    <h2>已配置站点 <span class="badge" id="sitesCount">0个站点</span></h2>
+    <div id="sitesList" class="sites-container">
       <!-- 站点列表将通过JavaScript动态添加 -->
       <div class="help-text">连接服务器后，站点列表将显示在这里</div>
     </div>
     
-    <h2>添加站点</h2>
+    <h2 id="siteSectionTitle">添加/编辑站点</h2>
     <div class="form-group">
       <label for="siteName">站点名称</label>
       <input type="text" id="siteName" placeholder="例如: Google">
@@ -330,20 +409,29 @@
     
     <div class="form-group">
       <label for="urls">站点URL（每行一个）</label>
-      <textarea id="urls" rows="3" placeholder="例如: https://accounts.google.com"></textarea>
+      <textarea id="urls" rows="2" placeholder="例如: https://accounts.google.com"></textarea>
       <div class="help-text">输入与此验证码关联的网站URL，每行一个</div>
     </div>
     
     <div class="form-group">
       <label for="siteIcon">站点图标</label>
-      <div class="icon-upload">
-        <div id="iconPreview" class="icon-preview"></div>
-        <input type="file" id="iconFile" accept="image/*" style="display: none;">
-        <button id="selectIconButton" class="btn-secondary">选择图标</button>
-        <button id="autoFetchIconButton" class="btn-secondary">自动获取</button>
-        <button id="removeIconButton" class="btn-secondary" style="display: none;">移除图标</button>
+      <div class="icon-group">
+        <div class="icon-method">
+          <div class="icon-upload">
+            <div class="icon-row">
+              <div id="iconPreview" class="icon-preview"></div>
+              <input type="file" id="iconFile" accept="image/*" style="display: none;">
+              <button id="selectIconButton" class="btn-secondary">选择图标</button>
+              <button id="removeIconButton" class="btn-secondary" style="display: none;">移除</button>
+            </div>
+          </div>
+        </div>
+        <div class="icon-method">
+          <input type="text" id="iconUrl" placeholder="输入图标URL地址">
+          <button id="fetchIconButton" class="btn-secondary" style="margin-top: 5px;">获取图标</button>
+        </div>
       </div>
-      <div class="help-text">上传站点图标或根据URL自动获取图标（可选）。推荐尺寸：32x32px</div>
+      <div class="help-text">上传图标、输入图标URL，或根据站点URL自动获取图标。图标将自动压缩转换为base64格式。</div>
     </div>
     
     <div class="button-group">
@@ -357,10 +445,19 @@
         <button id="importConfig">导入配置</button>
         <input type="file" id="importFile" style="display: none;" accept=".json">
       </div>
+      
+      <div class="backup-tip">
+        <strong>重要提示：</strong> 
+        <ul>
+          <li>请定期备份您的TOTP配置，防止数据丢失</li>
+          <li>建议同时在其他TOTP验证器App中设置相同密钥(Authy/Google Authenticator等)</li>
+          <li>相同的TOTP密钥在不同的验证器中会生成完全相同的验证码</li>
+        </ul>
+      </div>
     </div>
     
     <div class="footer">
-      <p>MP TOTP助手 © 2023-2024 <a href="https://github.com/madrays" target="_blank">madrays</a> | <a href="https://cocohe.cn" target="_blank">博客</a></p>
+      <p>MP TOTP助手 © 2025 <a href="https://github.com/madrays" target="_blank">madrays</a> | <a href="https://cocohe.cn" target="_blank">博客</a></p>
       <p>简化您的二步验证体验，快速安全地获取TOTP验证码</p>
     </div>
   </div>

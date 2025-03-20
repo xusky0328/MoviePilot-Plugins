@@ -9,6 +9,7 @@ import threading
 import pyotp
 from typing import Any, List, Dict, Tuple, Optional
 import requests
+import urllib.parse
 
 from app.core.config import settings
 from app.plugins import _PluginBase
@@ -24,7 +25,7 @@ class twofahelper(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/2fa.png"
     # 插件版本
-    plugin_version = "1.2.1"
+    plugin_version = "1.2.2"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -87,7 +88,7 @@ class twofahelper(_PluginBase):
         github_icon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAABRFJREFUWEetl11sU2UYx//POV23sq18jHN61nZYxoQ4EjAqEC+UmZgI8TN6YaIRMV44MGpiYtAYZYgYNcavIBIuMH7EG2JiiIqJJMwYNAN3IcYNdcIYpT09ZRvpVmR07V9O6Zbu9HTdZOeiF32fj9/zvM/zvs8rmOHX2trqHT5//g4C94FsBRCkSNBWFzIGIAaRHgEOLly8+EhPT8/lmZiWSkIRTTMuiWwn+QgAfyX5wnpKRL6sIXf0J5PmdDplAVpaWqpHU6mXATxPsnaGjqeIiUj6CvS7dX7/rr6+vjE3G64Ahai/Jrnu/zh26ohIVw35gFs2SgDCur5qnPyWQHgunE/YECDqEbk7alkniu1OAchHDhyfa+fFEDXAmuJMTAIU9vzH4rQL0AvgBETuJNkwy4xcEOAHAMsI3DQJIdJV5/evn6iJSQBD118j+UqxE0Xkqbhl7Wtra/P09vZuArkLpAGRUQCnhRwGQIosBHkdgPkiMgRy+yJN22e3YqOuP5gjv5qSdpGdpmW9mm9h+6dQdH3OahdVXWua5vEJ5VZNqxtS1SXt7e0nOzo6csVGSUo4HL5eVdXkwMCADZb/AoHAUuRypxwA6Rqyxd6KPICh6x+TbHemWPF4bonH492zTP0U8WAwuCSbyZxx6Yy9pmVtEfuEG0wmk26HjCKyKW5Zn18LgGEYG5nNfudiI9WgaZo06vpdOfJ7F8K0qOrKeDxeQj8boFAo1JDNZE6SXFySYZENYuj6RyS3ugBsMy3r7dk4KydraNoTBPa7+NgjhqYdIdDmXKyqrl4ejUb/nguASCSy4N90erIwi86FThvgTwLLnVUaTyTqRYRzAVAo9DMkl0zxA/wlAV0fAVnnADhtWlbzXDnPA2jaMQJrptgUGbVrIE1ynsPZSCKZnOnVOyNOQ9dPkVzqCPSiDVCSmryQogQSiYQ1I+sVhCKRSM2lixcvkKx2AJyxAbpIrnVpkcfilvXFXABM0+pd0qhpH+SAZ0taBDget6x1c1GIhq4fIrmhJEjgQ/sgKrksJttE5AXTst65liwYmraZwCduNhSRh2TFihX1F4aGzgGodxGiiLweamra2d3dnZkNSEdHh7J3zx57nHsTgOqiO9IABCcuo90kn84LibynivyaJbeBXJX/CzgLkf0KcFTxeruj0eiQG0xzc/P8dDp9swLcmiM3g2wpBy2KsttMJJ7JA4Q1rWVc5A+SXgGGFZGHF5C/DIr8BPJGR+8e3bJ16+3O67jQ666nakl9iYxVASvPWtY/xQPJDpL5IeHKJJzyeL0rRcQ3fvnyz8UXiaoo98cSiYNukRmG0cZs9kilrRKRHaZldRSye1XcHslGUqljRWnfbyaTTxaGlUdJNikiPbV+/6flRuxwOLwoMzY2OC2AyIl6v39tyUhmKwWDwaZsJtMFoBFAVlT1XtM0D1WKqHg9oGl2sXrK6MTVqqp1sVjs7GSnOQVDur56nLSdXoUQOQzgsAAjBAK3rV+/68CBA9lyUAFNGy9T9XGPyMZzlvVbsa7rwyQUCoXHM5lvQK52OmrQtOrp3n0BTbPhFEfh/q56PPfEYrGBkoIsF0lhTH8JwIvFZ7ivttbX399/aZoM2MNqPjARsR+ob9XMm/dGOZ2Kj9MmXV+WEXmOudzjEFFuaG1d2NnZaafZ9TN0fZCA3c6febze9ysNNRUBJrzYI/moz1dVPHK7Edjb5/P5Un19famZFO9/2SAgrr8DEI4AAAAASUVORK5CYII="
         
         # 微软图标的Base64编码 - 确保背景为白色
-        microsoft_icon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAAAXNSR0IArs4c6QAAAnpJREFUeF7t3W1RxDAYReHUADNYQBEC8IIZBPAXxGCBGQwsw0e22d06OA8Okl7y3nNSyvb1+HAasZ+714/taMnP7yO3F5sA7FEQgMhJ4ATYH7QTYAm9E8AJoAMUMmAEGAEo4D8DOoAOwAPMDCiBhQIwxtABdAAdQAe4Pe6MACOAByhkQAfQAXQAHUAH+NkBIogIIoKIoELzW9aoBCqBSqASqAQqgVcZYAIjXUAH0AF0AB1AB9ABdAAmcM2AEqgEug4uZAAFoAAUgAJQAApAASgABfhAxDkDMLCAAP4w5OIpeyXMK2FeCfNKWOTon8skgoggIogIIoKIICKICCKCiCAiKAYBvhCyPHAiiAgigoig2AwggoggIogIIoKIICKICCKCiCAiKAYBRBAR5J9GzQwwgUwgE8gExkoAE8gEMoFMIBPIBDKBTGDeBMb6n+Ve7cBhGbJLnR0QgM6zPlypAAhAfAfiy3cC5APw8pn7Nt54uj8M/ult5PZiGwJwPgMEoHIcOgHOT9oJsITeCeAE0AESGTACjICjoBsBiV//MWDg8kYQDNw3wwngBFACExlQApVAJfBvB4ggIshl0MyAEpgoADBwfcxGgBFgBBgBlaN/rhMGwkAYCANvMoACKqPACDACjAAjwAiggi8zoAPoAK6DExlQApVAJVAJVAKVQCXQbaDbQLeBbgMT1X9ZJApAASgABaAAFIACUAAKQAEoAAX87oDbwEoQYCAMhIEwEAbCQBgIA2EgDISBlfY/14kCUAAKQAEoAAWgABSAAlAACkABLoNSGYCBMBAGwkAYCANhIAyEgTAQBqYQwKdi18dtBBgBRoARYARkTeA3l4PYkqt6qqEAAAAASUVORK5CYII="
+        microsoft_icon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAAAXNSR0IArs4c6QAAAnpJREFUeF7t3W1RxDAYReHUADNYQBEC8IIZBPAXxGCBGQwsw0e22d06OA8Okl7y3nNSyvb1+HAasZ+714/taMnP7yO3F5sA7FEQgMhJ4ATYH7QTYAm9E8AJoAMUMmAEGAEo4D8DOoAOwAPMDCiBhQIwxtABdAAdQAe4Pe6MACOAByhkQAfQAXQAHUAH+NkBIogIIoKIoELzW9aoBCqBSqASqAQqgVcZYAIjXUAH0AF0AB1AB9ABdAAmcM2AEqgEug4uZAAFoAAUgAJQAApAASgABfhAxDkDMLCAAP4w5OIpeyXMK2FeCfNKWOTon8skgoggIogIIoKIICKICCKCiCAiKAYBvhCyPHAiiAgigoig2AwggoggIogIIoKIICKICCKCiCAiKAYBRBAR5J9GzQwwgUwgE8gExkoAE8gEMoFMIBPIBDKBTGDeBMb6n+Ve7cBhGbJLnR0QgM6zPlypAAhAfAfiy3cC5APw8pn7Nt54uj8M/ult5PZiGwJwPgMEoHIcOgHOT9oJsITeCeAE0AESGTACjICjoBsBiV//MWDg8kYQDNw3wwngBFACExlQApVAJfBvB4ggIshl0MyAEpgoADBwfcxGgBFgBBgBlaN/rhMGwkAYCANvMoACKqPACDACjAAjwAiggi8zoAPoAK6DExlQApVAJVAKVQCXQbaDbQLeBbgMT1X9ZJApAASgABaAAFIACUAAKQAEoAAX87oDbwEoQYCAMhIEwEAbCQBgIA2EgDISBlfY/14kCUAAKQAEoAAWgABSAAlAACkABLoNSGYCBMBAGwkAYCANhIAyEgTAQBqYQwKdi18dtBBgBRoARYARkTeA3l4PYkqt6qqEAAAAASUVORK5CYII="
         
         # 生成有效的Base32密钥
         # Base32字符集只包含A-Z和2-7
@@ -119,7 +120,7 @@ class twofahelper(_PluginBase):
         }
         
         return default_sites
-    
+            
     def _sync_from_file(self):
         """
         从配置文件同步到内存 - 精简版，移除多余日志
@@ -265,8 +266,9 @@ class twofahelper(_PluginBase):
             color = colors[color_index % len(colors)]
             color_index += 1
             
-            # 获取站点图标
-            favicon_info = self._get_favicon_url(urls, site)
+            # 获取站点图标信息 - 优先使用配置中的图标
+            site_data = self._sites.get(site, {})
+            favicon_info = self._get_favicon_url(urls, site, site_data)
             
             # 为每个站点创建一个卡片，保证内容完整显示
             card = {
@@ -285,7 +287,7 @@ class twofahelper(_PluginBase):
                             "class": "mx-auto",
                             "elevation": 1,
                             "height": "160px",  # 增加高度确保显示完整
-                            "variant": "outlined"
+                        "variant": "outlined"
                         },
                         "content": [
                             {
@@ -329,6 +331,18 @@ class twofahelper(_PluginBase):
                                                           
                                                           const container = document.currentScript.parentNode;
                                                           container.removeChild(document.currentScript);
+                                                          
+                                                          // 首先尝试base64图标
+                                                          const base64Icon = "{favicon_info.get('base64', '')}";
+                                                          if (base64Icon) {{
+                                                            const img = new Image();
+                                                            img.style.width = '100%';
+                                                            img.style.height = '100%';
+                                                            img.src = base64Icon;
+                                                            container.innerHTML = '';
+                                                            container.appendChild(img);
+                                                            return;
+                                                          }}
                                                           
                                                           // 尝试 favicon.ico
                                                           loadImage("{favicon_info.get('ico', '')}", (img, success) => {{
@@ -520,58 +534,79 @@ class twofahelper(_PluginBase):
         
         return col_config, global_config, elements
 
-    def _get_favicon_url(self, urls, site_name):
+    def _get_favicon_url(self, urls: List[str], site_name: str, site_data: dict = None) -> dict:
         """
-        从站点URL获取网站图标，使用三重获取机制
+        获取站点的图标URL
         
-        :param urls: 站点URL列表
-        :param site_name: 站点名称
-        :return: 图标URL或图标选项
-        """
-        # 默认图标 - 使用站点名称首字母替代
-        default_icon = ""
-        
-        if not urls or not isinstance(urls, list) or len(urls) == 0:
-            return default_icon
-        
-        try:
-            # 获取第一个URL
-            url = urls[0]
+        参数:
+            urls: 站点URL列表
+            site_name: 站点名称
+            site_data: 站点配置数据，可能包含base64编码的图标
             
-            # 解析域名
-            from urllib.parse import urlparse
-            parsed_url = urlparse(url)
+        返回:
+            包含各种图标URL的字典
+        """
+        if not urls:
+            return {
+                'ico': '',
+                'png': '',
+                'google': '',
+                'ddg': '',
+                'base64': ''
+            }
+        
+        # 首先检查是否在配置中有base64图标
+        base64_icon = ''
+        if site_data and isinstance(site_data, dict) and site_data.get("icon"):
+            base64_icon = site_data.get("icon")
+            # 确保base64图标有正确前缀
+            if base64_icon and not base64_icon.startswith('data:image'):
+                base64_icon = f'data:image/png;base64,{base64_icon}'
+        
+        # 获取第一个URL，用于其他图标服务
+        url = urls[0] if urls else ""
+        
+        # 处理URL，确保包含协议前缀
+        if url and not url.startswith(('http://', 'https://')):
+            url = f"https://{url}"
+            
+        try:
+            # 解析URL以提取域名
+            parsed_url = urllib.parse.urlparse(url)
             domain = parsed_url.netloc
             
+            # 如果域名为空（可能URL格式不正确），则使用原始URL
             if not domain:
-                return default_icon
+                domain = url
+                
+            # 去除www前缀
+            if domain.startswith('www.'):
+                domain = domain[4:]
+                
+            # 构建favicon URL
+            favicon_ico = f"{parsed_url.scheme}://{domain}/favicon.ico" if parsed_url.scheme else f"https://{domain}/favicon.ico"
+            favicon_png = f"{parsed_url.scheme}://{domain}/favicon.png" if parsed_url.scheme else f"https://{domain}/favicon.png"
             
-            # 方法1: 直接尝试网站的favicon.ico
-            favicon_ico = f"https://{domain}/favicon.ico"
-            
-            # 方法2: 尝试favicon.png
-            favicon_png = f"https://{domain}/favicon.png"
-            
-            # 方法3: 使用Google的favicon服务获取图标
-            google_favicon = f"https://www.google.com/s2/favicons?domain={domain}&sz=64"
-            
-            # 方法4: 使用DuckDuckGo的图标服务
+            # 使用Google和DuckDuckGo的favicon服务
+            google_favicon = f"https://www.google.com/s2/favicons?domain={domain}&sz=32"
             ddg_favicon = f"https://icons.duckduckgo.com/ip3/{domain}.ico"
             
-            # 返回所有可能的图标URL，让前端按顺序尝试
             return {
-                "ico": favicon_ico,
-                "png": favicon_png,
-                "google": google_favicon,
-                "ddg": ddg_favicon,
-                "domain": domain,
-                "site_name": site_name,
-                "first_letter": site_name[0].upper() if site_name else "?"
+                'ico': favicon_ico,
+                'png': favicon_png,
+                'google': google_favicon,
+                'ddg': ddg_favicon,
+                'base64': base64_icon
             }
-            
         except Exception as e:
-            # 出错时返回空字符串
-            return default_icon
+            logger.error(f"解析站点 {site_name} 的URL出错: {e}")
+            return {
+                'ico': '',
+                'png': '',
+                'google': '',
+                'ddg': '',
+                'base64': base64_icon  # 仍然保留base64图标，如果有的话
+            }
 
     def get_api(self) -> List[Dict[str, Any]]:
         """
@@ -622,7 +657,7 @@ class twofahelper(_PluginBase):
         """
         if apikey != settings.API_TOKEN:
             return Response(success=False, message="API令牌错误!")
-            
+        
         try:
             # 更新内存中的配置
             self._sites = request
@@ -630,7 +665,7 @@ class twofahelper(_PluginBase):
             # 写入配置文件
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(request, f, ensure_ascii=False, indent=2)
-                
+            
             return Response(success=True, message="更新成功")
         except Exception as e:
             logger.error(f"更新配置文件失败: {str(e)}")
@@ -702,8 +737,8 @@ class twofahelper(_PluginBase):
                                             'variant': 'tonal',
                                             'density': 'compact'
                                         },
-                                        'content': [
-                                            {
+                        'content': [
+                            {
                                                 'component': 'div',
                                                 'text': f'两步验证助手 - 共 {sites_count} 个站点'
                                             },
@@ -737,7 +772,7 @@ class twofahelper(_PluginBase):
                                                             {
                                                                 'component': 'a',
                                                                 'props': {
-                                                                    'href': 'https://github.com/madrays/MoviePilot-Plugins/raw/main/TOTP-Extension.zip',
+                                                                    'href': 'https://github.com/madrays/MoviePilot-Plugins/releases',
                                                                     'target': '_blank',
                                                                     'class': 'text-decoration-none mr-3 mb-1',
                                                                     'style': 'color: #1976d2; display: inline-flex; align-items: center;'
@@ -1131,14 +1166,17 @@ class twofahelper(_PluginBase):
                 # 使用计数器值生成验证码
                 now_code = totp.generate_otp(counter)  # 直接使用计数器生成验证码
                 
-                # 保存验证码到临时字典中
-                verification_codes[site] = {
-                    "code": now_code,
-                    "site_name": site,
-                    "urls": data.get("urls", []),
-                    "remaining_seconds": remaining_seconds,
-                    "progress_percent": int(((time_step - remaining_seconds) / time_step) * 100)
-                }
+                # 创建或更新站点的验证码信息
+                if site in verification_codes and 'progress_percent' in verification_codes[site]:
+                    verification_codes[site]["progress_percent"] = int(verification_codes[site]["progress_percent"])  # 转换为整数
+                else:
+                    verification_codes[site] = {
+                        "code": now_code,
+                        "site_name": site,
+                        "urls": data.get("urls", []),
+                        "remaining_seconds": remaining_seconds,
+                        "progress_percent": int(((time_step - remaining_seconds) / time_step) * 100)
+                    }
                 
                 logger.info(f"站点 {site} 生成验证码成功: counter={counter}, remaining={remaining_seconds}s")
                 
@@ -1146,13 +1184,14 @@ class twofahelper(_PluginBase):
                 color = colors[card_index % len(colors)]
                 card_index += 1
                 
-                # 获取站点URL和图标
+                # 获取站点URL和图标信息
                 urls = data.get("urls", [])
                 site_url = ""
                 if urls and isinstance(urls, list) and len(urls) > 0:
                     site_url = urls[0]
                 
-                favicon_info = self._get_favicon_url(urls, site)
+                # 获取站点图标信息 - 优先使用配置中的图标
+                favicon_info = self._get_favicon_url(urls, site, data)
                 
                 # 构建美观卡片，确保验证码完整显示
                 cards.append({
@@ -1207,6 +1246,18 @@ class twofahelper(_PluginBase):
                                                   
                                                   const container = document.currentScript.parentNode;
                                                   container.removeChild(document.currentScript);
+                                                  
+                                                  // 首先尝试base64图标
+                                                  const base64Icon = "{favicon_info.get('base64', '')}";
+                                                  if (base64Icon) {{
+                                                    const img = new Image();
+                                                    img.style.width = '100%';
+                                                    img.style.height = '100%';
+                                                    img.src = base64Icon;
+                                                    container.innerHTML = '';
+                                                    container.appendChild(img);
+                                                    return;
+                                                  }}
                                                   
                                                   // 尝试 favicon.ico
                                                   loadImage("{favicon_info.get('ico', '')}", (img, success) => {{
@@ -1273,22 +1324,16 @@ class twofahelper(_PluginBase):
                                 'props': {
                                     'class': 'text-center py-1 px-2'  # 减小内边距
                                 },
-                                'content': [{
-                                    'component': 'div',
-                                    'props': {
-                                        'class': 'otp-code font-weight-bold',
-                                        'id': f'code-{site}',
-                                        'style': 'white-space: pre; overflow: visible; font-family: monospace; letter-spacing: 2px; font-size: 1.6rem;'  # 增大字体和间距
-                                    },
-                                    'text': now_code
-                                }]
-                            },
-                            {
-                                'component': 'VCardText',
-                                'props': {
-                                    'class': 'py-1 px-2'  # 减小内边距
-                                },
                                 'content': [
+                                    {
+                                        'component': 'div',
+                                        'props': {
+                                            'class': 'otp-code font-weight-bold',
+                                            'id': f'code-{site}',
+                                            'style': 'white-space: pre; overflow: visible; font-family: monospace; letter-spacing: 2px; font-size: 1.6rem;'  # 增大字体和间距
+                                        },
+                                        'text': now_code
+                                    },
                                     {
                                         'component': 'VProgressLinear',
                                         'props': {
@@ -1436,50 +1481,61 @@ class twofahelper(_PluginBase):
         logger.info(f"接收到用户提交的参数: {params}")
         return {"code": 0, "message": "设置已保存"}
 
-    def get_totp_codes(self, apikey: str = None):
+    def get_totp_codes(self) -> Dict:
         """
-        API接口: 获取所有TOTP验证码
+        获取所有TOTP验证码
         """
-        if apikey and apikey != settings.API_TOKEN:
-            return {"code": 2, "message": "API令牌错误!"}
-            
         try:
-            # 确保首先加载最新配置
+            # 验证API密钥
+            api_key = request.args.get("api_key", "")
+            if not api_key or api_key != settings.API_TOKEN:
+                return {"code": 1, "msg": "无效的API密钥"}
+            
+            # 加载最新配置
             self._sync_from_file()
             
-            # 获取验证码列表
-            codes = self.get_all_codes()
+            # 获取所有站点的验证码
+            all_codes = self.get_all_codes()
             
-            # 增强输出内容
-            for site, data in codes.items():
-                # 添加额外信息
-                data["site_name"] = site
-                
-                # 处理图标 - 优先使用配置中的base64图标
-                if "icon" in data and data["icon"] and data["icon"].startswith("data:image"):
-                    # 已经是base64图标，保持不变
-                    pass
-                # 如果没有图标但有URL，尝试获取favicon
-                elif "urls" in data and data["urls"]:
-                    favicon_info = self._get_favicon_url(data["urls"], site)
-                    if isinstance(favicon_info, dict):
-                        data["favicon_options"] = favicon_info
-                        # 保留原始图标url以保持兼容性
-                        data["icon"] = favicon_info.get("ico", "") 
-                    else:
-                        data["icon"] = favicon_info
-            
-            return {
+            # 准备响应数据
+            result = {
                 "code": 0,
-                "message": "成功",
-                "data": codes
+                "msg": "成功",
+                "data": []
             }
+            
+            for site_name, code_data in all_codes.items():
+                # 获取站点配置和URL
+                site_data = self._sites.get(site_name, {})
+                urls = site_data.get("urls", [])
+                
+                # 获取图标信息
+                favicon_info = self._get_favicon_url(urls, site_name, site_data)
+                
+                # 构建站点数据，添加图标信息
+                site_info = {
+                    "site_name": site_name,
+                    "code": code_data.get("code", ""),
+                    "remaining_seconds": code_data.get("remaining_seconds", 0),
+                    "progress_percent": code_data.get("progress_percent", 0),
+                    "icon": favicon_info.get("base64", "")  # 优先使用base64图标
+                }
+                
+                # 如果没有base64图标，提供其他图标URL选项
+                if not site_info["icon"]:
+                    site_info["favicon_options"] = {
+                        "ico": favicon_info.get("ico", ""),
+                        "png": favicon_info.get("png", ""),
+                        "google": favicon_info.get("google", ""),
+                        "ddg": favicon_info.get("ddg", "")
+                    }
+                
+                result["data"].append(site_info)
+            
+            return result
         except Exception as e:
             logger.error(f"获取TOTP验证码失败: {str(e)}")
-            return {
-                "code": 1,
-                "message": f"获取TOTP验证码失败: {str(e)}"
-            }
+            return {"code": 1, "msg": f"获取TOTP验证码失败: {str(e)}"}
 
     def _get_color_for_site(self, site_name):
         """

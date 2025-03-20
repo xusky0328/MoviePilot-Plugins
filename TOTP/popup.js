@@ -56,40 +56,47 @@ document.addEventListener('DOMContentLoaded', async function () {
         console.log("尝试获取API配置...");
         
         // 首先尝试直接获取新格式的配置
-        chrome.storage.sync.get(['apiBaseUrl', 'apiKey'], (result) => {
-          console.log("尝试读取apiBaseUrl和apiKey结果:", result);
+        chrome.storage.sync.get(['apiBaseUrl', 'apiKey', 'apiConfig', 'sites'], (result) => {
+          console.log("尝试读取配置结果:", result);
           
           if (result.apiBaseUrl && result.apiKey) {
             const config = {
               baseUrl: result.apiBaseUrl,
               apiKey: result.apiKey
             };
+            
+            // 如果有站点配置，也一起保存
+            if (result.sites) {
+              config.sites = result.sites;
+            }
+            
             console.log("找到新格式配置:", config);
             resolve(config);
-          } else {
+          } else if (result.apiConfig && result.apiConfig.baseUrl && result.apiConfig.apiKey) {
             // 尝试从apiConfig对象中获取
-            chrome.storage.sync.get(['apiConfig'], (result) => {
-              console.log("尝试读取apiConfig结果:", result);
-              
-              if (result.apiConfig && result.apiConfig.baseUrl && result.apiConfig.apiKey) {
-                const config = {
-                  baseUrl: result.apiConfig.baseUrl,
-                  apiKey: result.apiConfig.apiKey
-                };
-                console.log("找到旧格式配置:", config);
-                
-                // 保存为新格式以便将来使用
-                chrome.storage.sync.set({
-                  apiBaseUrl: config.baseUrl,
-                  apiKey: config.apiKey
-                });
-                
-                resolve(config);
-              } else {
-                console.log("没有找到有效的API配置");
-                resolve(null);
-              }
+            const config = {
+              baseUrl: result.apiConfig.baseUrl,
+              apiKey: result.apiConfig.apiKey
+            };
+            
+            // 如果apiConfig中包含站点信息，也一起保存
+            if (result.apiConfig.sites) {
+              config.sites = result.apiConfig.sites;
+            }
+            
+            console.log("找到旧格式配置:", config);
+            
+            // 保存为新格式以便将来使用
+            chrome.storage.sync.set({
+              apiBaseUrl: config.baseUrl,
+              apiKey: config.apiKey,
+              sites: config.sites
             });
+            
+            resolve(config);
+          } else {
+            console.log("没有找到有效的API配置");
+            resolve(null);
           }
         });
       });
@@ -110,19 +117,8 @@ document.addEventListener('DOMContentLoaded', async function () {
         const siteIcon = document.createElement('div');
         siteIcon.className = 'site-icon';
         
-        // 使用首字母作为初始占位图标
-        const letter = siteName.charAt(0).toUpperCase();
-        siteIcon.textContent = letter;
-        siteIcon.style.backgroundColor = '#ffffff'; // 白色背景
-        siteIcon.style.color = '#757575'; // 灰色文字，适合白色背景
-        
-        // 尝试从URL获取图标
-        if (data.urls && Array.isArray(data.urls) && data.urls.length > 0) {
-          fetchSiteIcon(data.urls[0], siteIcon);
-        }
-        // 如果数据中有base64图标，直接显示
-        else if (data.icon && data.icon.startsWith('data:image')) {
-          // 直接使用base64图标
+        // 优先使用配置中的base64图标
+        if (data.icon && data.icon.startsWith('data:image')) {
           siteIcon.innerHTML = '';
           const iconImg = document.createElement('img');
           iconImg.src = data.icon;
@@ -130,6 +126,10 @@ document.addEventListener('DOMContentLoaded', async function () {
           iconImg.style.width = '100%';
           iconImg.style.height = '100%';
           siteIcon.appendChild(iconImg);
+        } else {
+          // 如果没有base64图标，使用首字母作为占位
+          const letter = siteName.charAt(0).toUpperCase();
+          siteIcon.textContent = letter;
         }
         
         siteRow.appendChild(siteIcon);
@@ -392,66 +392,99 @@ document.addEventListener('DOMContentLoaded', async function () {
       }
     }
     
-    // 获取验证码数据 - 直接从API获取，不依赖后台页面
-    async function fetchTOTPCodes() {
+    // 加载TOTP验证码
+    async function loadTOTPCodes() {
       try {
-        // 获取API配置
+        // 获取配置
         const config = await getApiConfig();
+        
+        // 检查配置是否有效
         if (!config || !config.baseUrl || !config.apiKey) {
-          throw new Error('未配置API连接信息');
+          console.log('未找到有效的API配置');
+          showConfigPrompt();
+          return;
         }
         
-        console.log('正在获取验证码...');
-        console.log('使用配置:', config);
+        console.log('开始获取验证码和站点信息...');
         
-        // 从API获取验证码
+        // 先获取站点配置（包含图标）
+        let sites = {};
+        
+        // 如果配置中已有站点信息，优先使用
+        if (config.sites) {
+          console.log('使用缓存的站点配置');
+          sites = config.sites;
+        } else {
+          // 否则从API获取站点配置
+          try {
+            console.log('从API获取站点配置');
+            const configResponse = await fetch(`${config.baseUrl}/api/v1/plugin/twofahelper/config?apikey=${config.apiKey}`);
+            if (configResponse.ok) {
+              const configData = await configResponse.json();
+              if (configData && configData.data) {
+                sites = configData.data;
+                // 缓存站点配置
+                chrome.storage.sync.set({ sites: sites });
+              }
+            } else {
+              console.warn('获取站点配置失败:', configResponse.status);
+            }
+          } catch (configError) {
+            console.error('获取站点配置出错:', configError);
+          }
+        }
+        
+        console.log('获取到站点配置:', sites);
+        
+        // 获取验证码
         const response = await fetch(`${config.baseUrl}/api/v1/plugin/twofahelper/get_codes?apikey=${config.apiKey}`);
         if (!response.ok) {
           throw new Error(`服务器返回错误 (${response.status}): ${response.statusText}`);
         }
         
         const data = await response.json();
-        const codesData = data.data || data;
+        console.log("验证码数据:", data);
         
-        // 验证返回数据
-        if (!codesData || typeof codesData !== 'object') {
+        if (!data || !data.data) {
           throw new Error('无效的验证码数据');
         }
         
-        return codesData;
-      } catch (error) {
-        console.error('获取验证码失败:', error);
-        throw error;
-      }
-    }
-    
-    // 刷新验证码
-    async function refreshTOTPCodes() {
-      try {
-        console.log('开始刷新验证码...');
-        
-        // 获取配置
-        const config = await getApiConfig();
-        
-        if (!config || !config.baseUrl || !config.apiKey) {
-          console.log('未找到API配置，显示配置提示');
-          showConfigPrompt();
-          return;
-        }
-        
-        console.log('找到API配置:', config);
-        
-        // 获取验证码
-        const codesData = await fetchTOTPCodes();
-        console.log('获取到验证码数据:', Object.keys(codesData).length, '个站点');
-        
-        // 清空容器并创建新卡片
+        // 清空容器
         if (codeContainer) {
           codeContainer.innerHTML = '';
           
           // 创建验证码卡片
-          for (const [siteName, data] of Object.entries(codesData)) {
-            createCodeCard(codeContainer, siteName, data);
+          const codesData = data.data;
+          
+          // 对象格式处理
+          if (!Array.isArray(codesData) && typeof codesData === 'object') {
+            console.log('处理对象格式的验证码数据');
+            for (const [siteName, codeData] of Object.entries(codesData)) {
+              // 合并验证码数据和站点配置
+              const siteConfig = sites[siteName] || {};
+              const mergedData = {
+                ...codeData,
+                icon: siteConfig.icon || codeData.icon
+              };
+              
+              createCodeCard(codeContainer, siteName, mergedData);
+            }
+          } 
+          // 数组格式处理
+          else if (Array.isArray(codesData)) {
+            console.log('处理数组格式的验证码数据');
+            for (const codeItem of codesData) {
+              if (codeItem && codeItem.siteName) {
+                // 合并验证码数据和站点配置
+                const siteConfig = sites[codeItem.siteName] || {};
+                const mergedData = {
+                  ...codeItem,
+                  icon: siteConfig.icon || codeItem.icon
+                };
+                
+                createCodeCard(codeContainer, codeItem.siteName, mergedData);
+              }
+            }
           }
         }
         
@@ -461,8 +494,8 @@ document.addEventListener('DOMContentLoaded', async function () {
         if (setupButton) setupButton.style.display = 'none';
         
       } catch (error) {
-        console.error('刷新验证码失败:', error);
-        displayError('刷新验证码失败: ' + error.message);
+        console.error('加载TOTP码失败:', error);
+        displayError('获取验证码失败: ' + error.message);
       }
     }
     
@@ -479,11 +512,11 @@ document.addEventListener('DOMContentLoaded', async function () {
     } else {
       // 配置有效，刷新验证码
       console.log('找到有效配置，开始刷新验证码');
-      await refreshTOTPCodes();
+      await loadTOTPCodes();
     }
     
     // 定期刷新验证码 - 每5秒刷新一次
-    setInterval(refreshTOTPCodes, 5000);
+    setInterval(loadTOTPCodes, 5000);
     
     // 每秒更新进度条
     setInterval(updateProgressBars, 1000);
