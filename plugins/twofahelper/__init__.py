@@ -24,7 +24,7 @@ class twofahelper(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/2fa.png"
     # 插件版本
-    plugin_version = "1.0.0"
+    plugin_version = "1.2"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -34,7 +34,7 @@ class twofahelper(_PluginBase):
     # 加载顺序
     plugin_order = 20
     # 可使用的用户级别
-    auth_level = 1
+    auth_level = 2
 
     # 私有属性
     _sites = {}
@@ -46,110 +46,108 @@ class twofahelper(_PluginBase):
         """
         插件初始化 - 简化版，不再需要同步任务
         """
-        logger.info("两步验证助手插件开始初始化...")
         # 直接使用settings获取配置路径
         data_path = self.get_data_path()
-        logger.info(f"数据目录路径: {data_path}")
         
         # 确保目录存在
         if not os.path.exists(data_path):
             try:
                 os.makedirs(data_path)
-                logger.info(f"创建数据目录: {data_path}")
             except Exception as e:
                 logger.error(f"创建数据目录失败: {str(e)}")
         
         self.config_file = os.path.join(data_path, "twofahelper_sites.json")
-        logger.info(f"配置文件路径: {self.config_file}")
         
         # 初始化时从文件加载配置到内存
         self._sync_from_file()
         
-        # 如果内存中没有配置，尝试初始化空配置并保存
+        # 如果内存中没有配置，添加预设站点配置
         if not self._sites:
-            logger.info("内存中没有配置，初始化空配置")
-            self._sites = {}
-            # 写入空配置文件
+            # 生成预设站点配置
+            self._sites = self._generate_default_sites()
+            # 写入配置文件
             try:
                 with open(self.config_file, 'w', encoding='utf-8') as f:
                     json.dump(self._sites, f, ensure_ascii=False, indent=2)
-                logger.info("成功写入空配置文件")
             except Exception as e:
-                logger.error(f"写入空配置文件失败: {str(e)}")
+                logger.error(f"写入配置文件失败: {str(e)}")
         
-        if self._sites:
-            logger.info(f"两步验证码管理插件初始化完成，已加载 {len(self._sites)} 个站点: {list(self._sites.keys())}")
-        else:
-            logger.info("两步验证码管理插件初始化完成，暂无配置")
+        logger.info(f"两步验证码助手初始化完成，已加载 {len(self._sites)} 个站点")
             
+    def _generate_default_sites(self):
+        """
+        生成预设站点配置，用于新用户初始化
+        
+        :return: 预设站点配置字典
+        """
+        # 当前时间戳，用于确保新生成的秘钥每次都不同
+        timestamp = int(time.time())
+        
+        # Google图标的Base64编码
+        google_icon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAflBMVEVHcEw+qUb/3AAikf//yAD/ywD/3QAikv8vqERHr1b/3QBHr1Yikf//3ABHr1f///9Hr1b/zAD/3AAjkf//3QArn3hHr1YikaRHr1cik//tzwajyTMbpE3/ygAUo1j/0QAik6T/1QD/3gAjkqMikqT/4AD/2QD/1wD/0gD/zwAVaIySAAAAJnRSTlMA+r8grxA2/kb6d0b/////////////////RkaP//+v//+PRkf/r89PIHoAAAHbSURBVHgBfZPploMgDIUxUVyqdsO61Na27cL7P+AAgoC253j7+e4QSAD4j4OHk6LrHk6u/QM878cOk5NvPED7mT6ETr7tAfyVTYSuSoA/khsAd6YLoVsTcAZyL4AupOjqHuAcxhOBJgX/Bt7ozQms4aQA1vBmBOGE5fk8Q9gnQDbmZzfmVwIyIu8CdqNZBOStwBDvAvJN4IoXZJdidgdAXjJwjRngKgPE9Qp0z+se6ARAXDHgVuvc3Q2OiwJMsxZwc10rjQrfEnDvA6YhA6bsoYrXzFhdBs4EpJ5QFu5J5a4Jq2TgwkB0DyqX3FPnzWsG1gy4Ni1CTXbH/dTl8b4BLgzMpq1CTXKjwpZNXQ6rhYGV55LuDcnlwGUrgBUD/M5RkBwLm3MIeA9Q/RrQNcVHAHgUoPoVxdUPAAoB4yIGVEU+ALw6/DnZ0wG1Ae9aQe2nXmTAG4i8f8XPBKzXAuTvqYBJAPMvA6pvBpzXANXXoGyeBYYG2IaAzVcDLg1Q3QBuUwLuhGzXAKuvBrxLAa8bYOtGgPcJ2JWAeRoH9DfQgPk4YBgCAoBtUh0DzJMKmKc1UE5roJzWIGA8BIDlCGCbNMAyCTCPI2CZBhbGcQS8/wF7S25Y6uGfkAAAAABJRU5ErkJggg=="
+        
+        # GitHub图标的Base64编码
+        github_icon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAflBMVEVHcEw2Njb///81NTU0NDQ2NjY1NTU4ODgzMzM3Nzf///8AAAD///////////////8fHx////////////////////8nJyf///////////////////////////////8xMTH///////////8sLCz///////////////////////8hISEzMzNJa6KsAAAAKXRSTlMA/rAQ79CEIEDPn2C/X++vcN+PQJ/fMFAgv8+PcM+AcO9gz4AgIP5wIJQ4PZsAAAKnSURBVFjD7ZbblqowDIZR5CAHUUTkIIpy0vd/wE2atrCcsVZm9pr5LhQ+m+ZP0xD9j8vN7avaxX8JQUR7dtPcrhEB73ucYX8nQJMF1jg7LoBa69wnfIYL9KrUWpMJ4gJwa7WqCG8LAW/VrZUE3AQ/VreWBIC3z77UCyrw56+x7gX4Vl2r3i1EoVK5g6gX6q3Ne41F8Npw3usOEuB9xzuZVeytw63MBYDCO905wFvgnAoHfq5zHRxQKZizYYD39EwJA2ZlUjpjQB4XMGZWiYYBs0KZYMCsFP1tCNBK0S8GzGp+6g1Y4NRWdQbQcwE/JrVV1VHWKbT+NJi9YytGZQdUQILsEdvj+yGZIu8QcGaALJhfYCzYV8C5xIA6FWBHJnrZQwAZKcDeBPDRRAXYjQDcnYoAMlHAfhNgRl0G8HsiQHfeBPDRRAGmFwAzGpIRoPs9FQAxJgO6IwOYKDAWbDLRPh0FUDfKgn2LbJY9GbwNM+AOPzuAtDTQOWkdAFg4mxfObw6/h80G/PzAABiPJy6BZA9x5Ckg+2dAD4Bz2TwGVgH3YwCswnlVcD9mZQHiDCCAbNgqhPOtbR4Yvx4GXl+cnyegCuGQb54FX6+vCQC4cFsKw2Gg+34I4CvKfTZ7MRSgZ62fC2/2BYDh5wV8fXzJILB+EID8WQDr+wFPCIcAj54DSL8WwGMgsXKnCk4WANIXAL4CUDQPISYDAOsLANsfANQ8hGgIwPo4Bejr3/MQogSA9QGwPnw9DyEiDkh9HMDRWPV+e+hxPx7YwTfDIz1G3JJ+8vLWEp72EwnPZkkC4jYQQEh7GyCkfRAgxOwRVYz2XYCQkyICyTYa4lHw2Y7+dLOEiCq7Pxvxfru5P8QQXNWb2/UH8iRFXS8ZbkgAAAAASUVORK5CYII="
+        
+        # 微软图标的Base64编码
+        microsoft_icon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAaVBMVEVHcEzjQjTlbGPiMiHjRzriMyPiMyLjQzXlbGPiMyLkWE3jRDbiMyLkW1DiMyLjQjTiMyLkWU7iMyLjQjTlbGPiMyLiMyLiMyLjRDbjRDbjQzXjQzXkWE3kWU7kW1DkXFHlamHlbGPmbmTg5zXPAAAAGHRSTlMAfw8/H1/vzzB/z0+vT39vb59Pj49vv28Lgj2WAAAA1ElEQVR4AbXQV3LDMAxF0QdRLKJkW3JJ75n9bzKZiQM7GRbB+R9wQQB/NStrmVVjjqVTSqVYmixNsWv0nWS6FrjLo9TFRWT9URJO51Rsbq4uVRE8B1hYpSgCZx8WBSG4QCAIDkKnEzg4CCenk12Mg9lBYLdJcLcL2dkMkfQmREaLdVgU4WRlPmRnVycTq5RhYSu8SWxCFOmVmhhZMKNrNRUzgzfSam5meBu0mZ9ZOkQWc8PLdnXh8B7KZz3Az/T7/ZFPdKRvl0/Ht/zF+QY4pgaeeukKLQAAAABJRU5ErkJggg=="
+        
+        # 默认站点配置 - 使用常见的网站作为示例
+        default_sites = {
+            "Google": {
+                "secret": f"JBSWY3DPEHPK3PXP{timestamp}",  # 使用标准TOTP测试密钥加时间戳
+                "urls": ["https://accounts.google.com"],
+                "icon": google_icon  # 使用Base64编码的图标
+            },
+            "GitHub": {
+                "secret": f"NBSWY3DPEHPK3PXQ{timestamp}",
+                "urls": ["https://github.com"],
+                "icon": github_icon
+            },
+            "Microsoft": {
+                "secret": f"HBSWY3DPEHPK3PXT{timestamp}",
+                "urls": ["https://account.microsoft.com"],
+                "icon": microsoft_icon
+            }
+        }
+        
+        return default_sites
+    
     def _sync_from_file(self):
         """
-        从配置文件同步到内存 - 增强版，添加更详细的日志
+        从配置文件同步到内存 - 精简版，移除多余日志
         """
         if not os.path.exists(self.config_file):
-            logger.warning(f"配置文件不存在: {self.config_file}")
             # 清空内存中的配置
             if self._sites:
-                logger.info("清空内存中的配置")
                 self._sites = {}
             return False
 
         try:
-            # 读取文件修改时间
-            file_mtime = os.path.getmtime(self.config_file)
-            file_mtime_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(file_mtime))
-            
             # 读取文件内容
             with open(self.config_file, 'r', encoding='utf-8') as f:
                 file_content = f.read()
             
-            content_length = len(file_content)
-            logger.info(f"读取配置文件成功，内容长度: {content_length}，最后修改时间: {file_mtime_str}")
-            
             # 解析JSON
             new_sites = json.loads(file_content)
-            new_sites_count = len(new_sites)
-            new_site_names = list(new_sites.keys())
-            
-            # 检查配置是否有变化
-            old_sites_count = len(self._sites) if self._sites else 0
-            old_site_names = list(self._sites.keys()) if self._sites else []
-            
-            if new_sites_count != old_sites_count or set(new_site_names) != set(old_site_names):
-                logger.info(f"检测到配置变化: 站点数量 {old_sites_count} -> {new_sites_count}")
-                
-                # 查找新增的站点
-                added_sites = [site for site in new_site_names if site not in old_site_names]
-                if added_sites:
-                    logger.info(f"新增站点: {added_sites}")
-                
-                # 查找移除的站点
-                removed_sites = [site for site in old_site_names if site not in new_site_names]
-                if removed_sites:
-                    logger.info(f"移除站点: {removed_sites}")
             
             # 更新内存中的配置
             self._sites = new_sites
-            logger.info(f"配置文件解析成功并更新到内存，共 {new_sites_count} 个站点: {new_site_names}")
-            
             return True
         except json.JSONDecodeError as e:
             logger.error(f"配置文件JSON格式解析失败: {str(e)}")
-            # 保持内存中的现有配置不变
             return False
         except Exception as e:
             logger.error(f"读取配置文件失败: {str(e)}")
-            # 保持内存中的现有配置不变
             return False
 
     def _sync_to_file(self):
         """
-        将内存中的配置同步到文件
+        将内存中的配置同步到文件 - 精简版
         """
         try:
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(self._sites, f, ensure_ascii=False, indent=2)
-            logger.info(f"成功将内存配置同步到文件，站点数: {len(self._sites)}")
             return True
         except Exception as e:
             logger.error(f"将内存配置同步到文件失败: {str(e)}")
@@ -521,7 +519,7 @@ class twofahelper(_PluginBase):
         
         :param urls: 站点URL列表
         :param site_name: 站点名称
-        :return: 图标URL
+        :return: 图标URL或图标选项
         """
         # 默认图标 - 使用站点名称首字母替代
         default_icon = ""
@@ -541,7 +539,7 @@ class twofahelper(_PluginBase):
             if not domain:
                 return default_icon
             
-            # 方法1: 直接尝试网站的favicon.ico (直接返回URL，让前端处理加载)
+            # 方法1: 直接尝试网站的favicon.ico
             favicon_ico = f"https://{domain}/favicon.ico"
             
             # 方法2: 尝试favicon.png
@@ -560,11 +558,12 @@ class twofahelper(_PluginBase):
                 "google": google_favicon,
                 "ddg": ddg_favicon,
                 "domain": domain,
-                "site_name": site_name
+                "site_name": site_name,
+                "first_letter": site_name[0].upper() if site_name else "?"
             }
             
         except Exception as e:
-            logger.error(f"获取站点 {site_name} 的图标失败: {str(e)}")
+            # 出错时返回空字符串
             return default_icon
 
     def get_api(self) -> List[Dict[str, Any]]:
@@ -589,30 +588,6 @@ class twofahelper(_PluginBase):
             "methods": ["GET"],
             "summary": "获取所有TOTP验证码",
             "description": "获取所有站点的TOTP验证码",
-        }, {
-            "path": "/codes",
-            "endpoint": self.get_totp_codes,
-            "methods": ["GET"],
-            "summary": "获取所有TOTP验证码",
-            "description": "获取所有站点的TOTP验证码（简化路径版本）",
-        }, {
-            "path": "/refresh_dashboard",
-            "endpoint": self.refresh_dashboard,
-            "methods": ["GET"],
-            "summary": "刷新仪表盘数据",
-            "description": "强制从文件同步并生成新的验证码",
-        }, {
-            "path": "/debug_dashboard",
-            "endpoint": self.debug_dashboard,
-            "methods": ["GET"],
-            "summary": "调试仪表盘",
-            "description": "获取仪表盘调试信息",
-        }, {
-            "path": "/all_codes",
-            "endpoint": self.api_all_codes,
-            "methods": ["GET"],
-            "summary": "简化版获取所有TOTP验证码",
-            "description": "直接返回所有验证码，简化结构",
         }]
 
     def get_config(self, apikey: str) -> Response:
@@ -627,7 +602,6 @@ class twofahelper(_PluginBase):
             if os.path.exists(self.config_file):
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     config_data = json.load(f)
-                logger.info("成功读取配置文件")
                 return Response(success=True, message="获取成功", data=config_data)
             else:
                 return Response(success=True, message="配置文件不存在", data={})
@@ -641,19 +615,18 @@ class twofahelper(_PluginBase):
         """
         if apikey != settings.API_TOKEN:
             return Response(success=False, message="API令牌错误!")
-        
+            
         try:
+            # 更新内存中的配置
+            self._sites = request
+            
             # 写入配置文件
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(request, f, ensure_ascii=False, indent=2)
-            
-            # 更新内存
-            self._sites = request.copy()
-            
-            logger.info(f"成功更新配置文件和内存，站点数: {len(self._sites)}")
+                
             return Response(success=True, message="更新成功")
         except Exception as e:
-            logger.error(f"更新配置失败: {str(e)}")
+            logger.error(f"更新配置文件失败: {str(e)}")
             return Response(success=False, message=f"更新配置失败: {str(e)}")
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
@@ -1456,94 +1429,6 @@ class twofahelper(_PluginBase):
         logger.info(f"接收到用户提交的参数: {params}")
         return {"code": 0, "message": "设置已保存"}
 
-    def api_get_status(self, **kwargs):
-        """
-        API接口：获取插件状态信息
-        """
-        # 获取配置文件修改时间
-        file_mtime = "文件不存在"
-        if os.path.exists(self.config_file):
-            file_mtime = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(os.path.getmtime(self.config_file)))
-            
-        # 构建状态信息
-        status_info = {
-            "plugin_version": self.plugin_version,
-            "sites_count": len(self._sites) if self._sites else 0,
-            "sites_list": list(self._sites.keys()) if self._sites else [],
-            "config_file": self.config_file,
-            "config_file_mtime": file_mtime,
-            "system_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        }
-        
-        return {"code": 0, "message": "成功", "data": status_info}
-
-    def api_test(self, **kwargs):
-        """
-        API接口：测试连接
-        """
-        return {
-            "code": 0, 
-            "message": "API连接正常", 
-            "data": {
-                "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-                "sites_count": len(self._sites) if self._sites else 0,
-                "plugin_version": self.plugin_version
-            }
-        }
-
-    def api_dump_sites(self, **kwargs):
-        """
-        API接口：转储内存中的站点配置用于调试
-        """
-        logger.info("接收到转储站点请求")
-        try:
-            # 获取内存配置
-            memory_sites = self._sites.copy() if self._sites else {}
-            memory_sites_count = len(memory_sites)
-            memory_sites_list = list(memory_sites.keys())
-            
-            # 读取文件配置
-            file_sites = {}
-            file_sites_count = 0
-            file_sites_list = []
-            if os.path.exists(self.config_file):
-                try:
-                    with open(self.config_file, 'r', encoding='utf-8') as f:
-                        file_sites = json.load(f)
-                    file_sites_count = len(file_sites)
-                    file_sites_list = list(file_sites.keys())
-                except Exception as e:
-                    logger.error(f"读取配置文件失败: {str(e)}")
-            
-            # 比较差异
-            only_in_memory = [site for site in memory_sites_list if site not in file_sites_list]
-            only_in_file = [site for site in file_sites_list if site not in memory_sites_list]
-            
-            return {
-                "code": 0,
-                "message": "成功",
-                "data": {
-                    "memory": {
-                        "sites_count": memory_sites_count,
-                        "sites_list": memory_sites_list,
-                        "sites_data": memory_sites
-                    },
-                    "file": {
-                        "sites_count": file_sites_count,
-                        "sites_list": file_sites_list,
-                        "sites_data": file_sites
-                    },
-                    "diff": {
-                        "only_in_memory": only_in_memory,
-                        "only_in_file": only_in_file,
-                        "is_identical": memory_sites == file_sites
-                    }
-                }
-            }
-        except Exception as e:
-            logger.error(f"转储站点配置失败: {str(e)}")
-            return {"code": 500, "message": f"转储站点配置失败: {str(e)}"}
-
     def get_totp_codes(self, apikey: str = None):
         """
         API接口: 获取所有TOTP验证码
@@ -1563,8 +1448,12 @@ class twofahelper(_PluginBase):
                 # 添加额外信息
                 data["site_name"] = site
                 
-                # 增强图标处理 - 提供多个图标URL选项
-                if "urls" in data and data["urls"]:
+                # 处理图标 - 优先使用配置中的base64图标
+                if "icon" in data and data["icon"] and data["icon"].startswith("data:image"):
+                    # 已经是base64图标，保持不变
+                    pass
+                # 如果没有图标但有URL，尝试获取favicon
+                elif "urls" in data and data["urls"]:
                     favicon_info = self._get_favicon_url(data["urls"], site)
                     if isinstance(favicon_info, dict):
                         data["favicon_options"] = favicon_info
@@ -1572,8 +1461,7 @@ class twofahelper(_PluginBase):
                         data["icon"] = favicon_info.get("ico", "") 
                     else:
                         data["icon"] = favicon_info
-                
-            logger.info(f"成功获取所有TOTP验证码，共 {len(codes)} 个站点")
+            
             return {
                 "code": 0,
                 "message": "成功",
@@ -1585,98 +1473,6 @@ class twofahelper(_PluginBase):
                 "code": 1,
                 "message": f"获取TOTP验证码失败: {str(e)}"
             }
-
-    def refresh_dashboard(self, apikey: str = None):
-        """
-        API接口：刷新仪表盘数据
-        """
-        # 检查API密钥
-        if apikey != settings.API_TOKEN:
-            return {"code": 401, "message": "API令牌错误!", "success": False}
-            
-        logger.info("刷新仪表盘数据...")
-        
-        # 从文件同步到内存
-        self._sync_from_file()
-        
-        # 获取验证码
-        codes = self.get_all_codes()
-        
-        return {
-            "code": 0, 
-            "message": "刷新成功", 
-            "data": {
-                "sites_count": len(self._sites),
-                "codes": codes
-            }
-        }
-
-    def debug_dashboard(self, apikey: str = None):
-        """
-        API接口：调试仪表盘
-        """
-        # 检查API密钥
-        if apikey != settings.API_TOKEN:
-            return {"code": 401, "message": "API令牌错误!", "success": False}
-            
-        logger.info("调试仪表盘...")
-        
-        # 检查dashboard_meta
-        dashboard_meta = self.get_dashboard_meta()
-        
-        # 测试获取dashboard
-        dashboard_data = None
-        if dashboard_meta and len(dashboard_meta) > 0:
-            key = dashboard_meta[0]["key"]
-            try:
-                dashboard_data = self.get_dashboard(key)
-            except Exception as e:
-                logger.error(f"获取仪表盘数据失败: {str(e)}")
-
-        return {
-            "code": 0,
-            "message": "调试信息",
-            "data": {
-                "dashboard_meta": dashboard_meta,
-                "sites_count": len(self._sites) if self._sites else 0,
-                "sites_keys": list(self._sites.keys()) if self._sites else [],
-                "config_file_exists": os.path.exists(self.config_file),
-                "dashboard_data_type": str(type(dashboard_data)) if dashboard_data else None,
-                "dashboard_structure": {
-                    "col_config": dashboard_data[0] if dashboard_data else None,
-                    "global_config": dashboard_data[1] if dashboard_data else None,
-                    "elements_count": len(dashboard_data[2]) if dashboard_data and len(dashboard_data) > 2 else 0
-                } if dashboard_data else None
-            }
-        }
-
-    def api_all_codes(self, apikey: str = None):
-        """
-        API接口：简化版获取所有验证码
-        """
-        # 检查API密钥
-        if apikey != settings.API_TOKEN:
-            return {"code": 401, "message": "API令牌错误!", "success": False}
-            
-        logger.info("获取所有简化版TOTP验证码...")
-        
-        # 从文件同步到内存
-        self._sync_from_file()
-        
-        # 使用get_all_codes获取验证码
-        codes = self.get_all_codes()
-        
-        # 转换为前端更容易处理的格式
-        result = []
-        for site_name, data in codes.items():
-            result.append({
-                "name": site_name,
-                "code": data.get("code", ""),
-                "remaining": data.get("remaining_seconds", 0),
-                "icon": data.get("icon", "")
-            })
-            
-        return {"code": 0, "message": "成功", "data": result}
 
     def _get_color_for_site(self, site_name):
         """

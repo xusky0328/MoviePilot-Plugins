@@ -219,36 +219,36 @@ document.addEventListener('DOMContentLoaded', function() {
     function tryFallbackIcon(domain) {
         // 尝试Google Favicon服务
         const googleFaviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
-        
-        const fallbackImg = new Image();
-        fallbackImg.onload = function() {
-            // 创建canvas元素
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            canvas.width = fallbackImg.width;
-            canvas.height = fallbackImg.height;
-            
-            // 将图像绘制到canvas上
-            ctx.drawImage(fallbackImg, 0, 0);
-            
-            // 将canvas内容转换为DataURL
-            try {
-                currentIconDataUrl = canvas.toDataURL('image/png');
-                updateIconPreview();
+                
+                const fallbackImg = new Image();
+                fallbackImg.onload = function() {
+                    // 创建canvas元素
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    canvas.width = fallbackImg.width;
+                    canvas.height = fallbackImg.height;
+                    
+                    // 将图像绘制到canvas上
+                    ctx.drawImage(fallbackImg, 0, 0);
+                    
+                    // 将canvas内容转换为DataURL
+                    try {
+                        currentIconDataUrl = canvas.toDataURL('image/png');
+                        updateIconPreview();
                 console.log('使用Google服务获取图标成功');
-            } catch (e) {
+                    } catch (e) {
                 console.error('转换Google图标格式失败:', e);
                 tryDuckDuckGoIcon(domain);
-            }
-        };
-        
-        fallbackImg.onerror = function() {
+                    }
+                };
+                
+                fallbackImg.onerror = function() {
             console.error('无法通过Google获取图标，尝试DuckDuckGo');
             tryDuckDuckGoIcon(domain);
-        };
-        
-        // 设置跨域属性并加载图像
-        fallbackImg.crossOrigin = 'Anonymous';
+                };
+                
+                // 设置跨域属性并加载图像
+                fallbackImg.crossOrigin = 'Anonymous';
         fallbackImg.src = googleFaviconUrl;
     }
     
@@ -274,8 +274,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.log('使用DuckDuckGo获取图标成功');
             } catch (e) {
                 console.error('转换DuckDuckGo图标格式失败:', e);
-                iconPreview.innerHTML = '';
-            }
+            iconPreview.innerHTML = '';
+        }
         };
         
         ddgImg.onerror = function() {
@@ -342,7 +342,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 从存储加载配置
     function loadConfig() {
-        chrome.storage.local.get(['apiConfig'], result => {
+        console.log('开始从存储加载配置...');
+        
+        chrome.storage.sync.get(['apiConfig', 'apiBaseUrl', 'apiKey'], result => {
+            console.log('加载配置结果:', result);
+            
+            let configLoaded = false;
+            
+            // 尝试从apiConfig加载
             if (result.apiConfig) {
                 const config = result.apiConfig;
                 
@@ -357,10 +364,38 @@ document.addEventListener('DOMContentLoaded', function() {
                 baseUrlInput.value = currentConfig.baseUrl;
                 apiKeyInput.value = currentConfig.apiKey;
                 
-                console.log('配置已加载:', currentConfig);
+                console.log('从apiConfig加载配置成功:', currentConfig);
+                configLoaded = true;
+            }
+            // 尝试从单独的字段加载
+            else if (result.apiBaseUrl && result.apiKey) {
+                // 更新内存中的配置
+                currentConfig = {
+                    ...currentConfig,
+                    baseUrl: result.apiBaseUrl,
+                    apiKey: result.apiKey
+                };
                 
+                // 更新UI
+                baseUrlInput.value = currentConfig.baseUrl;
+                apiKeyInput.value = currentConfig.apiKey;
+                
+                console.log('从单独字段加载配置成功:', currentConfig);
+                configLoaded = true;
+            }
+            
+            if (configLoaded) {
                 // 加载站点列表
+                console.log('配置加载完成，开始刷新站点列表');
                 refreshSitesList();
+            } else {
+                console.log('未找到有效配置');
+                
+                // 确保sitesListDiv存在
+                const sitesListDiv = document.getElementById('sites-list') || document.getElementById('sitesList');
+                if (sitesListDiv) {
+                    sitesListDiv.innerHTML = '<div class="help-text">请先配置服务器地址和API密钥</div>';
+                }
             }
         });
     }
@@ -373,23 +408,23 @@ document.addEventListener('DOMContentLoaded', function() {
     // 保存配置
     function saveConfig() {
         // 更新内存中的配置
-        chrome.storage.local.set({ 
+        chrome.storage.sync.set({ 
             apiConfig: currentConfig
         }, () => {
             console.log('配置已保存');
         });
     }
 
-    // 格式化URL
+    // 标准化URL
     function normalizeUrl(url) {
-        if (!url) return url;
-        
-        // 去除首尾空格
-        url = url.trim();
-        
-        // 添加协议前缀
+        // 确保URL以http或https开头
         if (!url.startsWith('http://') && !url.startsWith('https://')) {
-            url = 'https://' + url;
+            url = 'http://' + url;
+        }
+        
+        // 去除URL末尾的斜杠
+        while (url.endsWith('/')) {
+            url = url.slice(0, -1);
         }
         
         return url;
@@ -397,37 +432,90 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 刷新站点列表
     async function refreshSitesList() {
-        // 清空站点列表
-        sitesListDiv.innerHTML = '';
-        
-        // 检查配置是否有效
-        if (!currentConfig.baseUrl) {
-            sitesListDiv.innerHTML = '<div class="help-text">请先配置服务器地址</div>';
-            return;
-        }
-        
-        if (!currentConfig.apiKey) {
-            sitesListDiv.innerHTML = '<div class="help-text">请先配置API密钥</div>';
-            return;
-        }
-        
         try {
-            // 从API获取配置
-            const result = await new Promise(resolve => {
-                chrome.runtime.sendMessage(
-                    { action: 'fetchConfig' },
-                    resolve
-                );
-            });
+            console.log('开始刷新站点列表...');
             
-            if (!result.success) {
-                sitesListDiv.innerHTML = `<div class="help-text">获取配置失败: ${result.message}</div>`;
+            // 先获取API配置
+            const config = await loadApiConfig();
+            console.log('获取API配置结果:', config);
+            
+            if (!config || !config.baseUrl || !config.apiKey) {
+                console.log('未配置API连接信息，无法刷新站点列表');
+                sitesListDiv.innerHTML = '<div class="help-text">请先配置服务器地址和API密钥</div>';
+            return;
+        }
+        
+            showStatus('正在获取站点列表...');
+            
+            // 直接从API获取配置
+            const apiUrl = `${config.baseUrl}/api/v1/plugin/twofahelper/config?apikey=${config.apiKey}`;
+            console.log('请求站点列表URL:', apiUrl);
+            
+            const response = await fetch(apiUrl);
+            if (!response.ok) {
+                throw new Error(`服务器返回错误 (${response.status}): ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            console.log('获取到的站点数据:', data);
+            
+            // 提取站点数据 - 灵活处理不同格式
+            let sitesData;
+            if (data.data) {
+                // 新接口格式: { code: 0, data: {sites...} }
+                sitesData = data.data;
+            } else if (data.success && data.result) {
+                // 另一种格式: { success: true, result: {sites...} }
+                sitesData = data.result;
+            } else {
+                // 直接返回站点对象的格式
+                sitesData = data;
+            }
+            
+            if (!sitesData || typeof sitesData !== 'object') {
+                console.error('无效的站点数据格式:', data);
+                throw new Error('返回的站点数据格式无效');
+            }
+            
+            // 更新当前配置中的站点
+            currentConfig.sites = sitesData;
+            
+            // 渲染站点列表
+            console.log('开始渲染站点列表, 站点数量:', Object.keys(sitesData).length);
+            renderSitesList(sitesData);
+            
+            // 显示成功消息
+            const sitesCount = Object.keys(sitesData).length;
+            showStatus(`获取成功，找到 ${sitesCount} 个站点`);
+            
+            return sitesData;
+        } catch (error) {
+            console.error('获取站点列表失败:', error);
+            showStatus(`获取站点列表失败: ${error.message}`, true);
+            
+            // 确保sitesListDiv存在
+            const sitesListDiv = document.getElementById('sites-list') || document.getElementById('sitesList');
+            if (sitesListDiv) {
+                sitesListDiv.innerHTML = `<div class="error-message">获取站点列表失败: ${error.message}</div>`;
+            }
+        }
+    }
+    
+    // 渲染站点列表
+    function renderSitesList(sites) {
+        console.log('渲染站点列表, 传入数据:', sites);
+        
+        // 获取站点列表容器 - 兼容两种可能的ID
+        const sitesListDiv = document.getElementById('sites-list') || document.getElementById('sitesList');
+        console.log('站点列表容器元素:', sitesListDiv);
+        
+        if (!sitesListDiv) {
+            console.error('找不到站点列表容器元素');
                 return;
             }
             
-            // 显示站点列表
-            const sites = result.data;
-            currentConfig.sites = sites;
+        // 清空站点列表
+        sitesListDiv.innerHTML = '';
             
             if (!sites || Object.keys(sites).length === 0) {
                 sitesListDiv.innerHTML = '<div class="help-text">暂无配置的站点</div>';
@@ -436,78 +524,75 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // 显示站点总数
             const totalSites = Object.keys(sites).length;
+        console.log(`渲染 ${totalSites} 个站点`);
+        
             const siteCountInfo = document.createElement('div');
             siteCountInfo.className = 'site-count-info';
             siteCountInfo.innerHTML = `当前已配置 <strong>${totalSites}</strong> 个站点`;
             sitesListDiv.appendChild(siteCountInfo);
-            
-            // 添加排序功能
-            const sortContainer = document.createElement('div');
-            sortContainer.className = 'sort-container';
-            sortContainer.style.marginBottom = '15px';
-            sortContainer.style.display = 'flex';
-            sortContainer.style.justifyContent = 'flex-end';
-            sortContainer.style.alignItems = 'center';
-            
-            const sortLabel = document.createElement('span');
-            sortLabel.textContent = '排序: ';
-            sortLabel.style.marginRight = '8px';
-            sortLabel.style.fontSize = '14px';
-            sortContainer.appendChild(sortLabel);
-            
-            const sortSelect = document.createElement('select');
-            sortSelect.id = 'sort-select';
-            sortSelect.style.padding = '4px 8px';
-            sortSelect.style.borderRadius = '4px';
-            sortSelect.style.border = '1px solid #ddd';
-            
-            const sortOptions = [
-                { value: 'default', text: '默认顺序' },
-                { value: 'name-asc', text: '名称 (A-Z)' },
-                { value: 'name-desc', text: '名称 (Z-A)' }
-            ];
-            
-            sortOptions.forEach(option => {
-                const optElement = document.createElement('option');
-                optElement.value = option.value;
-                optElement.textContent = option.text;
-                sortSelect.appendChild(optElement);
-            });
-            
-            sortSelect.addEventListener('change', () => {
-                renderSites(sites, sortSelect.value);
-            });
-            
-            sortContainer.appendChild(sortSelect);
-            sitesListDiv.appendChild(sortContainer);
-            
-            // 添加拖拽排序提示
-            const dragSortInfo = document.createElement('div');
-            dragSortInfo.className = 'drag-sort-info';
-            dragSortInfo.style.padding = '8px';
-            dragSortInfo.style.marginBottom = '15px';
-            dragSortInfo.style.backgroundColor = '#e3f2fd';
-            dragSortInfo.style.borderRadius = '4px';
-            dragSortInfo.style.fontSize = '14px';
-            dragSortInfo.textContent = '提示: 您可以通过拖拽卡片来自定义排序顺序';
-            sitesListDiv.appendChild(dragSortInfo);
-            
-            // 创建站点卡片容器
-            const sitesContainer = document.createElement('div');
-            sitesContainer.id = 'sites-container';
-            sitesContainer.style.marginTop = '10px';
-            sitesListDiv.appendChild(sitesContainer);
-            
-            // 渲染站点
-            renderSites(sites, 'default');
-            
-            // 启用拖拽排序
-            enableDragSort(sitesContainer);
-            
-        } catch (error) {
-            console.error('刷新站点列表失败:', error);
-            sitesListDiv.innerHTML = `<div class="help-text">获取站点列表失败: ${error.message}</div>`;
-        }
+        
+        // 添加排序功能
+        const sortContainer = document.createElement('div');
+        sortContainer.className = 'sort-container';
+        sortContainer.style.marginBottom = '15px';
+        sortContainer.style.display = 'flex';
+        sortContainer.style.justifyContent = 'flex-end';
+        sortContainer.style.alignItems = 'center';
+        
+        const sortLabel = document.createElement('span');
+        sortLabel.textContent = '排序: ';
+        sortLabel.style.marginRight = '8px';
+        sortLabel.style.fontSize = '14px';
+        sortContainer.appendChild(sortLabel);
+        
+        const sortSelect = document.createElement('select');
+        sortSelect.id = 'sort-select';
+        sortSelect.style.padding = '4px 8px';
+        sortSelect.style.borderRadius = '4px';
+        sortSelect.style.border = '1px solid #ddd';
+        
+        const sortOptions = [
+            { value: 'default', text: '默认顺序' },
+            { value: 'name-asc', text: '名称 (A-Z)' },
+            { value: 'name-desc', text: '名称 (Z-A)' }
+        ];
+        
+        sortOptions.forEach(option => {
+            const optElement = document.createElement('option');
+            optElement.value = option.value;
+            optElement.textContent = option.text;
+            sortSelect.appendChild(optElement);
+        });
+        
+        sortSelect.addEventListener('change', () => {
+            renderSites(sites, sortSelect.value);
+        });
+        
+        sortContainer.appendChild(sortSelect);
+        sitesListDiv.appendChild(sortContainer);
+        
+        // 添加拖拽排序提示
+        const dragSortInfo = document.createElement('div');
+        dragSortInfo.className = 'drag-sort-info';
+        dragSortInfo.style.padding = '8px';
+        dragSortInfo.style.marginBottom = '15px';
+        dragSortInfo.style.backgroundColor = '#e3f2fd';
+        dragSortInfo.style.borderRadius = '4px';
+        dragSortInfo.style.fontSize = '14px';
+        dragSortInfo.textContent = '提示: 您可以通过拖拽卡片来自定义排序顺序';
+        sitesListDiv.appendChild(dragSortInfo);
+        
+        // 创建站点卡片容器
+        const sitesContainer = document.createElement('div');
+        sitesContainer.id = 'sites-container';
+        sitesContainer.style.marginTop = '10px';
+        sitesListDiv.appendChild(sitesContainer);
+        
+        // 渲染站点
+        renderSites(sites, 'default');
+        
+        // 启用拖拽排序
+        enableDragSort(sitesContainer);
     }
     
     // 渲染站点列表
@@ -530,14 +615,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 break;
             case 'default':
             default:
-                // 保持原顺序
+                // 保持当前配置的顺序
+                // 不做任何排序操作，使用原始顺序
                 break;
         }
         
-        // 创建站点卡片
+        console.log('排序后的站点顺序:', siteEntries.map(entry => entry[0]));
+            
+            // 创建站点卡片
         siteEntries.forEach(([siteName, data], index) => {
-            const card = document.createElement('div');
-            card.className = 'card';
+                const card = document.createElement('div');
+                card.className = 'card';
             card.dataset.siteName = siteName;
             card.dataset.sortIndex = index;
             card.draggable = true;
@@ -552,104 +640,104 @@ document.addEventListener('DOMContentLoaded', function() {
             dragHandle.style.top = '10px';
             dragHandle.style.left = '10px';
             card.appendChild(dragHandle);
-            
-            // 站点名称行 - 包含图标和名称
-            const titleRow = document.createElement('div');
-            titleRow.className = 'title-row';
-            titleRow.style.display = 'flex';
-            titleRow.style.alignItems = 'center';
-            titleRow.style.marginBottom = '10px';
+                
+                // 站点名称行 - 包含图标和名称
+                const titleRow = document.createElement('div');
+                titleRow.className = 'title-row';
+                titleRow.style.display = 'flex';
+                titleRow.style.alignItems = 'center';
+                titleRow.style.marginBottom = '10px';
             titleRow.style.paddingLeft = '25px'; // 为拖动手柄留出空间
-            
-            // 站点图标（如果有）
-            if (data.icon) {
-                const iconImg = document.createElement('img');
-                iconImg.src = data.icon;
-                iconImg.alt = `${siteName} 图标`;
-                iconImg.className = 'site-icon';
-                iconImg.style.width = '24px';
-                iconImg.style.height = '24px';
-                iconImg.style.marginRight = '8px';
-                iconImg.style.borderRadius = '4px';
-                titleRow.appendChild(iconImg);
-            } else {
-                // 占位图标
-                const iconPlaceholder = document.createElement('div');
-                iconPlaceholder.className = 'icon-placeholder';
-                iconPlaceholder.style.width = '24px';
-                iconPlaceholder.style.height = '24px';
-                iconPlaceholder.style.backgroundColor = '#ddd';
-                iconPlaceholder.style.marginRight = '8px';
-                iconPlaceholder.style.borderRadius = '4px';
-                iconPlaceholder.style.display = 'flex';
-                iconPlaceholder.style.alignItems = 'center';
-                iconPlaceholder.style.justifyContent = 'center';
-                iconPlaceholder.textContent = siteName.charAt(0).toUpperCase();
-                titleRow.appendChild(iconPlaceholder);
-            }
-            
-            // 站点名称
-            const title = document.createElement('h3');
-            title.textContent = siteName;
-            title.style.margin = '0';
-            title.style.flex = '1';
-            titleRow.appendChild(title);
-            
-            card.appendChild(titleRow);
-            
-            // 密钥 (隐藏实际值)
-            const secret = document.createElement('div');
-            secret.className = 'site-secret';
-            secret.textContent = `密钥: ${data.secret.substring(0, 3)}****${data.secret.substring(data.secret.length - 3)}`;
-            card.appendChild(secret);
-            
-            // URLs
-            if (data.urls && data.urls.length > 0) {
-                const urlsContainer = document.createElement('div');
-                urlsContainer.className = 'site-urls';
-                urlsContainer.innerHTML = '<strong>URLs:</strong>';
                 
-                const urlsList = document.createElement('ul');
-                data.urls.forEach(url => {
-                    const li = document.createElement('li');
-                    li.textContent = url;
-                    urlsList.appendChild(li);
-                });
+                // 站点图标（如果有）
+                if (data.icon) {
+                    const iconImg = document.createElement('img');
+                    iconImg.src = data.icon;
+                    iconImg.alt = `${siteName} 图标`;
+                    iconImg.className = 'site-icon';
+                    iconImg.style.width = '24px';
+                    iconImg.style.height = '24px';
+                    iconImg.style.marginRight = '8px';
+                    iconImg.style.borderRadius = '4px';
+                    titleRow.appendChild(iconImg);
+                } else {
+                    // 占位图标
+                    const iconPlaceholder = document.createElement('div');
+                    iconPlaceholder.className = 'icon-placeholder';
+                    iconPlaceholder.style.width = '24px';
+                    iconPlaceholder.style.height = '24px';
+                    iconPlaceholder.style.backgroundColor = '#ddd';
+                    iconPlaceholder.style.marginRight = '8px';
+                    iconPlaceholder.style.borderRadius = '4px';
+                    iconPlaceholder.style.display = 'flex';
+                    iconPlaceholder.style.alignItems = 'center';
+                    iconPlaceholder.style.justifyContent = 'center';
+                    iconPlaceholder.textContent = siteName.charAt(0).toUpperCase();
+                    titleRow.appendChild(iconPlaceholder);
+                }
                 
-                urlsContainer.appendChild(urlsList);
-                card.appendChild(urlsContainer);
-            }
-            
-            // 按钮容器
-            const buttonContainer = document.createElement('div');
-            buttonContainer.className = 'site-buttons';
-            buttonContainer.style.display = 'flex';
-            buttonContainer.style.justifyContent = 'flex-end';
-            buttonContainer.style.marginTop = '10px';
-            buttonContainer.style.gap = '8px';
-            
-            // 编辑按钮
-            const editBtn = document.createElement('button');
-            editBtn.className = 'edit-btn';
-            editBtn.textContent = '编辑';
-            editBtn.style.backgroundColor = '#1976d2';
-            editBtn.style.color = 'white';
-            editBtn.style.padding = '4px 8px';
-            editBtn.style.fontSize = '12px';
-            editBtn.dataset.site = siteName;
-            editBtn.addEventListener('click', () => editSite(siteName));
-            buttonContainer.appendChild(editBtn);
-            
-            // 删除按钮
-            const deleteBtn = document.createElement('button');
-            deleteBtn.className = 'delete-btn';
-            deleteBtn.textContent = '删除';
-            deleteBtn.dataset.site = siteName;
-            deleteBtn.addEventListener('click', () => deleteSite(siteName));
-            buttonContainer.appendChild(deleteBtn);
-            
-            card.appendChild(buttonContainer);
-            
+                // 站点名称
+                const title = document.createElement('h3');
+                title.textContent = siteName;
+                title.style.margin = '0';
+                title.style.flex = '1';
+                titleRow.appendChild(title);
+                
+                card.appendChild(titleRow);
+                
+                // 密钥 (隐藏实际值)
+                const secret = document.createElement('div');
+                secret.className = 'site-secret';
+                secret.textContent = `密钥: ${data.secret.substring(0, 3)}****${data.secret.substring(data.secret.length - 3)}`;
+                card.appendChild(secret);
+                
+                // URLs
+                if (data.urls && data.urls.length > 0) {
+                    const urlsContainer = document.createElement('div');
+                    urlsContainer.className = 'site-urls';
+                    urlsContainer.innerHTML = '<strong>URLs:</strong>';
+                    
+                    const urlsList = document.createElement('ul');
+                    data.urls.forEach(url => {
+                        const li = document.createElement('li');
+                        li.textContent = url;
+                        urlsList.appendChild(li);
+                    });
+                    
+                    urlsContainer.appendChild(urlsList);
+                    card.appendChild(urlsContainer);
+                }
+                
+                // 按钮容器
+                const buttonContainer = document.createElement('div');
+                buttonContainer.className = 'site-buttons';
+                buttonContainer.style.display = 'flex';
+                buttonContainer.style.justifyContent = 'flex-end';
+                buttonContainer.style.marginTop = '10px';
+                buttonContainer.style.gap = '8px';
+                
+                // 编辑按钮
+                const editBtn = document.createElement('button');
+                editBtn.className = 'edit-btn';
+                editBtn.textContent = '编辑';
+                editBtn.style.backgroundColor = '#1976d2';
+                editBtn.style.color = 'white';
+                editBtn.style.padding = '4px 8px';
+                editBtn.style.fontSize = '12px';
+                editBtn.dataset.site = siteName;
+                editBtn.addEventListener('click', () => editSite(siteName));
+                buttonContainer.appendChild(editBtn);
+                
+                // 删除按钮
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'delete-btn';
+                deleteBtn.textContent = '删除';
+                deleteBtn.dataset.site = siteName;
+                deleteBtn.addEventListener('click', () => deleteSite(siteName));
+                buttonContainer.appendChild(deleteBtn);
+                
+                card.appendChild(buttonContainer);
+                
             sitesContainer.appendChild(card);
         });
     }
@@ -736,37 +824,59 @@ document.addEventListener('DOMContentLoaded', function() {
             const sitesContainer = document.getElementById('sites-container');
             const cards = Array.from(sitesContainer.querySelectorAll('.card'));
             
-            // 创建排序后的站点对象
+            // 创建有序的站点对象 - 使用ES2015+的对象属性顺序特性
             const orderedSites = {};
-            cards.forEach(card => {
+            
+            // 按照DOM中的顺序遍历卡片，创建新的有序对象
+            cards.forEach((card) => {
                 const siteName = card.dataset.siteName;
                 if (siteName && currentConfig.sites[siteName]) {
-                    orderedSites[siteName] = currentConfig.sites[siteName];
+                    // 复制原始站点数据，保持顺序
+                    orderedSites[siteName] = {...currentConfig.sites[siteName]};
                 }
             });
             
-            // 更新服务器配置
-            const result = await new Promise(resolve => {
-                chrome.runtime.sendMessage(
-                    { 
-                        action: 'updateConfig',
-                        config: orderedSites
-                    },
-                    resolve
-                );
+            console.log('保存的排序顺序:', Object.keys(orderedSites));
+            
+            // 获取API配置
+            const config = await loadApiConfig();
+            if (!config || !config.baseUrl || !config.apiKey) {
+                throw new Error('未配置API连接信息，无法保存排序');
+            }
+            
+            console.log('正在保存自定义排序...');
+            showStatus('正在保存排序...');
+            
+            // 直接调用API更新配置
+            const response = await fetch(`${config.baseUrl}/api/v1/plugin/twofahelper/update_config?apikey=${config.apiKey}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify(orderedSites)
             });
             
-            if (result.success) {
+            if (!response.ok) {
+                throw new Error(`服务器返回错误 (${response.status}): ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            
+            // 检查返回数据
+            if (data.code === 0 || data.code === undefined || data.success === true) {
                 // 更新内存中的配置
                 currentConfig.sites = orderedSites;
                 console.log('自定义排序已保存');
+                showStatus('排序已保存');
+                return true;
             } else {
-                console.error('保存排序失败:', result.message);
-                showStatus('保存排序失败: ' + result.message, true);
+                throw new Error(data.message || '服务器返回错误');
             }
         } catch (error) {
             console.error('保存排序失败:', error);
-            showStatus('保存排序失败: ' + error.message, true);
+            showStatus(`保存排序失败: ${error.message}`, true);
+            return false;
         }
     }
 
@@ -784,85 +894,66 @@ document.addEventListener('DOMContentLoaded', function() {
     // 测试连接
     async function testConnection() {
         try {
-            // 获取输入值
-            const baseUrl = baseUrlInput.value.trim();
-            const apiKey = apiKeyInput.value.trim();
-        
-            if (!baseUrl) {
-                showStatus('请输入服务器地址', true);
-                return;
-            }
-        
-            if (!apiKey) {
-                showStatus('请输入API密钥', true);
-                return;
-            }
+            const baseUrlInput = document.getElementById('baseUrl');
+            const apiKeyInput = document.getElementById('apiKey');
             
+            // 获取输入值
+            let baseUrl = baseUrlInput.value.trim();
+            const apiKey = apiKeyInput.value.trim();
+            
+            console.log('测试连接中...', baseUrl);
             console.log('测试连接使用的API密钥:', apiKey);
             
-            // 规范化URL
-            let normalizedUrl = normalizeUrl(baseUrl);
-            if (normalizedUrl.endsWith('/')) {
-                normalizedUrl = normalizedUrl.slice(0, -1);
+            // 验证输入
+            if (!baseUrl || !apiKey) {
+                showStatus('请输入服务器地址和API密钥', true);
+                return false;
             }
             
-            // 更新内存中的配置
-            currentConfig.baseUrl = normalizedUrl;
-            currentConfig.apiKey = apiKey;
+            // 标准化URL
+            baseUrl = normalizeUrl(baseUrl);
+            baseUrlInput.value = baseUrl;
             
-            // 保存到后台
-            await new Promise(resolve => {
-                chrome.runtime.sendMessage(
-                    { 
-                        action: 'saveApiConfig',
-                        config: {
-                            baseUrl: normalizedUrl,
-                            apiKey: apiKey
-                        }
-                    },
-                    resolve
-                );
-            });
+            // 显示正在连接状态
+            showStatus('正在测试连接...', false, true);
             
-            // 显示加载中状态
-            showStatus('正在测试连接...');
+            // 直接调用API进行测试
+            const response = await fetch(`${baseUrl}/api/v1/plugin/twofahelper/get_codes?apikey=${apiKey}`);
+            if (!response.ok) {
+                throw new Error(`服务器返回错误 (${response.status}): ${response.statusText}`);
+            }
             
-            // 测试连接
-            const result = await new Promise(resolve => {
-                chrome.runtime.sendMessage(
-                    { action: 'fetchCodes' },
-                    resolve
-                );
-            });
+            const data = await response.json();
             
-            if (result.success) {
-                // 保存配置
-                saveConfig();
+            // 检查返回数据格式
+            if (data.code === 0 || data.code === undefined) {
+                // 测试成功，保存配置
+                await saveApiConfig(baseUrl, apiKey);
                 
-                // 设置连接已测试标记
-                await chrome.storage.local.set({ connectionTested: true });
-                console.log('已设置连接测试成功标记');
+                // 更新当前配置
+                currentConfig = {
+                    baseUrl: baseUrl,
+                    apiKey: apiKey
+                };
                 
-                // 显示成功消息
-                const sitesCount = result.data ? Object.keys(result.data).length : 0;
-                showStatus(`连接成功，找到 ${sitesCount} 个站点`);
+                await chrome.storage.sync.set({ 
+                    apiConfig: currentConfig,
+                    connectionTested: true
+                });
                 
-                // 刷新站点列表
+                showStatus('连接测试成功，配置已保存');
+                
+                // 测试成功后刷新站点列表
                 await refreshSitesList();
-            } else {
-                // 清除连接测试标记
-                await chrome.storage.local.remove('connectionTested');
-                console.log('已清除连接测试标记');
                 
-                // 显示错误消息
-                showStatus(`连接失败: ${result.message}`, true);
+                return true;
+            } else {
+                throw new Error(data.message || '未知错误');
             }
         } catch (error) {
-            console.error('测试连接失败:', error);
-            showStatus(`连接失败: ${error.message}`, true);
-            
-            // 清除连接测试标记
-            await chrome.storage.local.remove('connectionTested');
+            console.log('测试连接失败:', error);
+            showStatus(`连接测试失败: ${error.message}`, true);
+            return false;
         }
     }
 
@@ -879,22 +970,36 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
             
-            // 创建新的配置
+            // 创建新的配置（移除要删除的站点）
             const newSites = { ...currentConfig.sites };
             delete newSites[siteName];
             
-            // 更新服务器
-            const result = await new Promise(resolve => {
-                chrome.runtime.sendMessage(
-                    { 
-                        action: 'updateConfig',
-                        config: newSites
-                    },
-                    resolve
-                );
+            // 获取API配置
+            const config = await loadApiConfig();
+            if (!config || !config.baseUrl || !config.apiKey) {
+                throw new Error('未配置API连接信息，无法删除站点');
+            }
+            
+            showStatus('正在删除站点...');
+            
+            // 直接调用API更新配置
+            const response = await fetch(`${config.baseUrl}/api/v1/plugin/twofahelper/update_config?apikey=${config.apiKey}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify(newSites)
             });
             
-            if (result.success) {
+            if (!response.ok) {
+                throw new Error(`服务器返回错误 (${response.status}): ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            
+            // 检查返回数据
+            if (data.code === 0 || data.code === undefined || data.success === true) {
                 // 更新内存中的配置
                 currentConfig.sites = newSites;
                 
@@ -904,7 +1009,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 // 刷新站点列表
                 await refreshSitesList();
             } else {
-                showStatus(`删除站点失败: ${result.message}`, true);
+                throw new Error(data.message || '服务器返回错误');
             }
         } catch (error) {
             console.error('删除站点失败:', error);
@@ -938,45 +1043,88 @@ document.addEventListener('DOMContentLoaded', function() {
                 .filter(url => url.length > 0)
                 .map(normalizeUrl);
             
-            // 获取现有配置
-            const result = await new Promise(resolve => {
-                chrome.runtime.sendMessage(
-                    { action: 'fetchConfig' },
-                    resolve
-                );
-            });
-            
-            if (!result.success) {
-                showStatus(`获取配置失败: ${result.message}`, true);
-                return;
+            // 获取API配置
+            const config = await loadApiConfig();
+            if (!config || !config.baseUrl || !config.apiKey) {
+                throw new Error('未配置API连接信息，无法添加/更新站点');
             }
             
-            // 更新配置
-            const sites = result.data || {};
+            showStatus('正在获取当前配置...');
+            
+            // 直接从API获取当前配置
+            const response = await fetch(`${config.baseUrl}/api/v1/plugin/twofahelper/config?apikey=${config.apiKey}`);
+            if (!response.ok) {
+                throw new Error(`服务器返回错误 (${response.status}): ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            
+            // 提取站点数据
+            let sites;
+            if (data.data) {
+                sites = data.data;
+            } else if (data.success && data.result) {
+                sites = data.result;
+            } else {
+                sites = data;
+            }
+            
+            if (!sites || typeof sites !== 'object') {
+                throw new Error('获取配置时返回的数据格式无效');
+            }
             
             // 检查站点是否已存在
             const isUpdate = !!sites[siteName];
             
             // 保存或更新站点
+            if (isUpdate) {
+                // 如果是更新，保持原有站点属性，只更新需要修改的内容
             sites[siteName] = {
+                    ...sites[siteName],
                 secret: secret,
                 urls: urls,
-                // 如果有新图标，使用新图标；如果是更新且没有新图标，保留旧图标
-                icon: currentIconDataUrl || (isUpdate && sites[siteName].icon ? sites[siteName].icon : null)
-            };
+                    icon: currentIconDataUrl || sites[siteName].icon
+                };
+            } else {
+                // 如果是新增，创建一个新的站点配置
+                const newSites = {};
+                
+                // 保留原有站点
+                Object.entries(sites).forEach(([key, value]) => {
+                    newSites[key] = value;
+                });
+                
+                // 添加新站点到末尾
+                newSites[siteName] = {
+                    secret: secret,
+                    urls: urls,
+                    icon: currentIconDataUrl
+                };
+                
+                // 替换sites引用，保持顺序
+                sites = newSites;
+            }
             
-            // 更新服务器
-            const updateResult = await new Promise(resolve => {
-                chrome.runtime.sendMessage(
-                    { 
-                        action: 'updateConfig',
-                        config: sites
-                    },
-                    resolve
-                );
+            showStatus('正在保存站点配置...');
+            
+            // 直接调用API更新配置
+            const updateResponse = await fetch(`${config.baseUrl}/api/v1/plugin/twofahelper/update_config?apikey=${config.apiKey}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify(sites)
             });
             
-            if (updateResult.success) {
+            if (!updateResponse.ok) {
+                throw new Error(`服务器返回错误 (${updateResponse.status}): ${updateResponse.statusText}`);
+            }
+            
+            const updateData = await updateResponse.json();
+            
+            // 检查返回数据
+            if (updateData.code === 0 || updateData.code === undefined || updateData.success === true) {
                 // 更新内存中的配置
                 currentConfig.sites = sites;
                 
@@ -994,7 +1142,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 // 刷新站点列表
                 await refreshSitesList();
             } else {
-                showStatus(`${isUpdate ? '更新' : '添加'}站点失败: ${updateResult.message}`, true);
+                throw new Error(updateData.message || '服务器返回错误');
             }
         } catch (error) {
             console.error('添加/更新站点失败:', error);
@@ -1042,21 +1190,38 @@ document.addEventListener('DOMContentLoaded', function() {
     // 导出配置
     async function exportConfig() {
         try {
-            // 获取最新配置
-            const result = await new Promise(resolve => {
-                chrome.runtime.sendMessage(
-                    { action: 'fetchConfig' },
-                    resolve
-                );
-            });
+            // 获取API配置
+            const config = await loadApiConfig();
+            if (!config || !config.baseUrl || !config.apiKey) {
+                throw new Error('未配置API连接信息，无法导出配置');
+            }
             
-            if (!result.success) {
-                showStatus(`获取配置失败: ${result.message}`, true);
-                return;
+            showStatus('正在获取配置数据...');
+            
+            // 直接从API获取当前配置
+            const response = await fetch(`${config.baseUrl}/api/v1/plugin/twofahelper/config?apikey=${config.apiKey}`);
+            if (!response.ok) {
+                throw new Error(`服务器返回错误 (${response.status}): ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            
+            // 提取站点数据
+            let sites;
+            if (data.data) {
+                sites = data.data;
+            } else if (data.success && data.result) {
+                sites = data.result;
+            } else {
+                sites = data;
+            }
+            
+            if (!sites || typeof sites !== 'object') {
+                throw new Error('获取配置时返回的数据格式无效');
             }
             
             // 创建下载链接
-            const dataStr = JSON.stringify(result.data || {}, null, 2);
+            const dataStr = JSON.stringify(sites, null, 2);
             const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
             
             const exportLink = document.createElement('a');
@@ -1081,13 +1246,13 @@ document.addEventListener('DOMContentLoaded', function() {
     // 处理导入文件
     async function handleImportFile(event) {
         try {
-            const file = event.target.files[0];
-            if (!file) {
-                return;
-            }
-            
+        const file = event.target.files[0];
+        if (!file) {
+            return;
+        }
+        
             // 读取文件
-            const reader = new FileReader();
+        const reader = new FileReader();
             
             reader.onload = async (e) => {
                 try {
@@ -1152,7 +1317,7 @@ document.addEventListener('DOMContentLoaded', function() {
             };
             
             // 清空存储，包括connectionTested标记
-            chrome.storage.local.clear(() => {
+            chrome.storage.sync.clear(() => {
                 console.log('所有设置已清除');
                 showStatus('所有设置已清除');
                 
@@ -1170,3 +1335,79 @@ document.addEventListener('DOMContentLoaded', function() {
     importConfigBtn.addEventListener('click', importConfig);
     importFileInput.addEventListener('change', handleImportFile);
 });
+
+// 保存API配置
+async function saveApiConfig(baseUrl, apiKey) {
+  return new Promise((resolve, reject) => {
+    try {
+      // 使用chrome.storage.sync代替local
+      chrome.storage.sync.set({
+        apiBaseUrl: baseUrl,
+        apiKey: apiKey
+      }, () => {
+        console.log('API配置已保存');
+        resolve();
+      });
+    } catch (error) {
+      console.error('保存API配置失败:', error);
+      reject(error);
+    }
+  });
+}
+
+// 加载API配置
+async function loadApiConfig() {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get(['apiBaseUrl', 'apiKey'], (result) => {
+      if (result.apiBaseUrl && result.apiKey) {
+        resolve({
+          baseUrl: result.apiBaseUrl,
+          apiKey: result.apiKey
+        });
+      } else {
+        resolve(null);
+      }
+    });
+  });
+}
+
+// 更新站点列表
+async function updateSitesList(updatedSites) {
+    try {
+        const config = await loadApiConfig();
+        if (!config || !config.baseUrl || !config.apiKey) {
+            console.log('未配置API连接信息，无法更新站点列表');
+            return;
+        }
+        
+        showStatus('正在更新站点列表...');
+        
+        // 直接调用API更新配置
+        const response = await fetch(`${config.baseUrl}/api/v1/plugin/twofahelper/update_config?apikey=${config.apiKey}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify(updatedSites)
+        });
+        
+        if (!response.ok) {
+            throw new Error(`服务器返回错误 (${response.status}): ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        
+        // 检查返回数据格式
+        if (data.code === 0 || data.code === undefined || data.success === true) {
+            showStatus('站点列表已更新');
+            return true;
+        } else {
+            throw new Error(data.message || '未知错误');
+        }
+    } catch (error) {
+        console.error('更新站点列表失败:', error);
+        showStatus(`更新站点列表失败: ${error.message}`, true);
+        return false;
+    }
+}

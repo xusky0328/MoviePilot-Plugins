@@ -629,65 +629,21 @@ function createOTPPanel() {
 // 从API获取TOTP验证码
 async function fetchTOTPCodes() {
   try {
-    let config = null;
-    let configError = null;
+    // 获取配置（从popup传入或用户手动输入）
+    const config = await getApiConfig();
     
-    // 1. 首先尝试从chrome.storage获取配置
-    try {
-      const result = await chrome.storage.local.get(['apiConfig']);
-      if (result.apiConfig && result.apiConfig.baseUrl && result.apiConfig.apiKey) {
-        config = result.apiConfig;
-      }
-    } catch (e) {
-      console.warn('从chrome.storage获取配置失败:', e);
-    }
-    
-    // 2. 如果chrome.storage中没有，尝试从localStorage获取
-    if (!config) {
-      try {
-        const savedConfig = localStorage.getItem('totp_connection');
-        if (savedConfig) {
-          const parsedConfig = JSON.parse(savedConfig);
-          if (parsedConfig.serverUrl && parsedConfig.apiKey) {
-            config = {
-              baseUrl: parsedConfig.serverUrl,
-              apiKey: parsedConfig.apiKey
-            };
-          }
-        }
-      } catch (e) {
-        console.warn('从localStorage获取配置失败:', e);
-      }
-    }
-    
-    // 3. 如果都没有找到有效配置，才报错
-    if (!config) {
+    if (!config || !config.baseUrl || !config.apiKey) {
       throw new Error('未配置连接信息');
     }
     
-    // 4. 尝试获取验证码
-    const response = await fetch(`${config.baseUrl}/api/v1/plugin/twofahelper/codes?apikey=${config.apiKey}`);
+    // 直接从API获取验证码，不使用缓存
+    const response = await fetch(`${config.baseUrl}/api/v1/plugin/twofahelper/get_codes?apikey=${config.apiKey}`);
     if (!response.ok) {
       // 只有在明确的授权错误时才提示重新配置
       if (response.status === 401 || response.status === 403) {
         throw new Error('授权失败，请重新配置');
       }
       throw new Error(`服务器错误: ${response.status} ${response.statusText}`);
-    }
-    
-    // 5. 连接成功，保存当前可用的配置到两个存储位置
-    try {
-      // 保存到chrome.storage
-      await chrome.storage.local.set({ apiConfig: config });
-      
-      // 保存到localStorage
-      localStorage.setItem('totp_connection', JSON.stringify({
-        serverUrl: config.baseUrl,
-        apiKey: config.apiKey,
-        lastCheck: Date.now()
-      }));
-    } catch (e) {
-      console.warn('保存配置失败:', e);
     }
     
     const data = await response.json();
@@ -714,6 +670,49 @@ async function fetchTOTPCodes() {
     console.error('获取验证码失败:', error);
     throw error;
   }
+}
+
+// 从设置中获取API配置
+async function getApiConfig() {
+  // 尝试从popup.js传入的消息获取配置
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ action: 'getApiConfig' }, (response) => {
+      if (response && response.config) {
+        resolve(response.config);
+      } else {
+        // 如果没有获取到配置，从存储中读取
+        chrome.storage.sync.get(['apiBaseUrl', 'apiKey'], (result) => {
+          if (result.apiBaseUrl && result.apiKey) {
+            resolve({
+              baseUrl: result.apiBaseUrl,
+              apiKey: result.apiKey
+            });
+          } else {
+            // 最后尝试从localStorage获取
+            try {
+              const savedConfig = localStorage.getItem('totp_connection');
+              if (savedConfig) {
+                const parsedConfig = JSON.parse(savedConfig);
+                if (parsedConfig.serverUrl && parsedConfig.apiKey) {
+                  resolve({
+                    baseUrl: parsedConfig.serverUrl,
+                    apiKey: parsedConfig.apiKey
+                  });
+                } else {
+                  resolve(null);
+                }
+              } else {
+                resolve(null);
+              }
+            } catch (e) {
+              console.warn('从localStorage获取配置失败:', e);
+              resolve(null);
+            }
+          }
+        });
+      }
+    });
+  });
 }
 
 // 从页面响应提取验证码
