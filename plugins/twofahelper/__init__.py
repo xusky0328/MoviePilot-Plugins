@@ -25,7 +25,7 @@ class twofahelper(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/2fa.png"
     # 插件版本
-    plugin_version = "1.2.2"
+    plugin_version = "1.2.3"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -88,7 +88,7 @@ class twofahelper(_PluginBase):
         github_icon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAABRFJREFUWEetl11sU2UYx//POV23sq18jHN61nZYxoQ4EjAqEC+UmZgI8TN6YaIRMV44MGpiYtAYZYgYNcavIBIuMH7EG2JiiIqJJMwYNAN3IcYNdcIYpT09ZRvpVmR07V9O6Zbu9HTdZOeiF32fj9/zvM/zvs8rmOHX2trqHT5//g4C94FsBRCkSNBWFzIGIAaRHgEOLly8+EhPT8/lmZiWSkIRTTMuiWwn+QgAfyX5wnpKRL6sIXf0J5PmdDplAVpaWqpHU6mXATxPsnaGjqeIiUj6CvS7dX7/rr6+vjE3G64Ahai/Jrnu/zh26ohIVw35gFs2SgDCur5qnPyWQHgunE/YECDqEbk7alkniu1OAchHDhyfa+fFEDXAmuJMTAIU9vzH4rQL0AvgBETuJNkwy4xcEOAHAMsI3DQJIdJV5/evn6iJSQBD118j+UqxE0Xkqbhl7Wtra/P09vZuArkLpAGRUQCnhRwGQIosBHkdgPkiMgRy+yJN22e3YqOuP5gjv5qSdpGdpmW9mm9h+6dQdH3OahdVXWua5vEJ5VZNqxtS1SXt7e0nOzo6csVGSUo4HL5eVdXkwMCADZb/AoHAUuRypxwA6Rqyxd6KPICh6x+TbHemWPF4bonH492zTP0U8WAwuCSbyZxx6Yy9pmVtEfuEG0wmk26HjCKyKW5Zn18LgGEYG5nNfudiI9WgaZo06vpdOfJ7F8K0qOrKeDxeQj8boFAo1JDNZE6SXFySYZENYuj6RyS3ugBsMy3r7dk4KydraNoTBPa7+NgjhqYdIdDmXKyqrl4ejUb/nguASCSy4N90erIwi86FThvgTwLLnVUaTyTqRYRzAVAo9DMkl0zxA/wlAV0fAVnnADhtWlbzXDnPA2jaMQJrptgUGbVrIE1ynsPZSCKZnOnVOyNOQ9dPkVzqCPSiDVCSmryQogQSiYQ1I+sVhCKRSM2lixcvkKx2AJyxAbpIrnVpkcfilvXFXABM0+pd0qhpH+SAZ0taBDget6x1c1GIhq4fIrmhJEjgQ/sgKrksJttE5AXTst65liwYmraZwCduNhSRh2TFihX1F4aGzgGodxGiiLweamra2d3dnZkNSEdHh7J3zx57nHsTgOqiO9IABCcuo90kn84LibynivyaJbeBXJX/CzgLkf0KcFTxeruj0eiQG0xzc/P8dDp9swLcmiM3g2wpBy2KsttMJJ7JA4Q1rWVc5A+SXgGGFZGHF5C/DIr8BPJGR+8e3bJ16+3O67jQ666nakl9iYxVASvPWtY/xQPJDpL5IeHKJJzyeL0rRcQ3fvnyz8UXiaoo98cSiYNukRmG0cZs9kilrRKRHaZldRSye1XcHslGUqljRWnfbyaTTxaGlUdJNikiPbV+/6flRuxwOLwoMzY2OC2AyIl6v39tyUhmKwWDwaZsJtMFoBFAVlT1XtM0D1WKqHg9oGl2sXrK6MTVqqp1sVjs7GSnOQVDur56nLSdXoUQOQzgsAAjBAK3rV+/68CBA9lyUAFNGy9T9XGPyMZzlvVbsa7rwyQUCoXHM5lvQK52OmrQtOrp3n0BTbPhFEfh/q56PPfEYrGBkoIsF0lhTH8JwIvFZ7ivttbX399/aZoM2MNqPjARsR+ob9XMm/dGOZ2Kj9MmXV+WEXmOudzjEFFuaG1d2NnZaafZ9TN0fZCA3c6febze9ysNNRUBJrzYI/moz1dVPHK7Edjb5/P5Un19famZFO9/2SAgrr8DEI4AAAAASUVORK5CYII="
         
         # 微软图标的Base64编码 - 确保背景为白色
-        microsoft_icon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAAAXNSR0IArs4c6QAAAnpJREFUeF7t3W1RxDAYReHUADNYQBEC8IIZBPAXxGCBGQwsw0e22d06OA8Okl7y3nNSyvb1+HAasZ+714/taMnP7yO3F5sA7FEQgMhJ4ATYH7QTYAm9E8AJoAMUMmAEGAEo4D8DOoAOwAPMDCiBhQIwxtABdAAdQAe4Pe6MACOAByhkQAfQAXQAHUAH+NkBIogIIoKIoELzW9aoBCqBSqASqAQqgVcZYAIjXUAH0AF0AB1AB9ABdAAmcM2AEqgEug4uZAAFoAAUgAJQAApAASgABfhAxDkDMLCAAP4w5OIpeyXMK2FeCfNKWOTon8skgoggIogIIoKIICKICCKCiCAiKAYBvhCyPHAiiAgigoig2AwggoggIogIIoKIICKICCKCiCAiKAYBRBAR5J9GzQwwgUwgE8gExkoAE8gEMoFMIBPIBDKBTGDeBMb6n+Ve7cBhGbJLnR0QgM6zPlypAAhAfAfiy3cC5APw8pn7Nt54uj8M/ult5PZiGwJwPgMEoHIcOgHOT9oJsITeCeAE0AESGTACjICjoBsBiV//MWDg8kYQDNw3wwngBFACExlQApVAJfBvB4ggIshl0MyAEpgoADBwfcxGgBFgBBgBlaN/rhMGwkAYCANvMoACKqPACDACjAAjwAiggi8zoAPoAK6DExlQApVAJVAKVQCXQbaDbQLeBbgMT1X9ZJApAASgABaAAFIACUAAKQAEoAAX87oDbwEoQYCAMhIEwEAbCQBgIA2EgDISBlfY/14kCUAAKQAEoAAWgABSAAlAACkABLoNSGYCBMBAGwkAYCANhIAyEgTAQBqYQwKdi18dtBBgBRoARYARkTeA3l4PYkqt6qqEAAAAASUVORK5CYII="
+        microsoft_icon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAAAXNSR0IArs4c6QAAAnpJREFUeF7t3W1RxDAYReHUADNYQBEC8IIZBPAXxGCBGQwsw0e22d06OA8Okl7y3nNSyvb1+HAasZ+714/taMnP7yO3F5sA7FEQgMhJ4ATYH7QTYAm9E8AJoAMUMmAEGAEo4D8DOoAOwAPMDCiBhQIwxtABdAAdQAe4Pe6MACOAByhkQAfQAXQAHUAH+NkBIogIIoKIoELzW9aoBCqBSqASqAQqgVcZYAIjXUAH0AF0AB1AB9ABdAAmcM2AEqgEug4uZAAFoAAUgAJQAApAASgABfhAxDkDMLCAAP4w5OIpeyXMK2FeCfNKWOTon8skgoggIogIIoKIICKICCKCiCAiKAYBvhCyPHAiiAgigoig2AwggoggIogIIoKIICKICCKCiCAiKAYBRBAR5J9GzQwwgUwgE8gExkoAE8gEMoFMIBPIBDKBTGDeBMb6n+Ve7cBhGbJLnR0QgM6zPlypAAhAfAfiy3cC5APw8pn7Nt54uj8M/ult5PZiGwJwPgMEoHIcOgHOT9oJsITeCeAE0AESGTACjICjoBsBiV//MWDg8kYQDNw3wwngBFACExlQApVAJfBvB4ggIshl0MyAEpgoADBwfcxGgBFgBBgBlaN/rhMGwkAYCANvMoACKqPACDACjAAjwAiggi8zoAPoAK6DExlQApVAJVAJVAKVQCXQbaDbQLeBbgMT1X9ZJApAASgABaAAFIACUAAKQAEoAAX87oDbwEoQYCAMhIEwEAbCQBgIA2EgDISBlfY/14kCUAAKQAEoAAWgABSAAlAACkABLoNSGYCBMBAGwkAYCANhIAyEgTAQBqYQwKdi18dtBBgBRoARYARkTeA3l4PYkqt6qqEAAAAASUVORK5CYII="
         
         # 生成有效的Base32密钥
         # Base32字符集只包含A-Z和2-7
@@ -1326,13 +1326,13 @@ class twofahelper(_PluginBase):
                                 },
                                 'content': [
                                     {
-                                        'component': 'div',
-                                        'props': {
-                                            'class': 'otp-code font-weight-bold',
-                                            'id': f'code-{site}',
+                                    'component': 'div',
+                                    'props': {
+                                        'class': 'otp-code font-weight-bold',
+                                        'id': f'code-{site}',
                                             'style': 'white-space: pre; overflow: visible; font-family: monospace; letter-spacing: 2px; font-size: 1.6rem;'  # 增大字体和间距
-                                        },
-                                        'text': now_code
+                                    },
+                                    'text': now_code
                                     },
                                     {
                                         'component': 'VProgressLinear',
@@ -1481,61 +1481,50 @@ class twofahelper(_PluginBase):
         logger.info(f"接收到用户提交的参数: {params}")
         return {"code": 0, "message": "设置已保存"}
 
-    def get_totp_codes(self) -> Dict:
+    def get_totp_codes(self, apikey: str = None):
         """
-        获取所有TOTP验证码
+        API接口: 获取所有TOTP验证码
         """
-        try:
-            # 验证API密钥
-            api_key = request.args.get("api_key", "")
-            if not api_key or api_key != settings.API_TOKEN:
-                return {"code": 1, "msg": "无效的API密钥"}
+        if apikey and apikey != settings.API_TOKEN:
+            return {"code": 2, "message": "API令牌错误!"}
             
-            # 加载最新配置
+        try:
+            # 确保首先加载最新配置
             self._sync_from_file()
             
-            # 获取所有站点的验证码
-            all_codes = self.get_all_codes()
+            # 获取验证码列表
+            codes = self.get_all_codes()
             
-            # 准备响应数据
-            result = {
-                "code": 0,
-                "msg": "成功",
-                "data": []
+            # 增强输出内容
+            for site, data in codes.items():
+                # 添加额外信息
+                data["site_name"] = site
+                
+                # 处理图标 - 优先使用配置中的base64图标
+                if site in self._sites and "icon" in self._sites[site] and self._sites[site]["icon"].startswith("data:"):
+                    # 直接使用配置中的base64图标
+                    data["icon"] = self._sites[site]["icon"]
+                # 如果没有图标但有URL，尝试获取favicon
+                elif "urls" in data and data["urls"]:
+                    favicon_info = self._get_favicon_url(data["urls"], site, self._sites.get(site, {}))
+                    if isinstance(favicon_info, dict):
+                        data["favicon_options"] = favicon_info
+                        # 保留原始图标url以保持兼容性
+                        data["icon"] = favicon_info.get("ico", "") 
+                    else:
+                        data["icon"] = favicon_info
+            
+            return {
+                "code": 0, 
+                "message": "成功",
+                "data": codes
             }
-            
-            for site_name, code_data in all_codes.items():
-                # 获取站点配置和URL
-                site_data = self._sites.get(site_name, {})
-                urls = site_data.get("urls", [])
-                
-                # 获取图标信息
-                favicon_info = self._get_favicon_url(urls, site_name, site_data)
-                
-                # 构建站点数据，添加图标信息
-                site_info = {
-                    "site_name": site_name,
-                    "code": code_data.get("code", ""),
-                    "remaining_seconds": code_data.get("remaining_seconds", 0),
-                    "progress_percent": code_data.get("progress_percent", 0),
-                    "icon": favicon_info.get("base64", "")  # 优先使用base64图标
-                }
-                
-                # 如果没有base64图标，提供其他图标URL选项
-                if not site_info["icon"]:
-                    site_info["favicon_options"] = {
-                        "ico": favicon_info.get("ico", ""),
-                        "png": favicon_info.get("png", ""),
-                        "google": favicon_info.get("google", ""),
-                        "ddg": favicon_info.get("ddg", "")
-                    }
-                
-                result["data"].append(site_info)
-            
-            return result
         except Exception as e:
             logger.error(f"获取TOTP验证码失败: {str(e)}")
-            return {"code": 1, "msg": f"获取TOTP验证码失败: {str(e)}"}
+            return {
+                "code": 1,
+                "message": f"获取TOTP验证码失败: {str(e)}"
+            }
 
     def _get_color_for_site(self, site_name):
         """

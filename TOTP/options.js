@@ -536,7 +536,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const site = sites[siteName];
             
             // 创建站点卡片
-            const card = document.createElement('div');
+                const card = document.createElement('div');
             card.className = 'site-card';
             card.dataset.siteName = siteName;
             card.draggable = true; // 启用拖拽
@@ -559,18 +559,18 @@ document.addEventListener('DOMContentLoaded', function() {
             iconContainer.className = 'site-icon-sm';
             
             if (site.icon && site.icon.startsWith('data:')) {
-                const iconImg = document.createElement('img');
+                    const iconImg = document.createElement('img');
                 iconImg.src = site.icon;
                 iconImg.alt = siteName;
                 iconContainer.appendChild(iconImg);
-            } else {
+                } else {
                 // 使用首字母作为占位符
                 iconContainer.textContent = siteName.charAt(0).toUpperCase();
             }
             
             header.appendChild(iconContainer);
-            
-            // 站点名称
+                
+                // 站点名称
             const nameEl = document.createElement('div');
             nameEl.className = 'site-name-sm';
             nameEl.textContent = siteName;
@@ -596,16 +596,16 @@ document.addEventListener('DOMContentLoaded', function() {
             // 操作按钮
             const actions = document.createElement('div');
             actions.className = 'site-actions';
-            
-            // 编辑按钮
-            const editBtn = document.createElement('button');
-            editBtn.textContent = '编辑';
+                
+                // 编辑按钮
+                const editBtn = document.createElement('button');
+                editBtn.textContent = '编辑';
             editBtn.className = 'btn-secondary';
             editBtn.onclick = () => editSite(siteName);
-            
-            // 删除按钮
-            const deleteBtn = document.createElement('button');
-            deleteBtn.textContent = '删除';
+                
+                // 删除按钮
+                const deleteBtn = document.createElement('button');
+                deleteBtn.textContent = '删除';
             deleteBtn.className = 'delete-btn';
             deleteBtn.style.backgroundColor = '#f44336';
             deleteBtn.style.color = 'white';
@@ -1038,10 +1038,10 @@ document.addEventListener('DOMContentLoaded', function() {
             // 保存或更新站点
             if (isUpdate) {
                 // 如果是更新，保持原有站点属性，只更新需要修改的内容
-                sites[siteName] = {
+            sites[siteName] = {
                     ...sites[siteName],
-                    secret: secret,
-                    urls: urls,
+                secret: secret,
+                urls: urls,
                     icon: currentIconDataUrl || (sites[siteName] ? sites[siteName].icon : null)
                 };
             } else {
