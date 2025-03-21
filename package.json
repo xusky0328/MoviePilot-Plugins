@@ -40,5 +40,18 @@
     "history": {
       "v1.0.5": "修复神游成功后，未能正确获取神游状态的bug。"
     }
+  },
+  "nexusinvitee": {
+    "name": "后宫管理系统",
+    "description": "管理NexusPHP站点的邀请系统，包括邀请名额、已邀请用户状态等",
+    "labels": "PT,后宫,邀请",
+    "version": "1.0.0",
+    "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png",
+    "author": "madrays",
+    "level": 2,
+    "v2": true,
+    "history": {
+      "v1.0.0": "初始版本发布，支持多种NexusPHP站点邀请系统结构"
+    }
   }
 } 
