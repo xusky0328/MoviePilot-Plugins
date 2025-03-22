@@ -100,11 +100,9 @@ class NexusPhpHandler(_ISiteHandler):
             
             # 获取邀请页面
             invite_url = urljoin(site_url, f"invite.php?id={user_id}")
-            response = session.get(invite_url, timeout=(10, 30))
-            response.raise_for_status()
             
-            # 解析邀请页面
-            invite_result = self._parse_nexusphp_invite_page(site_name, response.text)
+            # 调用递归方法获取所有页面数据
+            self._fetch_all_invite_pages(site_name, site_url, invite_url, session, result)
             
             # 访问发送邀请页面，这是判断权限的关键
             send_invite_url = urljoin(site_url, f"invite.php?id={user_id}&type=new")
@@ -119,8 +117,8 @@ class NexusPhpHandler(_ISiteHandler):
                 invite_form = send_soup.select('form[action*="takeinvite.php"]')
                 if invite_form:
                     # 确认有表单，权限正常
-                    invite_result["invite_status"]["can_invite"] = True
-                    invite_result["invite_status"]["reason"] = "可以发送邀请"
+                    result["invite_status"]["can_invite"] = True
+                    result["invite_status"]["reason"] = "可以发送邀请"
                     logger.info(f"站点 {site_name} 可以发送邀请，确认有takeinvite表单")
                 else:
                     # 没有表单，检查是否有错误消息
@@ -143,19 +141,185 @@ class NexusPhpHandler(_ISiteHandler):
                             if not restriction_text:
                                 restriction_text = parent_element.get_text().strip()
                             
-                            invite_result["invite_status"]["can_invite"] = False
-                            invite_result["invite_status"]["reason"] = restriction_text
+                            result["invite_status"]["can_invite"] = False
+                            result["invite_status"]["reason"] = restriction_text
                             logger.info(f"站点 {site_name} 有邀请限制: {restriction_text}")
                 
             except requests.exceptions.RequestException as e:
                 logger.warning(f"访问站点发送邀请页面失败，使用默认权限判断: {str(e)}")
             
-            return invite_result
+            return result
             
         except Exception as e:
             logger.error(f"解析站点 {site_name} 邀请页面失败: {str(e)}")
             result["invite_status"]["reason"] = f"解析邀请页面失败: {str(e)}"
             return result
+    
+    def _fetch_all_invite_pages(self, site_name: str, site_url: str, page_url: str, session: requests.Session, result: Dict[str, Any], page_num: int = 1, max_pages: int = 20):
+        """
+        递归获取所有邀请页面数据
+        :param site_name: 站点名称
+        :param site_url: 站点基础URL
+        :param page_url: 当前页面URL
+        :param session: 会话
+        :param result: 累积的结果字典
+        :param page_num: 当前页码，用于日志
+        :param max_pages: 最大页数限制，防止无限循环
+        """
+        if page_num > max_pages:
+            logger.warning(f"站点 {site_name} 达到最大页数限制 {max_pages}，停止获取")
+            return
+            
+        try:
+            logger.info(f"站点 {site_name} 正在获取第 {page_num} 页数据: {page_url}")
+            response = session.get(page_url, timeout=(10, 30))
+            response.raise_for_status()
+            
+            # 解析当前页面内容
+            current_page_result = self._parse_nexusphp_invite_page(site_name, response.text)
+            
+            # 合并邀请者数据
+            if "invitees" in current_page_result and current_page_result["invitees"]:
+                if page_num == 1:
+                    # 第一页，直接使用解析结果中的邀请状态和邀请者
+                    result.update(current_page_result)
+                else:
+                    # 后续页，只合并邀请者列表
+                    result["invitees"].extend(current_page_result["invitees"])
+                
+                logger.info(f"站点 {site_name} 第 {page_num} 页解析到 {len(current_page_result['invitees'])} 个后宫成员")
+            
+            # 查找下一页链接 - 支持多种分页样式
+            soup = BeautifulSoup(response.text, 'html.parser')
+            has_next_page = False
+            next_url = None
+            
+            # 尝试不同的分页选择器
+            # 1. 标准nexus-pagination类
+            pagination = soup.select_one('.nexus-pagination')
+            if pagination:
+                # 检查"下一页"链接是否可用
+                next_page_link = None
+                
+                # 方法1: 查找标题为Alt+Pagedown的链接
+                alt_pagedown = pagination.select_one('a[title="Alt+Pagedown"]')
+                if alt_pagedown and 'gray' not in alt_pagedown.parent.get('class', []):
+                    next_page_link = alt_pagedown
+                
+                # 方法2: 查找包含下一页/下一頁/next文本的链接
+                if not next_page_link:
+                    for link in pagination.select('a'):
+                        link_text = link.get_text().strip().lower()
+                        if any(text in link_text for text in ['下一页', '下一頁', 'next', '&gt;&gt;']):
+                            if 'gray' not in link.parent.get('class', []):
+                                next_page_link = link
+                                break
+                
+                if next_page_link:
+                    next_url = urljoin(site_url, next_page_link.get('href'))
+                    has_next_page = True
+            
+            # 2. 检查.pagenavi样式分页
+            if not has_next_page:
+                pagenavi = soup.select_one('.pagenavi')
+                if pagenavi:
+                    for link in pagenavi.select('a'):
+                        link_text = link.get_text().strip().lower()
+                        if any(text in link_text for text in ['下一页', '下一頁', 'next', '&gt;&gt;']):
+                            next_url = urljoin(site_url, link.get('href'))
+                            has_next_page = True
+                            break
+            
+            # 3. 检查任何包含页码的div
+            if not has_next_page:
+                # 查找可能包含分页的元素
+                pagination_divs = soup.select('div.pages, div.page, div.pagenav, p.pagelink')
+                for div in pagination_divs:
+                    for link in div.select('a'):
+                        link_text = link.get_text().strip().lower()
+                        if any(text in link_text for text in ['下一页', '下一頁', 'next', '&gt;&gt;']):
+                            next_url = urljoin(site_url, link.get('href'))
+                            has_next_page = True
+                            break
+                    if has_next_page:
+                        break
+            
+            # 4. 尝试检查分页信息并构建下一页URL
+            if not has_next_page:
+                # 检查当前页面URL中的分页参数
+                current_page_param = None
+                next_page_value = None
+                
+                # 检查常见的分页参数
+                page_param_patterns = [
+                    (r'[?&]page=(\d+)', 'page'),
+                    (r'[?&]p=(\d+)', 'p'),
+                    (r'[?&]pg=(\d+)', 'pg'),
+                    (r'[?&]pagenum=(\d+)', 'pagenum'),
+                    (r'[?&]pagenumber=(\d+)', 'pagenumber')
+                ]
+                
+                for pattern, param_name in page_param_patterns:
+                    match = re.search(pattern, page_url)
+                    if match:
+                        current_page_param = param_name
+                        current_page_value = int(match.group(1))
+                        next_page_value = current_page_value + 1
+                        break
+                
+                # 如果找到了分页参数，构建下一页URL
+                if current_page_param and next_page_value:
+                    # 替换URL中的分页参数
+                    next_url = re.sub(
+                        f'[?&]{current_page_param}=\\d+',
+                        f'{current_page_param}={next_page_value}',
+                        page_url
+                    )
+                    if next_url != page_url:
+                        has_next_page = True
+                        logger.info(f"站点 {site_name} 通过参数递增发现下一页: {next_url}")
+                
+                # 如果没有分页参数且是第一页，尝试推断分页参数
+                elif page_num == 1:
+                    # 检查页面文本中的分页信息
+                    # 查找形如"1-10 of 25"或"1-10 共25"的文本
+                    page_info_patterns = [
+                        r'(\d+)\s*-\s*(\d+).*?of\s*(\d+)',
+                        r'(\d+)\s*-\s*(\d+).*?共\s*(\d+)',
+                        r'显示第\s*(\d+)\s*到第\s*(\d+)\s*条记录，共\s*(\d+)\s*条'
+                    ]
+                    
+                    for pattern in page_info_patterns:
+                        page_info = re.search(pattern, str(soup))
+                        if page_info:
+                            current_items = int(page_info.group(2))
+                            total_items = int(page_info.group(3))
+                            
+                            if current_items < total_items:
+                                # 有下一页，尝试不同的分页参数
+                                for param in ['page', 'p', 'pg', 'pagenum']:
+                                    if '?' in page_url:
+                                        test_url = f"{page_url}&{param}=2"
+                                    else:
+                                        test_url = f"{page_url}?{param}=2"
+                                        
+                                    # 此处不直接验证URL可访问性，而是先构建
+                                    next_url = test_url
+                                    has_next_page = True
+                                    logger.info(f"站点 {site_name} 根据分页信息推断下一页: {next_url}")
+                                    break
+                            break
+            
+            # 如果找到下一页，递归获取
+            if has_next_page and next_url and next_url != page_url:
+                logger.info(f"站点 {site_name} 发现下一页: {next_url}")
+                self._fetch_all_invite_pages(site_name, site_url, next_url, session, result, page_num + 1, max_pages)
+            else:
+                logger.info(f"站点 {site_name} 没有更多页面，总共获取了 {len(result.get('invitees', []))} 个后宫成员")
+        
+        except Exception as e:
+            logger.error(f"站点 {site_name} 获取第 {page_num} 页数据失败: {str(e)}")
+            logger.exception(e)
     
     def _parse_nexusphp_invite_page(self, site_name: str, html_content: str) -> Dict[str, Any]:
         """
@@ -197,9 +361,12 @@ class NexusPhpHandler(_ISiteHandler):
             if invite_link:
                 # 获取invite链接周围的文本
                 parent_text = invite_link.parent.get_text() if invite_link.parent else ""
+                logger.debug(f"站点 {site_name} 原始邀请文本: {parent_text}")
                 
-                # 尝试匹配常见格式: 数字(数字) 或 单个数字
-                invite_pattern = re.compile(r'(?:邀请|探视权|invite).*?:?\s*(\d+)(?:\s*\((\d+)\))?', re.IGNORECASE)
+                # 更精确的邀请解析模式：处理两种情况
+                # 1. 只有永久邀请: "邀请 [发送]: 0"
+                # 2. 永久+临时邀请: "探视权 [发送]: 1(0)"
+                invite_pattern = re.compile(r'(?:邀请|探视权|invite|邀請|查看权|查看權).*?(?:\[.*?\]|发送|查看).*?:?\s*(\d+)(?:\s*\((\d+)\))?', re.IGNORECASE)
                 invite_match = invite_pattern.search(parent_text)
                 
                 if invite_match:
@@ -218,7 +385,7 @@ class NexusPhpHandler(_ISiteHandler):
                         result["invite_status"]["can_invite"] = True
                         result["invite_status"]["reason"] = f"可用邀请数: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}"
                 else:
-                    # 尝试在邀请链接后面的文本中查找数字
+                    # 尝试直接查找邀请链接后面的文本
                     after_text = ""
                     next_sibling = invite_link.next_sibling
                     while next_sibling and not after_text.strip():
@@ -226,12 +393,21 @@ class NexusPhpHandler(_ISiteHandler):
                             after_text = next_sibling
                         next_sibling = next_sibling.next_sibling if hasattr(next_sibling, 'next_sibling') else None
                     
+                    logger.debug(f"站点 {site_name} 后续文本: {after_text}")
+                    
                     if after_text:
-                        nums = re.findall(r'\d+', after_text)
-                        if nums and len(nums) >= 1:
-                            result["invite_status"]["permanent_count"] = int(nums[0])
-                            if len(nums) >= 2:
-                                result["invite_status"]["temporary_count"] = int(nums[1])
+                        # 处理格式: ": 1(0)" 或 ": 1" 或 "1(0)" 或 "1"
+                        after_pattern = re.compile(r'(?::)?\s*(\d+)(?:\s*\((\d+)\))?')
+                        after_match = after_pattern.search(after_text)
+                        
+                        if after_match:
+                            # 获取永久邀请数量
+                            if after_match.group(1):
+                                result["invite_status"]["permanent_count"] = int(after_match.group(1))
+                            
+                            # 如果有临时邀请数量
+                            if len(after_match.groups()) > 1 and after_match.group(2):
+                                result["invite_status"]["temporary_count"] = int(after_match.group(2))
                             
                             logger.info(f"站点 {site_name} 从后续文本解析到邀请数量: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}")
                             
@@ -488,3 +664,38 @@ class NexusPhpHandler(_ISiteHandler):
                 break
         
         return result 
+
+    def set_ua(self, ua: str):
+        """
+        设置User-Agent
+        :param ua: User-Agent
+        """
+        self.user_agent = ua
+
+    def get_invite_page_content(self, site_name: str, site_url: str, session: requests.Session) -> str:
+        """
+        获取邀请页面内容
+        :param site_name: 站点名称
+        :param site_url: 站点URL
+        :param session: 会话
+        :return: 页面内容
+        """
+        try:
+            # 获取用户ID
+            user_id = self._get_user_id(session, site_url)
+            if not user_id:
+                logger.error(f"站点 {site_name} 无法获取用户ID")
+                return ""
+            
+            # 获取邀请页面
+            invite_url = urljoin(site_url, f"invite.php?id={user_id}")
+            logger.info(f"站点 {site_name} 获取邀请页面: {invite_url}")
+            
+            response = session.get(invite_url, timeout=(10, 30))
+            response.raise_for_status()
+            
+            return response.text
+        except Exception as e:
+            logger.error(f"站点 {site_name} 获取邀请页面内容失败: {str(e)}")
+            logger.exception(e)
+            return "" 

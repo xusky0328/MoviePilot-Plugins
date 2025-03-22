@@ -36,7 +36,7 @@ class nexusinvitee(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png"
     # 插件版本
-    plugin_version = "1.0.5"
+    plugin_version = "1.0.6"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -248,12 +248,25 @@ class nexusinvitee(_PluginBase):
             total_invitees = 0
             total_low_ratio = 0
             total_banned = 0
+            total_perm_invites = 0
+            total_temp_invites = 0
 
             for site_name, cache in cached_data.items():
-                invite_data = cache.get("data", {})
-                invitees = invite_data.get("invitees", [])
+                site_cache_data = cache.get("data", {})
+                # 处理数据结构
+                invitees = site_cache_data.get("invitees", [])
+                if not invitees and "data" in site_cache_data:
+                    invitees = site_cache_data.get("data", {}).get("invitees", [])
+                
+                invite_status = site_cache_data.get("invite_status", {})
+                if not invite_status.get("permanent_count") and "data" in site_cache_data:
+                    invite_status = site_cache_data.get("data", {}).get("invite_status", {})
+                
+                # 统计各项数据
                 total_invitees += len(invitees)
-
+                total_perm_invites += invite_status.get("permanent_count", 0)
+                total_temp_invites += invite_status.get("temporary_count", 0)
+                
                 # 计算分享率低和被ban的用户
                 for invitee in invitees:
                     # 检查是否被ban
@@ -321,14 +334,14 @@ class nexusinvitee(_PluginBase):
                                                     "component": "VIcon",
                                                     "props": {
                                                         "size": "36",
-                                                        "color": "primary",
+                                                        "color": "#2196F3",
                                                         "class": "mb-2"
                                                     },
                                                     "text": "mdi-web"
                                                 },
                                                 {
                                                     "component": "div",
-                                                    "props": {"class": "text-h5"},
+                                                    "props": {"class": "text-h5 primary--text"},
                                                     "text": str(total_sites)
                                                 },
                                                 {
@@ -341,7 +354,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 3},
+                                        "props": {"cols": 2},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -352,14 +365,14 @@ class nexusinvitee(_PluginBase):
                                                     "component": "VIcon",
                                                     "props": {
                                                         "size": "36",
-                                                        "color": "info",
+                                                        "color": "#03A9F4",
                                                         "class": "mb-2"
                                                     },
                                                     "text": "mdi-human-queue"
                                                 },
                                                 {
                                                     "component": "div",
-                                                    "props": {"class": "text-h5"},
+                                                    "props": {"class": "text-h5 info--text"},
                                                     "text": str(total_invitees)
                                                 },
                                                 {
@@ -372,7 +385,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 3},
+                                        "props": {"cols": 2},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -383,27 +396,27 @@ class nexusinvitee(_PluginBase):
                                                     "component": "VIcon",
                                                     "props": {
                                                         "size": "36",
-                                                        "color": "warning",
+                                                        "color": "#9C27B0",
                                                         "class": "mb-2"
                                                     },
-                                                    "text": "mdi-alert-circle"
+                                                    "text": "mdi-ticket-confirmation"
                                                 },
                                                 {
                                                     "component": "div",
-                                                    "props": {"class": "text-h5 text-warning"},
-                                                    "text": str(total_low_ratio)
+                                                    "props": {"class": "text-h5 purple--text"},
+                                                    "text": str(total_perm_invites)
                                                 },
                                                 {
                                                     "component": "div",
                                                     "props": {"class": "text-caption"},
-                                                    "text": "低分享率成员"
+                                                    "text": "永久邀请数"
                                                 }
                                             ]
                                         }]
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 3},
+                                        "props": {"cols": 2},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -414,20 +427,82 @@ class nexusinvitee(_PluginBase):
                                                     "component": "VIcon",
                                                     "props": {
                                                         "size": "36",
-                                                        "color": "error",
+                                                        "color": "#E91E63",
+                                                        "class": "mb-2"
+                                                    },
+                                                    "text": "mdi-ticket"
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-h5 pink--text"},
+                                                    "text": str(total_temp_invites)
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-caption"},
+                                                    "text": "临时邀请数"
+                                                }
+                                            ]
+                                        }]
+                                    },
+                                    {
+                                        "component": "VCol",
+                                        "props": {"cols": 1.5},
+                                        "content": [{
+                                            "component": "div",
+                                            "props": {
+                                                "class": "text-center"
+                                            },
+                                            "content": [
+                                                {
+                                                    "component": "VIcon",
+                                                    "props": {
+                                                        "size": "36",
+                                                        "color": "#FF9800",
+                                                        "class": "mb-2"
+                                                    },
+                                                    "text": "mdi-alert-circle"
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-h5 warning--text"},
+                                                    "text": str(total_low_ratio)
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-caption"},
+                                                    "text": "低分享率"
+                                                }
+                                            ]
+                                        }]
+                                    },
+                                    {
+                                        "component": "VCol",
+                                        "props": {"cols": 1.5},
+                                        "content": [{
+                                            "component": "div",
+                                            "props": {
+                                                "class": "text-center"
+                                            },
+                                            "content": [
+                                                {
+                                                    "component": "VIcon",
+                                                    "props": {
+                                                        "size": "36",
+                                                        "color": "#F44336",
                                                         "class": "mb-2"
                                                     },
                                                     "text": "mdi-account-cancel"
                                                 },
                                                 {
                                                     "component": "div",
-                                                    "props": {"class": "text-h5 text-error"},
+                                                    "props": {"class": "text-h5 error--text"},
                                                     "text": str(total_banned)
                                                 },
                                                 {
                                                     "component": "div",
                                                     "props": {"class": "text-caption"},
-                                                    "text": "已禁用成员"
+                                                    "text": "已禁用"
                                                 }
                                             ]
                                         }]
@@ -446,7 +521,7 @@ class nexusinvitee(_PluginBase):
                     "props": {
                         "type": "info",
                         "variant": "tonal",
-                        "text": "暂无站点数据，请先在插件设置中选择要管理的站点。"
+                        "text": "暂无站点数据，请先在配置中选择要管理的站点。"
                     }
                 }]
             
@@ -468,7 +543,7 @@ class nexusinvitee(_PluginBase):
                     "variant": "tonal",
                     "text": f"生成仪表盘失败: {str(e)}"
                 }
-            }]
+        }]
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         """
@@ -669,6 +744,20 @@ class nexusinvitee(_PluginBase):
 
             # 准备页面内容
             page_content = []
+            
+            # 添加样式，优化表格
+            page_content.append({
+                "component": "style",
+                "text": """
+                .site-invitees-table {
+                    width: auto !important;
+                }
+                .site-invitees-table th, .site-invitees-table td {
+                    padding: 4px 8px !important;
+                    white-space: nowrap;
+                }
+                """
+            })
 
             # 添加头部信息和提示
             page_content.append({
@@ -700,11 +789,24 @@ class nexusinvitee(_PluginBase):
             total_invitees = 0
             total_low_ratio = 0
             total_banned = 0
+            total_perm_invites = 0
+            total_temp_invites = 0
 
             for site_name, cache in cached_data.items():
-                invite_data = cache.get("data", {})
-                invitees = invite_data.get("invitees", [])
+                site_cache_data = cache.get("data", {})
+                # 处理数据结构
+                invitees = site_cache_data.get("invitees", [])
+                if not invitees and "data" in site_cache_data:
+                    invitees = site_cache_data.get("data", {}).get("invitees", [])
+                
+                invite_status = site_cache_data.get("invite_status", {})
+                if not invite_status.get("permanent_count") and "data" in site_cache_data:
+                    invite_status = site_cache_data.get("data", {}).get("invite_status", {})
+                    
+                # 统计各项数据
                 total_invitees += len(invitees)
+                total_perm_invites += invite_status.get("permanent_count", 0)
+                total_temp_invites += invite_status.get("temporary_count", 0)
 
                 # 计算分享率低和被ban的用户
                 for invitee in invitees:
@@ -756,14 +858,14 @@ class nexusinvitee(_PluginBase):
                                                     "component": "VIcon",
                                                     "props": {
                                                         "size": "36",
-                                                        "color": "primary",
+                                                        "color": "#2196F3",
                                                         "class": "mb-2"
                                                     },
                                                     "text": "mdi-web"
                                                 },
                                                 {
                                                     "component": "div",
-                                                    "props": {"class": "text-h5"},
+                                                    "props": {"class": "text-h5 primary--text"},
                                                     "text": str(total_sites)
                                                 },
                                                 {
@@ -776,7 +878,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 3},
+                                        "props": {"cols": 2},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -787,14 +889,14 @@ class nexusinvitee(_PluginBase):
                                                     "component": "VIcon",
                                                     "props": {
                                                         "size": "36",
-                                                        "color": "info",
+                                                        "color": "#03A9F4",
                                                         "class": "mb-2"
                                                     },
                                                     "text": "mdi-human-queue"
                                                 },
                                                 {
                                                     "component": "div",
-                                                    "props": {"class": "text-h5"},
+                                                    "props": {"class": "text-h5 info--text"},
                                                     "text": str(total_invitees)
                                                 },
                                                 {
@@ -807,7 +909,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 3},
+                                        "props": {"cols": 2},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -818,27 +920,27 @@ class nexusinvitee(_PluginBase):
                                                     "component": "VIcon",
                                                     "props": {
                                                         "size": "36",
-                                                        "color": "warning",
+                                                        "color": "#9C27B0",
                                                         "class": "mb-2"
                                                     },
-                                                    "text": "mdi-alert-circle"
+                                                    "text": "mdi-ticket-confirmation"
                                                 },
                                                 {
                                                     "component": "div",
-                                                    "props": {"class": "text-h5 text-warning"},
-                                                    "text": str(total_low_ratio)
+                                                    "props": {"class": "text-h5 purple--text"},
+                                                    "text": str(total_perm_invites)
                                                 },
                                                 {
                                                     "component": "div",
                                                     "props": {"class": "text-caption"},
-                                                    "text": "低分享率成员"
+                                                    "text": "永久邀请数"
                                                 }
                                             ]
                                         }]
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 3},
+                                        "props": {"cols": 2},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -849,20 +951,82 @@ class nexusinvitee(_PluginBase):
                                                     "component": "VIcon",
                                                     "props": {
                                                         "size": "36",
-                                                        "color": "error",
+                                                        "color": "#E91E63",
+                                                        "class": "mb-2"
+                                                    },
+                                                    "text": "mdi-ticket"
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-h5 pink--text"},
+                                                    "text": str(total_temp_invites)
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-caption"},
+                                                    "text": "临时邀请数"
+                                                }
+                                            ]
+                                        }]
+                                    },
+                                    {
+                                        "component": "VCol",
+                                        "props": {"cols": 1.5},
+                                        "content": [{
+                                            "component": "div",
+                                            "props": {
+                                                "class": "text-center"
+                                            },
+                                            "content": [
+                                                {
+                                                    "component": "VIcon",
+                                                    "props": {
+                                                        "size": "36",
+                                                        "color": "#FF9800",
+                                                        "class": "mb-2"
+                                                    },
+                                                    "text": "mdi-alert-circle"
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-h5 warning--text"},
+                                                    "text": str(total_low_ratio)
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-caption"},
+                                                    "text": "低分享率"
+                                                }
+                                            ]
+                                        }]
+                                    },
+                                    {
+                                        "component": "VCol",
+                                        "props": {"cols": 1.5},
+                                        "content": [{
+                                            "component": "div",
+                                            "props": {
+                                                "class": "text-center"
+                                            },
+                                            "content": [
+                                                {
+                                                    "component": "VIcon",
+                                                    "props": {
+                                                        "size": "36",
+                                                        "color": "#F44336",
                                                         "class": "mb-2"
                                                     },
                                                     "text": "mdi-account-cancel"
                                                 },
                                                 {
                                                     "component": "div",
-                                                    "props": {"class": "text-h5 text-error"},
+                                                    "props": {"class": "text-h5 error--text"},
                                                     "text": str(total_banned)
                                                 },
                                                 {
                                                     "component": "div",
                                                     "props": {"class": "text-caption"},
-                                                    "text": "已禁用成员"
+                                                    "text": "已禁用"
                                                 }
                                             ]
                                         }]
@@ -885,8 +1049,18 @@ class nexusinvitee(_PluginBase):
                         break
                 
                 if site_info:
+                    # 获取站点数据
+                    site_cache_data = cache.get("data", {})
+                    # 处理数据结构
+                    invitees = site_cache_data.get("invitees", [])
+                    if not invitees and "data" in site_cache_data:
+                        invitees = site_cache_data.get("data", {}).get("invitees", [])
+                    
+                    invite_status = site_cache_data.get("invite_status", {})
+                    if not invite_status.get("permanent_count") and "data" in site_cache_data:
+                        invite_status = site_cache_data.get("data", {}).get("invite_status", {})
+                    
                     # 计算此站点的统计信息
-                    invitees = invite_data.get("invitees", [])
                     banned_count = sum(1 for i in invitees if i.get(
                         'enabled', '').lower() == 'no')
                     low_ratio_count = 0
@@ -1017,7 +1191,7 @@ class nexusinvitee(_PluginBase):
                                                             "component": "VIcon",
                                                     "props": {
                                                                 "size": "24",
-                                                                "color": "primary",
+                                                                "color": "#9C27B0",
                                                                 "class": "mr-2"
                                                     },
                                                             "text": "mdi-ticket-confirmation"
@@ -1027,8 +1201,8 @@ class nexusinvitee(_PluginBase):
                                                     "content": [
                                                         {
                                                             "component": "div",
-                                                                    "props": {"class": "text-body-1 font-weight-medium"},
-                                                                    "text": str(invite_data.get("invite_status", {}).get("normal_invite_count", 0))
+                                                                    "props": {"class": "text-body-1 font-weight-medium purple--text"},
+                                                                    "text": str(invite_status.get("permanent_count", 0))
                                                         },
                                                         {
                                                             "component": "div",
@@ -1053,18 +1227,18 @@ class nexusinvitee(_PluginBase):
                                                             "component": "VIcon",
                                                             "props": {
                                                                 "size": "24",
-                                                                "color": "info",
+                                                                "color": "#E91E63",
                                                                 "class": "mr-2"
                                                             },
-                                                            "text": "mdi-ticket-outline"
+                                                            "text": "mdi-ticket"
                                                         },
                                                         {
                                                             "component": "div",
                                                             "content": [
                                                                 {
                                                                     "component": "div",
-                                                                    "props": {"class": "text-body-1 font-weight-medium"},
-                                                                    "text": str(invite_data.get("invite_status", {}).get("temp_invite_count", 0))
+                                                                    "props": {"class": "text-body-1 font-weight-medium pink--text"},
+                                                                    "text": str(invite_status.get("temporary_count", 0))
                                                         },
                                                         {
                                                             "component": "div",
@@ -1089,7 +1263,7 @@ class nexusinvitee(_PluginBase):
                                                             "component": "VIcon",
                                                             "props": {
                                                                 "size": "24",
-                                                                "color": "success",
+                                                                "color": "#4CAF50",
                                                                 "class": "mr-2"
                                                             },
                                                             "text": "mdi-account-group"
@@ -1099,7 +1273,7 @@ class nexusinvitee(_PluginBase):
                                                             "content": [
                                                                 {
                                                                     "component": "div",
-                                                                    "props": {"class": "text-body-1 font-weight-medium"},
+                                                                    "props": {"class": "text-body-1 font-weight-medium success--text"},
                                                                     "text": str(len(invitees))
                                                         },
                                                         {
@@ -1125,18 +1299,19 @@ class nexusinvitee(_PluginBase):
                                                             "component": "VIcon",
                                                             "props": {
                                                                 "size": "24",
-                                                                "color": "success" if invite_data.get("invite_status", {}).get("can_invite") else "error",
+                                                                "color": "#4CAF50" if invite_status.get("can_invite") else "#F44336",
                                                                 "class": "mr-2"
                                                             },
-                                                            "text": "mdi-check-circle" if invite_data.get("invite_status", {}).get("can_invite") else "mdi-close-circle"
+                                                            "text": "mdi-check-circle" if invite_status.get("can_invite") else "mdi-close-circle"
                                                         },
                                                         {
                                                             "component": "div",
                                                             "content": [
                                                                 {
                                                                     "component": "div",
-                                                                    "props": {"class": "text-body-1 font-weight-medium"},
-                                                            "text": "可邀请" if invite_data.get("invite_status", {}).get("can_invite") else "不可邀请"
+                                                                    "props": {"class": "text-body-1 font-weight-medium " + 
+                                                                            ("success--text" if invite_status.get("can_invite") else "error--text")},
+                                                                    "text": "可邀请" if invite_status.get("can_invite") else "不可邀请"
                                                         },
                                                         {
                                                             "component": "div",
@@ -1158,7 +1333,9 @@ class nexusinvitee(_PluginBase):
                     # 添加错误信息或不可邀请原因的显示部分
                     # 获取错误信息和不可邀请原因
                     error_message = cache.get("error", "")
-                    invite_status = invite_data.get("invite_status", {})
+                    invite_status = site_cache_data.get("invite_status", {})
+                    if not invite_status.get("can_invite") is not None and "data" in site_cache_data:
+                        invite_status = site_cache_data.get("data", {}).get("invite_status", {})
                     can_invite = invite_status.get("can_invite", False)
                     reason = invite_status.get("reason", "")
 
@@ -1184,9 +1361,9 @@ class nexusinvitee(_PluginBase):
                         })
 
                     # 只有在有邀请列表时才添加表格
-                    if invite_data.get("invitees"):
+                    if invitees:
                         table_rows = []
-                        for invitee in invite_data.get("invitees", []):
+                        for invitee in invitees:
                             # 判断用户是否被ban或分享率较低
                             is_banned = invitee.get(
                                 'enabled', '').lower() == 'no'
@@ -1288,8 +1465,8 @@ class nexusinvitee(_PluginBase):
                                 "props": {
                                     "hover": True,
                                     "density": "compact",
-                                    "fixed-header": True,
-                                    "class": "site-invitees-table"
+                                    "fixed-header": False,
+                                    "class": "site-invitees-table",
                                 },
                                 "content": [{
                                     "component": "thead",
@@ -1299,13 +1476,9 @@ class nexusinvitee(_PluginBase):
                                             "class": "bg-primary-lighten-5"
                                         },
                                         "content": [
-                                            {"component": "th", "props": {"class": "text-subtitle-2"}, "text": "用户名"},
-                                            {"component": "th", "props": {"class": "text-subtitle-2"}, "text": "邮箱"},
-                                            {"component": "th", "props": {"class": "text-subtitle-2"}, "text": "上传量"},
-                                            {"component": "th", "props": {"class": "text-subtitle-2"}, "text": "下载量"},
                                             {
                                                 "component": "th", 
-                                                "props": {"class": "text-subtitle-2"},
+                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
                                                 "content": [
                                                     {
                                                         "component": "div",
@@ -1318,7 +1491,115 @@ class nexusinvitee(_PluginBase):
                                                                 "props": {
                                                                     "size": "small",
                                                                     "class": "mr-1",
-                                                                    "color": "primary"
+                                                                    "color": "#2196F3"
+                                                                },
+                                                                "text": "mdi-account"
+                                                            },
+                                                            {
+                                                                "component": "span",
+                                                                "text": "用户名"
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "component": "th", 
+                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "content": [
+                                                    {
+                                                        "component": "div",
+                                                        "props": {
+                                                            "class": "d-flex align-center justify-center"
+                                                        },
+                                                        "content": [
+                                                            {
+                                                                "component": "VIcon",
+                                                                "props": {
+                                                                    "size": "small",
+                                                                    "class": "mr-1",
+                                                                    "color": "#2196F3"
+                                                                },
+                                                                "text": "mdi-email"
+                                                            },
+                                                            {
+                                                                "component": "span",
+                                                                "text": "邮箱"
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "component": "th", 
+                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "content": [
+                                                    {
+                                                        "component": "div",
+                                                        "props": {
+                                                            "class": "d-flex align-center justify-center"
+                                                        },
+                                                        "content": [
+                                                            {
+                                                                "component": "VIcon",
+                                                                "props": {
+                                                                    "size": "small",
+                                                                    "class": "mr-1",
+                                                                    "color": "#4CAF50"
+                                                                },
+                                                                "text": "mdi-arrow-up-thick"
+                                                            },
+                                                            {
+                                                                "component": "span",
+                                                                "text": "上传量"
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "component": "th", 
+                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "content": [
+                                                    {
+                                                        "component": "div",
+                                                        "props": {
+                                                            "class": "d-flex align-center justify-center"
+                                                        },
+                                                        "content": [
+                                                            {
+                                                                "component": "VIcon",
+                                                                "props": {
+                                                                    "size": "small",
+                                                                    "class": "mr-1",
+                                                                    "color": "#F44336"
+                                                                },
+                                                                "text": "mdi-arrow-down-thick"
+                                                            },
+                                                            {
+                                                                "component": "span",
+                                                                "text": "下载量"
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "component": "th", 
+                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "content": [
+                                                    {
+                                                        "component": "div",
+                                                        "props": {
+                                                            "class": "d-flex align-center justify-center"
+                                                        },
+                                                        "content": [
+                                                            {
+                                                                "component": "VIcon",
+                                                                "props": {
+                                                                    "size": "small",
+                                                                    "class": "mr-1",
+                                                                    "color": "#FF9800"
                                                                 },
                                                                 "text": "mdi-poll"
                                                             },
@@ -1330,12 +1611,9 @@ class nexusinvitee(_PluginBase):
                                                     }
                                                 ]
                                             },
-                                            {"component": "th", "props": {"class": "text-subtitle-2"}, "text": "做种数"},
-                                            {"component": "th", "props": {"class": "text-subtitle-2"}, "text": "做种体积"},
-                                            {"component": "th", "props": {"class": "text-subtitle-2"}, "text": "做种时魔"},
                                             {
                                                 "component": "th", 
-                                                "props": {"class": "text-subtitle-2"},
+                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
                                                 "content": [
                                                     {
                                                         "component": "div",
@@ -1348,7 +1626,88 @@ class nexusinvitee(_PluginBase):
                                                                 "props": {
                                                                     "size": "small",
                                                                     "class": "mr-1",
-                                                                    "color": "success"
+                                                                    "color": "#2196F3"
+                                                                },
+                                                                "text": "mdi-database"
+                                                            },
+                                                            {
+                                                                "component": "span",
+                                                                "text": "做种数"
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "component": "th", 
+                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "content": [
+                                                    {
+                                                        "component": "div",
+                                                        "props": {
+                                                            "class": "d-flex align-center justify-center"
+                                                        },
+                                                        "content": [
+                                                            {
+                                                                "component": "VIcon",
+                                                                "props": {
+                                                                    "size": "small",
+                                                                    "class": "mr-1",
+                                                                    "color": "#1976D2"
+                                                                },
+                                                                "text": "mdi-harddisk"
+                                                            },
+                                                            {
+                                                                "component": "span",
+                                                                "text": "做种体积"
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "component": "th", 
+                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "content": [
+                                                    {
+                                                        "component": "div",
+                                                        "props": {
+                                                            "class": "d-flex align-center justify-center"
+                                                        },
+                                                        "content": [
+                                                            {
+                                                                "component": "VIcon",
+                                                                "props": {
+                                                                    "size": "small",
+                                                                    "class": "mr-1",
+                                                                    "color": "#3F51B5"
+                                                                },
+                                                                "text": "mdi-clock-outline"
+                                                            },
+                                                            {
+                                                                "component": "span",
+                                                                "text": "做种时魔"
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "component": "th", 
+                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "content": [
+                                                    {
+                                                        "component": "div",
+                                                        "props": {
+                                                            "class": "d-flex align-center justify-center"
+                                                        },
+                                                        "content": [
+                                                            {
+                                                                "component": "VIcon",
+                                                                "props": {
+                                                                    "size": "small",
+                                                                    "class": "mr-1",
+                                                                    "color": "#9C27B0"
                                                                 },
                                                                 "text": "mdi-crown"
                                                             },
@@ -1360,10 +1719,9 @@ class nexusinvitee(_PluginBase):
                                                     }
                                                 ]
                                             },
-                                            {"component": "th", "props": {"class": "text-subtitle-2"}, "text": "最后做种报告"},
                                             {
                                                 "component": "th", 
-                                                "props": {"class": "text-subtitle-2"},
+                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
                                                 "content": [
                                                     {
                                                         "component": "div",
@@ -1376,7 +1734,34 @@ class nexusinvitee(_PluginBase):
                                                                 "props": {
                                                                     "size": "small",
                                                                     "class": "mr-1",
-                                                                    "color": "info"
+                                                                    "color": "#00BCD4"
+                                                                },
+                                                                "text": "mdi-calendar-clock"
+                                                            },
+                                                            {
+                                                                "component": "span",
+                                                                "text": "最后做种报告"
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "component": "th", 
+                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "content": [
+                                                    {
+                                                        "component": "div",
+                                                        "props": {
+                                                            "class": "d-flex align-center justify-center"
+                                                        },
+                                                        "content": [
+                                                            {
+                                                                "component": "VIcon",
+                                                                "props": {
+                                                                    "size": "small",
+                                                                    "class": "mr-1",
+                                                                    "color": "#00BCD4"
                                                                 },
                                                                 "text": "mdi-information"
                                                             },
@@ -1667,14 +2052,15 @@ class nexusinvitee(_PluginBase):
                         except Exception as import_err:
                             logger.error(f"导入通用NexusPHP处理器失败: {str(import_err)}")
                     return {
-                                "error": f"找不到匹配的站点处理器，且后备处理器加载失败",
+                            "error": f"找不到匹配的站点处理器，且后备处理器加载失败",
                         "invite_status": {
                             "can_invite": False,
                             "permanent_count": 0,
                             "temporary_count": 0,
-                                    "reason": f"找不到匹配的站点处理器，且后备处理器加载失败"
-                                }
-                            }
+                                "reason": f"找不到匹配的站点处理器，且后备处理器加载失败"
+                            },
+                            "invitees": []
+                        }
                 except Exception as e:
                     logger.error(f"处理站点 {site_name} 失败: {str(e)}")
                     return {
@@ -2067,6 +2453,155 @@ class nexusinvitee(_PluginBase):
         except Exception as e:
             logger.error(f"获取用户ID失败: {str(e)}")
             return ""
+
+    def refresh_site_info(self, site_id):
+        """
+        刷新站点信息
+        """
+        site_info = self.get_site_info(site_id)
+        if not site_info:
+            return {
+                "code": 1,
+                "msg": "站点不存在"
+            }
+        # 回调消息
+        self.eventmanager.send_event(EventType.TransactionUpdate, {
+            "event_data": {
+                "title": "刷新站点信息",
+                "type_str": "站点信息",
+                "f_id": site_id,
+                "s_id": 0,
+                "status": "处理中"
+            }
+        })
+        # 查询站点信息
+        _site_message = PluginHelper().get_site_info(site_info.get("url"))
+        if not _site_message or not _site_message.get("cookie"):
+            return {
+                "code": 1,
+                "msg": "站点不存在"
+            }
+        cookies = _site_message.get("cookie")
+        ua = _site_message.get("ua")
+        # 获取站点处理器
+        _site_name = site_info.get("name")
+        _site_id = site_id
+        _site_url = site_info.get("url")
+        try:
+            # 根据站点类型选择处理器
+            if self._is_nexusphp(_site_url):
+                nexus_handler = self._load_site_handler("nexusphp")
+                if nexus_handler:
+                    nexus_handler.set_cookie(cookies)
+                    nexus_handler.set_ua(ua)
+                    # 创建会话并获取HTML内容
+                    session = nexus_handler.create_session(_site_url, cookies)
+                    content = nexus_handler.get_invite_page_content(_site_name, _site_url, session)
+                    # 解析邀请页面
+                    result = nexus_handler.parse_invite_page(_site_name, _site_url, content)
+                else:
+                    return {
+                        "code": 1,
+                        "msg": "未找到NexusPhp站点处理器"
+                    }
+            else:
+                # 尝试蝶粉站点
+                butterfly_handler = self._load_site_handler("butterfly")
+                if butterfly_handler:
+                    butterfly_handler.set_cookie(cookies)
+                    butterfly_handler.set_ua(ua)
+                    # 创建会话并获取HTML内容
+                    session = butterfly_handler.create_session(_site_url, cookies)
+                    content = butterfly_handler.get_invite_page_content(_site_name, _site_url, session)
+                    # 解析邀请页面
+                    result = butterfly_handler.parse_invite_page(_site_name, _site_url, content)
+                else:
+                    return {
+                        "code": 1,
+                        "msg": "未找到蝶粉站点处理器"
+                    }
+            
+            # 处理结果
+            if result:
+                invite_status = result.get("invite_status", {})
+                invitees = result.get("invitees", [])
+                
+                # 更新站点统计
+                site_info["can_invite"] = invite_status.get("can_invite", False)
+                site_info["invite_reason"] = invite_status.get("reason", "")
+                site_info["permanent_invite_count"] = invite_status.get("permanent_count", 0)
+                site_info["temporary_invite_count"] = invite_status.get("temporary_count", 0)
+                site_info["refresh_time"] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
+                
+                # 保存站点信息
+                self.update_site_info(site_info)
+                
+                # 处理邀请者
+                self.save_invitees(_site_id, invitees)
+                
+                # 发送成功消息
+                self.eventmanager.send_event(EventType.TransactionUpdate, {
+                    "event_data": {
+                        "title": "刷新站点信息",
+                        "type_str": "站点信息",
+                        "f_id": site_id,
+                        "s_id": 0,
+                        "status": "成功"
+                    }
+                })
+                
+                logger.info(f"站点 {_site_name} 信息刷新成功，后宫成员数: {len(invitees)}")
+                
+                # 发送通知
+                if invite_status.get("can_invite", False):
+                    invite_count = invite_status.get("permanent_count", 0) + invite_status.get("temporary_count", 0)
+                    if invite_count > 0:
+                        NotificationHelper.send_notification(
+                            self,
+                            title=f"站点 {_site_name} 可邀请",
+                            text=f"站点 {_site_name} 可邀请，永久邀请数: {invite_status.get('permanent_count', 0)}，临时邀请数: {invite_status.get('temporary_count', 0)}"
+                        )
+                
+                return {
+                    "code": 0,
+                    "msg": "站点信息刷新成功"
+                }
+            else:
+                # 发送失败消息
+                self.eventmanager.send_event(EventType.TransactionUpdate, {
+                    "event_data": {
+                        "title": "刷新站点信息",
+                        "type_str": "站点信息",
+                        "f_id": site_id,
+                        "s_id": 0,
+                        "status": "失败"
+                    }
+                })
+                
+                return {
+                    "code": 1,
+                    "msg": "未能解析邀请页面，请检查站点Cookie是否有效"
+                }
+        
+        except Exception as e:
+            logger.error(f"刷新站点信息失败: {str(e)}")
+            logger.exception(e)
+            
+            # 发送失败消息
+            self.eventmanager.send_event(EventType.TransactionUpdate, {
+                "event_data": {
+                    "title": "刷新站点信息",
+                    "type_str": "站点信息",
+                    "f_id": site_id,
+                    "s_id": 0,
+                    "status": "失败"
+                }
+            })
+            
+            return {
+                "code": 1,
+                "msg": f"刷新站点信息失败: {str(e)}"
+            }
 
 
 # 插件类导出
