@@ -4,23 +4,24 @@ NexusPHP站点邀请系统管理插件
 import os
 import json
 import time
-import requests
-from urllib.parse import urljoin
-from typing import Any, List, Dict, Tuple, Optional
-from datetime import datetime
-from bs4 import BeautifulSoup
 import re
+import threading
+from typing import List, Dict, Tuple, Any, Optional
+from urllib.parse import urljoin
 
+import requests
+from bs4 import BeautifulSoup
 from app.core.config import settings
-from app.plugins import _PluginBase
-from app.log import logger
-from app.schemas import Response
-from app.schemas.types import NotificationType
-from app.core.event import eventmanager
-from app.schemas.types import EventType
-from app.db.site_oper import SiteOper
+from app.core.plugin import _PluginBase
 from app.helper.sites import SitesHelper
-from apscheduler.triggers.cron import CronTrigger
+from app.helper.site_oper import SiteOper
+from app.log import logger
+from flask import Response
+
+from plugins.nexusinvitee.config import ConfigManager
+from plugins.nexusinvitee.data import DataManager
+from plugins.nexusinvitee.utils import NotificationHelper, SiteHelper
+from plugins.nexusinvitee.module_loader import ModuleLoader
 
 
 class nexusinvitee(_PluginBase):
@@ -31,7 +32,7 @@ class nexusinvitee(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png"
     # 插件版本
-    plugin_version = "1.0.0"
+    plugin_version = "1.0.1"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -44,126 +45,149 @@ class nexusinvitee(_PluginBase):
     auth_level = 2
 
     # 私有属性
-    _config = {}  # 改为统一的配置字典
+    _config = {}  # 配置字典
     _enabled = False
     _notify = False
     _cron = "0 */4 * * *"  # 默认每4小时检查一次
     _onlyonce = False
-    _nexus_sites = []  # 改为列表支持多选
+    _nexus_sites = []  # 支持多选的站点列表
     
     # 站点助手
     sites: SitesHelper = None
     siteoper: SiteOper = None
     
-    # 配置文件路径
-    config_file = None
+    # 配置和数据管理器
+    config_manager: ConfigManager = None
+    data_manager: DataManager = None
+    
+    # 通知助手
+    notify_helper: NotificationHelper = None
+    
+    # 站点处理器列表
+    _site_handlers = []
 
     def init_plugin(self, config=None):
         """
         插件初始化
         """
-        self.sites = SitesHelper()
-        self.siteoper = SiteOper()
-        
-        # 获取数据目录
-        data_path = self.get_data_path()
-        
-        # 确保目录存在
-        if not os.path.exists(data_path):
-            try:
-                os.makedirs(data_path)
-            except Exception as e:
-                logger.error(f"创建数据目录失败: {str(e)}")
-        
-        # 设置配置文件路径
-        self.config_file = os.path.join(data_path, "config.json")
-        
-        # 初始化时从文件加载配置到内存
-        self._sync_from_file()
-
-        # 刷新插件配置
-        if config:
-            self._config = config
-            # 保存配置
-            self._site_ids = config.get("site_ids", [])
-            self._cron = config.get("cron")
-            self._onlyonce = config.get("onlyonce", False)
-            self._save_config()
-
-            # 立即刷新数据开关
-            if self._onlyonce:
-                # 关闭开关
-                self._config['onlyonce'] = False
-                self._onlyonce = False
-                self._save_config()
-                # 立即刷新
-                logger.info(f"手动触发刷新站点数据...")
-                self.post_message(
-                    mtype=NotificationType.SiteMessage,
-                    title="后宫管理系统",
-                    text="正在刷新所有站点后宫数据..."
-                )
-                self.refresh_all_sites()
-        
-        # 统计实际选中的站点数量
-        selected_sites = len([site for site in self.sites.get_indexers() 
-                              if str(site.get("id")) in [str(x) for x in self._site_ids]])
-        logger.info(f"后宫管理系统初始化完成，已选择 {selected_sites} 个站点")
-
-    def _sync_from_file(self):
-        """
-        从配置文件同步到内存
-        """
-        if not os.path.exists(self.config_file):
-            return False
-
         try:
-            # 读取文件内容
-            with open(self.config_file, 'r', encoding='utf-8') as f:
-                config = json.load(f)
+            self.sites = SitesHelper()
+            self.siteoper = SiteOper()
             
-            # 更新内存中的配置
-            self._config = config
-            self._enabled = bool(config.get("enabled", False))
-            self._notify = bool(config.get("notify", False))
-            self._cron = str(config.get("cron", "0 */4 * * *"))
-            self._onlyonce = bool(config.get("onlyonce", False))
-            self._site_ids = config.get("site_ids", [])
+            # 获取数据目录
+            root_path = settings.ROOT_PATH
+            data_path = os.path.join(root_path, "plugins", "nexusinvitee", "data")
+            
+            # 创建数据目录
+            if not os.path.exists(data_path):
+                try:
+                    os.makedirs(data_path)
+                except Exception as e:
+                    logger.error(f"创建数据目录失败: {str(e)}")
+            
+            # 配置文件路径
+            self.config_file = os.path.join(data_path, "config.json")
+            
+            # 初始化配置和数据管理器
+            self.config_manager = ConfigManager(data_path)
+            self.data_manager = DataManager(data_path)
+            
+            # 初始化通知助手
+            self.notify_helper = NotificationHelper(self)
+            
+            # 加载站点处理器
+            self._site_handlers = ModuleLoader.load_site_handlers()
+            logger.info(f"加载了 {len(self._site_handlers)} 个站点处理器")
+            
+            # 加载配置
+            self._sync_from_file()
+            
+            # 更新配置
+            if config:
+                self._enabled = config.get("enabled", False)
+                self._notify = config.get("notify", False)
+                self._cron = config.get("cron", "0 */4 * * *")
+                self._onlyonce = config.get("onlyonce", False)
+                self._nexus_sites = config.get("nexus_sites", [])
+                
+                # 更新配置文件
+                self._sync_to_file()
+            
+            # 如果开启了立即运行一次，则立即刷新所有站点数据
+            if self._onlyonce:
+                # 重置开关
+                self._onlyonce = False
+                self._config["onlyonce"] = False
+                self._sync_to_file()
+                
+                # 异步刷新站点数据
+                threading.Thread(target=self._async_refresh_sites).start()
+            
+            logger.info(f"后宫管理系统初始化完成，启用状态: {self._enabled}")
             return True
         except Exception as e:
-            logger.error(f"读取配置文件失败: {str(e)}")
+            logger.error(f"后宫管理系统初始化失败: {str(e)}")
             return False
 
-    def _sync_to_file(self):
+    def _save_config(self):
         """
-        将内存配置同步到文件
+        保存配置
         """
-        try:
-            with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(self._config, f, ensure_ascii=False, indent=2)
-            return True
-        except Exception as e:
-            logger.error(f"保存配置到文件失败: {str(e)}")
-            return False
-
-    def __update_config(self):
-        """
-        更新配置
-        """
-        self._config.update({
+        config = {
             "enabled": self._enabled,
             "notify": self._notify,
             "cron": self._cron,
             "onlyonce": self._onlyonce,
-            "site_ids": self._site_ids
-        })
-        self._sync_to_file()
+            "site_ids": self._nexus_sites
+        }
+        return self.config_manager.update_config(config)
+    
+    def _async_refresh_sites(self):
+        """
+        异步刷新所有站点数据
+        """
+        try:
+            # 发送开始刷新通知
+            if self._notify and self.notify_helper:
+                self.notify_helper.send_notification(
+                    title="后宫管理系统",
+                    text="正在刷新所有站点数据...",
+                    notify_switch=self._notify
+                )
+            
+            # 刷新所有站点数据
+            result = self.refresh_all_sites()
+            success_count = result.get("success", 0)
+            fail_count = result.get("fail", 0)
+            
+            # 构建通知消息
+            notify_text = f"站点数据刷新完成，成功：{success_count}，失败：{fail_count}"
+            
+            # 发送通知
+            if self._notify and self.notify_helper:
+                self.notify_helper.send_notification(
+                    title="后宫管理系统",
+                    text=notify_text,
+                    notify_switch=self._notify
+                )
+            
+            logger.info(notify_text)
+        except Exception as e:
+            logger.error(f"异步刷新站点数据失败: {str(e)}")
+            
+            # 发送错误通知
+            if self._notify and self.notify_helper:
+                self.notify_helper.send_notification(
+                    title="后宫管理系统",
+                    text=f"刷新数据失败: {str(e)}",
+                    notify_switch=self._notify
+                )
 
     def get_state(self) -> bool:
         """
         获取插件状态
         """
-        return True if self._config else False
+        return self._enabled
 
     def get_command(self) -> List[Dict[str, Any]]:
         """
@@ -193,20 +217,31 @@ class nexusinvitee(_PluginBase):
             "methods": ["GET"],
             "summary": "获取被邀请人列表",
             "description": "获取所有站点的被邀请人列表及状态",
+        }, {
+            "path": "/refresh_data",
+            "endpoint": self.refresh_data,
+            "methods": ["GET"],
+            "summary": "刷新数据",
+            "description": "强制刷新所有站点数据",
         }]
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         """
-        配置页面
+        插件配置页面
         """
-        # 获取支持的站点列表
-        site_options = []
-        for site in self.sites.get_indexers():
-            site_name = site.get("name", "")
-            site_options.append({
-                "title": site_name,
-                "value": site.get("id")
-            })
+        # 获取站点列表
+        nexus_sites = []
+        for site in self.sites.get_sites():
+            site_info = {
+                "id": site.id,
+                "name": site.name,
+                "url": site.url
+            }
+            # 检查是否为NexusPHP站点或特殊站点
+            for handler_class in self._site_handlers:
+                if handler_class.match(site.url):
+                    nexus_sites.append(site_info)
+                    break
         
         return [
             {
@@ -226,7 +261,7 @@ class nexusinvitee(_PluginBase):
                                         'component': 'VSwitch',
                                         'props': {
                                             'model': 'enabled',
-                                            'label': '启用插件'
+                                            'label': '启用插件',
                                         }
                                     }
                                 ]
@@ -242,7 +277,7 @@ class nexusinvitee(_PluginBase):
                                         'component': 'VSwitch',
                                         'props': {
                                             'model': 'notify',
-                                            'label': '发送通知'
+                                            'label': '发送通知',
                                         }
                                     }
                                 ]
@@ -258,7 +293,29 @@ class nexusinvitee(_PluginBase):
                                         'component': 'VSwitch',
                                         'props': {
                                             'model': 'onlyonce',
-                                            'label': '立即刷新数据'
+                                            'label': '立即运行一次',
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextarea',
+                                        'props': {
+                                            'model': 'cron',
+                                            'label': '执行周期',
+                                            'rows': 1,
+                                            'placeholder': '0 */4 * * *'
                                         }
                                     }
                                 ]
@@ -277,34 +334,11 @@ class nexusinvitee(_PluginBase):
                                     {
                                         'component': 'VSelect',
                                         'props': {
-                                            'model': 'site_ids',
-                                            'label': '选择站点',
-                                            'items': site_options,
-                                            'multiple': True,
                                             'chips': True,
-                                            'clearable': True,
-                                            'persistent-hint': True,
-                                            'hint': '选择要管理的站点，支持多选'
-                                        }
-                                    }
-                                ]
-                            }
-                        ]
-                    },
-                    {
-                        'component': 'VRow',
-                        'content': [
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VCronField',
-                                        'props': {
-                                            'model': 'cron',
-                                            'label': '执行周期'
+                                            'multiple': True,
+                                            'model': 'nexus_sites',
+                                            'label': '站点列表',
+                                            'items': nexus_sites
                                         }
                                     }
                                 ]
@@ -338,8 +372,8 @@ class nexusinvitee(_PluginBase):
             "enabled": self._enabled,
             "notify": self._notify,
             "cron": self._cron,
-            "onlyonce": self._onlyonce,
-            "site_ids": self._site_ids
+            "onlyonce": False,  # 每次打开配置页面时，"立即运行一次"应该是关闭的
+            "nexus_sites": self._nexus_sites
         }
 
     def _is_nexusphp(self, site_url: str) -> bool:
@@ -351,186 +385,230 @@ class nexusinvitee(_PluginBase):
 
     def get_page(self) -> List[dict]:
         """
-        详情页面
+        获取插件详情页面
+        :return: 详情页面
         """
         try:
-            # 确保先从配置文件加载最新数据
-            self._sync_from_file()
-
-            # 直接从配置文件中读取缓存的数据，而不是重新获取
-            cached_data = self._config.get("cached_data", {})
-            last_update = "未知"
-            if cached_data:
-                # 找出最新更新时间
-                update_times = [cache.get("last_update", 0)
-                                for cache in cached_data.values() if cache]
-                if update_times:
-                    last_update = time.strftime(
-                        "%Y-%m-%d %H:%M:%S", time.localtime(max(update_times)))
-
-            # 准备页面内容
-            page_content = []
-
-            # 添加头部信息和提示
-            page_content.append({
-                "component": "VAlert",
-                "props": {
-                    "type": "info",
-                    "text": f"后宫管理系统 - 共 {len(cached_data)} 个站点，数据最后更新时间: {last_update}\n注: 数据默认缓存6小时，只显示在MP中已配置并选择的站点",
-                    "variant": "tonal",
-                    "class": "mb-4"
-                }
-            })
-
-            # 添加说明提示
-            page_content.append({
-                "component": "VAlert",
-                "props": {
-                    "type": "warning",
-                    "text": "如需刷新数据，请在配置页面打开\"立即刷新数据\"开关并保存",
-                    "variant": "tonal",
-                    "class": "mb-4"
-                }
-            })
-
-            # 准备站点卡片
-            cards = []
+            # 获取所有站点数据
+            all_site_data = self.data_manager.get_site_data()
             
-            # 计算所有站点统计信息
-            total_sites = len(cached_data)
+            # 获取最后更新时间
+            last_update_time = self.data_manager.get_last_update_time()
+            last_update_str = SiteHelper.format_timestamp(last_update_time) if last_update_time else "未刷新"
+            
+            # 计算全局统计数据
+            total_sites = len(all_site_data)
             total_invitees = 0
             total_low_ratio = 0
             total_banned = 0
-
-            for site_name, cache in cached_data.items():
-                invite_data = cache.get("data", {})
-                invitees = invite_data.get("invitees", [])
-                total_invitees += len(invitees)
-
-                # 计算分享率低和被ban的用户
-                for invitee in invitees:
-                    # 检查是否被ban
-                    if invitee.get('enabled', '').lower() == 'no':
+            
+            for site_name, site_data in all_site_data.items():
+                site_invitees = site_data.get("data", {}).get("invitees", [])
+                total_invitees += len(site_invitees)
+                
+                # 计算低分享率用户数
+                for invitee in site_invitees:
+                    ratio_value = invitee.get("ratio_value", 0)
+                    if ratio_value < 1.0 and ratio_value > 0:
+                        total_low_ratio += 1
+                    if invitee.get("enabled", "").lower() == "no":
                         total_banned += 1
-
-                    # 检查分享率是否低于1
-                    ratio_str = invitee.get('ratio', '')
-                    if ratio_str != '∞' and ratio_str.lower() != 'inf.' and ratio_str.lower() != 'inf':
-                        try:
-                            # 标准化字符串，替换逗号为点
-                            ratio_str = ratio_str.replace(',', '.')
-                            ratio_val = float(ratio_str) if ratio_str else 0
-                            if ratio_val < 1:
-                                total_low_ratio += 1
-                        except (ValueError, TypeError):
-                            # 转换错误时记录警告
-                            logger.warning(f"分享率转换失败: {ratio_str}")
-
-            # 添加全局统计信息
-            page_content.append({
-                "component": "VCard",
-                "props": {
-                    "class": "mb-4",
-                    "variant": "outlined"
-                },
-                "content": [
+            
+            # 构建详情页内容
+            content = []
+            
+            # 添加页面标题和更新时间
+            content.append({
+                'component': 'VRow',
+                'content': [
                     {
-                        "component": "VCardTitle",
-                        "text": "后宫总览"
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12
+                        },
+                        'content': [
+                            {
+                                'component': 'VAlert',
+                                'props': {
+                                    'type': 'info',
+                                    'variant': 'tonal',
+                                    'text': f'后宫管理系统 - 共管理 {total_sites} 个站点，最后更新时间: {last_update_str}'
+                                }
+                            }
+                        ]
+                    }
+                ]
+            })
+            
+            # 如果没有站点数据，显示提示信息
+            if not all_site_data:
+                content.append({
+                    'component': 'VRow',
+                    'content': [
+                        {
+                            'component': 'VCol',
+                            'props': {
+                                'cols': 12
+                            },
+                            'content': [
+                                {
+                                    'component': 'VAlert',
+                                    'props': {
+                                        'type': 'warning',
+                                        'variant': 'tonal',
+                                        'text': '请先在配置页面选择要管理的站点，并开启"立即运行一次"来获取数据'
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                })
+                
+                # 返回只有提示信息的页面
+                return [
+                    {
+                        'component': 'div',
+                        'content': content
+                    }
+                ]
+            
+            # 添加全局统计卡片
+            content.append({
+                'component': 'VRow',
+                'content': [
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
+                        'content': [
+                            {
+                                'component': 'VCard',
+                                'content': [
+                                    {
+                                        'component': 'VCardText',
+                                        'props': {
+                                            'class': 'text-center'
+                                        },
+                                        'content': [
+                                            {
+                                                'component': 'div',
+                                                'props': {
+                                                    'class': 'text-h4 font-weight-bold'
+                                                },
+                                                'text': f"{total_sites}"
+                                            },
+                                            {
+                                                'component': 'div',
+                                                'text': '管理站点'
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
                     },
                     {
-                        "component": "VCardText",
-                        "content": [
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
+                        'content': [
                             {
-                                "component": "VRow",
-                                "content": [
+                                'component': 'VCard',
+                                'content': [
                                     {
-                                        "component": "VCol",
-                                        "props": {"cols": 3},
-                                        "content": [{
-                                            "component": "div",
-                                            "props": {
-                                                "class": "text-center"
-                                            },
-                                            "content": [
-                                                {
-                                                    "component": "div",
-                                                    "props": {"class": "text-h5"},
-                                                    "text": str(total_sites)
+                                        'component': 'VCardText',
+                                        'props': {
+                                            'class': 'text-center'
+                                        },
+                                        'content': [
+                                            {
+                                                'component': 'div',
+                                                'props': {
+                                                    'class': 'text-h4 font-weight-bold'
                                                 },
-                                                {
-                                                    "component": "div",
-                                                    "props": {"class": "text-caption"},
-                                                    "text": "站点数量"
-                                                }
-                                            ]
-                                        }]
-                                    },
+                                                'text': f"{total_invitees}"
+                                            },
+                                            {
+                                                'component': 'div',
+                                                'text': '后宫成员'
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
+                        'content': [
+                            {
+                                'component': 'VCard',
+                                'props': {
+                                    'color': 'warning'
+                                },
+                                'content': [
                                     {
-                                        "component": "VCol",
-                                        "props": {"cols": 3},
-                                        "content": [{
-                                            "component": "div",
-                                            "props": {
-                                                "class": "text-center"
-                                            },
-                                            "content": [
-                                                {
-                                                    "component": "div",
-                                                    "props": {"class": "text-h5"},
-                                                    "text": str(total_invitees)
+                                        'component': 'VCardText',
+                                        'props': {
+                                            'class': 'text-center'
+                                        },
+                                        'content': [
+                                            {
+                                                'component': 'div',
+                                                'props': {
+                                                    'class': 'text-h4 font-weight-bold'
                                                 },
-                                                {
-                                                    "component": "div",
-                                                    "props": {"class": "text-caption"},
-                                                    "text": "后宫成员"
-                                                }
-                                            ]
-                                        }]
-                                    },
+                                                'text': f"{total_low_ratio}"
+                                            },
+                                            {
+                                                'component': 'div',
+                                                'text': '低分享率成员'
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 3
+                        },
+                        'content': [
+                            {
+                                'component': 'VCard',
+                                'props': {
+                                    'color': 'error'
+                                },
+                                'content': [
                                     {
-                                        "component": "VCol",
-                                        "props": {"cols": 3},
-                                        "content": [{
-                                            "component": "div",
-                                            "props": {
-                                                "class": "text-center"
-                                            },
-                                            "content": [
-                                                {
-                                                    "component": "div",
-                                                    "props": {"class": "text-h5 warning--text"},
-                                                    "text": str(total_low_ratio)
+                                        'component': 'VCardText',
+                                        'props': {
+                                            'class': 'text-center'
+                                        },
+                                        'content': [
+                                            {
+                                                'component': 'div',
+                                                'props': {
+                                                    'class': 'text-h4 font-weight-bold'
                                                 },
-                                                {
-                                                    "component": "div",
-                                                    "props": {"class": "text-caption"},
-                                                    "text": "低分享率成员"
-                                                }
-                                            ]
-                                        }]
-                                    },
-                                    {
-                                        "component": "VCol",
-                                        "props": {"cols": 3},
-                                        "content": [{
-                                            "component": "div",
-                                            "props": {
-                                                "class": "text-center"
+                                                'text': f"{total_banned}"
                                             },
-                                            "content": [
-                                                {
-                                                    "component": "div",
-                                                    "props": {"class": "text-h5 error--text"},
-                                                    "text": str(total_banned)
-                                                },
-                                                {
-                                                    "component": "div",
-                                                    "props": {"class": "text-caption"},
-                                                    "text": "已禁用成员"
-                                                }
-                                            ]
-                                        }]
+                                            {
+                                                'component': 'div',
+                                                'text': '禁用成员'
+                                            }
+                                        ]
                                     }
                                 ]
                             }
@@ -538,372 +616,139 @@ class nexusinvitee(_PluginBase):
                     }
                 ]
             })
-
-            for site_name, cache in cached_data.items():
-                invite_data = cache.get("data", {})
-
-                # 获取站点信息
-                site_info = None
-                for site in self.sites.get_indexers():
-                    if site.get("name") == site_name:
-                        site_info = site
-                        break
+            
+            # 添加站点详情卡片
+            for site_name, site_data in all_site_data.items():
+                data = site_data.get("data", {})
+                site_info = data.get("site_info", {})
+                invite_status = data.get("invite_status", {})
+                invitees = data.get("invitees", [])
                 
-                if site_info:
-                    # 计算此站点的统计信息
-                    invitees = invite_data.get("invitees", [])
-                    banned_count = sum(1 for i in invitees if i.get(
-                        'enabled', '').lower() == 'no')
-                    low_ratio_count = 0
-
-                    for invitee in invitees:
-                        ratio_str = invitee.get('ratio', '')
-                        if ratio_str != '∞' and ratio_str.lower() != 'inf.' and ratio_str.lower() != 'inf':
-                            try:
-                                # 标准化字符串，替换逗号为点
-                                ratio_str = ratio_str.replace(',', '.')
-                                ratio_val = float(
-                                    ratio_str) if ratio_str else 0
-                                if ratio_val < 1:
-                                    low_ratio_count += 1
-                            except (ValueError, TypeError):
-                                # 转换错误时记录警告
-                                logger.warning(f"分享率转换失败: {ratio_str}")
-
-                    # 合并站点信息和数据到一张卡片
-                    site_card = {
-                        "component": "VCard",
-                        "props": {
-                            "class": "mb-4"
-                        },
-                        "content": [
-                            # 站点信息头部
-                            {
-                                "component": "VCardItem",
-                                "props": {
-                                    "class": "py-2"
-                                },
-                                "content": [
-                                    {
-                                        "component": "VCardTitle",
-                                        "content": [
-                                            {
-                                                "component": "div",
-                                                "props": {
-                                                    "class": "d-flex align-center"
-                                                },
-                                                "content": [
-                                                    {
-                                                        "component": "VAvatar",
-                                                        "props": {
-                                                            "size": "24",
-                                                            "class": "mr-2"
-                                                        },
-                                                        "content": [{
-                                                            "component": "VImg",
-                                                            "props": {
-                                                                "src": site_info.get("icon", ""),
-                                                                "alt": site_name
-                                                            }
-                                                        }]
-                                                    },
-                                                    {
-                                                        "component": "span",
-                                                        "props": {
-                                                            "class": "text-h6"
-                                                        },
-                                                        "text": f"{site_name} - 后宫: {len(invitees)}人 (低分享率: {low_ratio_count}, 已禁用: {banned_count})"
-                                                    }
-                                                ]
-                                            }
-                                        ]
-                                    }
-                                ]
+                site_card = {
+                    'component': 'VRow',
+                    'content': [
+                        {
+                            'component': 'VCol',
+                            'props': {
+                                'cols': 12
                             },
-                            # 邀请状态统计
-                            {
-                                "component": "VCardText",
-                                "props": {
-                                    "class": "pt-2 pb-0"
-                                },
-                                "content": [
-                                    {
-                                        "component": "VRow",
-                                        "props": {
-                                            "dense": True
+                            'content': [
+                                {
+                                    'component': 'VCard',
+                                    'content': [
+                                        # 卡片标题
+                                        {
+                                            'component': 'VCardTitle',
+                                            'content': [
+                                                {
+                                                    'component': 'VRow',
+                                                    'content': [
+                                                        {
+                                                            'component': 'VCol',
+                                                            'props': {
+                                                                'cols': 6
+                                                            },
+                                                            'content': [
+                                                                {
+                                                                    'component': 'div',
+                                                                    'text': f"{site_name}"
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            'component': 'VCol',
+                                                            'props': {
+                                                                'cols': 6,
+                                                                'class': 'text-right'
+                                                            },
+                                                            'content': [
+                                                                {
+                                                                    'component': 'VChip',
+                                                                    'props': {
+                                                                        'color': 'primary' if invite_status.get("can_invite") else 'error',
+                                                                        'size': 'small'
+                                                                    },
+                                                                    'text': '可邀请' if invite_status.get("can_invite") else '不可邀请'
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
                                         },
-                                        "content": [
-                                            {
-                                                "component": "VCol",
-                                                "props": {"cols": 12},
-                                                "content": [{
-                                                    "component": "VAlert",
-                                                    "props": {
-                                                        "type": "error" if not invite_data.get("invite_status", {}).get("can_invite") else "success",
-                                                        "text": invite_data.get("invite_status", {}).get("reason") or (
-                                                            "可以发送邀请" if invite_data.get("invite_status", {}).get("can_invite") 
-                                                            else "不能发送邀请"
-                                                        ),
-                                                        "variant": "tonal",
-                                                        "density": "compact"
-                                                    }
-                                                }]
-                                            },
-                                            {
-                                                "component": "VCol",
-                                                "props": {"cols": 3},
-                                                "content": [{
-                                                    "component": "div",
-                                                    "props": {
-                                                        "class": "text-center"
-                                                    },
-                                                    "content": [
+                                        # 邀请信息
+                                        {
+                                            'component': 'VCardText',
+                                            'content': [
+                                                {
+                                                    'component': 'VRow',
+                                                    'content': [
                                                         {
-                                                            "component": "div",
-                                                            "props": {"class": "text-h6"},
-                                                            "text": str(invite_data.get("invite_status", {}).get("permanent_count", 0))
-                                                        },
-                                                        {
-                                                            "component": "div",
-                                                            "props": {"class": "text-caption"},
-                                                            "text": "永久邀请"
+                                                            'component': 'VCol',
+                                                            'props': {
+                                                                'cols': 12
+                                                            },
+                                                            'content': [
+                                                                {
+                                                                    'component': 'div',
+                                                                    'text': f"永久邀请: {invite_status.get('permanent_count', 0)}，临时邀请: {invite_status.get('temporary_count', 0)}，原因: {invite_status.get('reason', '未知')}"
+                                                                }
+                                                            ]
                                                         }
                                                     ]
-                                                }]
-                                            },
-                                            {
-                                                "component": "VCol",
-                                                "props": {"cols": 3},
-                                                "content": [{
-                                                    "component": "div",
-                                                    "props": {
-                                                        "class": "text-center"
-                                                    },
-                                                    "content": [
-                                                        {
-                                                            "component": "div",
-                                                            "props": {"class": "text-h6"},
-                                                            "text": str(invite_data.get("invite_status", {}).get("temporary_count", 0))
-                                                        },
-                                                        {
-                                                            "component": "div",
-                                                            "props": {"class": "text-caption"},
-                                                            "text": "临时邀请"
-                                                        }
-                                                    ]
-                                                }]
-                                            },
-                                            {
-                                                "component": "VCol",
-                                                "props": {"cols": 3},
-                                                "content": [{
-                                                    "component": "div",
-                                                    "props": {
-                                                        "class": "text-center"
-                                                    },
-                                                    "content": [
-                                                        {
-                                                            "component": "div",
-                                                            "props": {"class": "text-h6"},
-                                                            "text": str(len(invite_data.get("invitees", [])))
-                                                        },
-                                                        {
-                                                            "component": "div",
-                                                            "props": {"class": "text-caption"},
-                                                            "text": "已邀请用户"
-                                                        }
-                                                    ]
-                                                }]
-                                            },
-                                            {
-                                                "component": "VCol",
-                                                "props": {"cols": 3},
-                                                "content": [{
-                                                    "component": "div",
-                                                    "props": {
-                                                        "class": "text-center"
-                                                    },
-                                                    "content": [
-                                                        {
-                                                            "component": "div",
-                                                            "props": {"class": "text-h6 " + ("success--text" if invite_data.get("invite_status", {}).get("can_invite") else "error--text")},
-                                                            "text": "可邀请" if invite_data.get("invite_status", {}).get("can_invite") else "不可邀请"
-                                                        },
-                                                        {
-                                                            "component": "div",
-                                                            "props": {"class": "text-caption"},
-                                                            "text": "邀请权限"
-                                                        }
-                                                    ]
-                                                }]
+                                                }
+                                            ]
+                                        },
+                                        # 后宫成员表格
+                                        {
+                                            'component': 'VDataTable',
+                                            'props': {
+                                                'headers': [
+                                                    {'title': '用户名', 'key': 'username'},
+                                                    {'title': '邮箱', 'key': 'email'},
+                                                    {'title': '上传', 'key': 'uploaded'},
+                                                    {'title': '下载', 'key': 'downloaded'},
+                                                    {'title': '分享率', 'key': 'ratio'},
+                                                    {'title': '做种数', 'key': 'seeding'},
+                                                    {'title': '做种体积', 'key': 'seeding_size'},
+                                                    {'title': '做种时魔', 'key': 'seed_magic'},
+                                                    {'title': '后宫加成', 'key': 'harem_bonus'},
+                                                    {'title': '最后做种报告', 'key': 'last_seed_report'},
+                                                    {'title': '状态', 'key': 'status'}
+                                                ],
+                                                'items': invitees,
+                                                'item-key': 'username',
+                                                'class': 'elevation-1',
+                                                'density': 'compact'
                                             }
-                                        ]
-                                    }
-                                ]
-                            }
-                        ]
-                    }
-
-                    # 只有在有邀请列表时才添加表格
-                    if invite_data.get("invitees"):
-                        table_rows = []
-                        for invitee in invite_data.get("invitees", []):
-                            # 判断用户是否被ban或分享率较低
-                            is_banned = invitee.get(
-                                'enabled', '').lower() == 'no'
-                            is_low_ratio = False
-
-                            # 处理分享率
-                            ratio_str = invitee.get('ratio', '')
-                            if ratio_str != '∞' and ratio_str.lower() != 'inf.' and ratio_str.lower() != 'inf':
-                                try:
-                                    # 标准化字符串，替换逗号为点
-                                    ratio_str = ratio_str.replace(',', '.')
-                                    # 尝试转换为浮点数
-                                    ratio_val = float(
-                                        ratio_str) if ratio_str else 0
-                                    is_low_ratio = ratio_val < 1
-                                except (ValueError, TypeError):
-                                    # 转换失败不做特殊处理
-                                    logger.warning(f"分享率转换失败: {ratio_str}")
-                                    pass
-
-                            row_class = ""
-                            if is_banned:
-                                row_class = "error lighten-4"
-                            elif is_low_ratio:
-                                row_class = "warning lighten-4"
-
-                            # 判断分享率样式
-                            ratio_class = ""
-                            if ratio_str == '∞' or ratio_str.lower() == 'inf.' or ratio_str.lower() == 'inf':
-                                ratio_class = "success--text"
-                            else:
-                                try:
-                                    ratio_val = float(ratio_str.replace(
-                                        ',', '.')) if ratio_str else 0
-                                    ratio_class = "success--text" if ratio_val >= 1 else "error--text font-weight-bold"
-                                except (ValueError, TypeError):
-                                    ratio_class = ""
-
-                            # 创建行
-                            table_rows.append({
-                                "component": "tr",
-                                "props": {
-                                    "class": row_class
-                                },
-                                "content": [
-                                    {
-                                        "component": "td",
-                                        "content": [{
-                                            "component": "VBtn",
-                                            "props": {
-                                                "variant": "text",
-                                                "href": invitee.get("profile_url", ""),
-                                                "target": "_blank",
-                                                "density": "compact"
-                                            },
-                                            "text": invitee.get("username", "")
-                                        }]
-                                    },
-                                    {"component": "td",
-                                        "text": invitee.get("email", "")},
-                                    {"component": "td", "text": invitee.get(
-                                        "uploaded", "")},
-                                    {"component": "td", "text": invitee.get(
-                                        "downloaded", "")},
-                                    {
-                                        "component": "td",
-                                        "props": {
-                                            "class": ratio_class
-                                        },
-                                        "text": invitee.get("ratio", "")
-                                    },
-                                    {"component": "td", "text": invitee.get(
-                                        "seeding", "")},
-                                    {"component": "td", "text": invitee.get(
-                                        "seeding_size", "")},
-                                    {"component": "td", "text": invitee.get(
-                                        "seed_magic", "") or invitee.get("seed_time", "")},
-                                    {"component": "td", "text": invitee.get(
-                                        "seed_bonus", "")},
-                                    {"component": "td", "text": invitee.get(
-                                        "last_seed_report", "") or invitee.get("last_seen", "")},
-                                    {
-                                        "component": "td",
-                                        "props": {
-                                            "class": ("success--text" if invitee.get('status') == '已确认' else "") +
-                                                     (" error--text font-weight-bold" if invitee.get('enabled', '').lower() == 'no' else "")
-                                        },
-                                        "text": invitee.get("status", "") + (" (已禁用)" if invitee.get('enabled', '').lower() == 'no' else "")
-                                    }
-                                ]
-                            })
-
-                        site_card["content"].append({
-                            "component": "VCardText",
-                            "props": {
-                                "class": "pt-0"
-                            },
-                            "content": [{
-                                "component": "VTable",
-                                "props": {
-                                    "hover": True,
-                                    "density": "compact"
-                                },
-                                "content": [{
-                                    "component": "thead",
-                                    "content": [{
-                                        "component": "tr",
-                                        "content": [
-                                            {"component": "th", "text": "用户名"},
-                                            {"component": "th", "text": "邮箱"},
-                                            {"component": "th", "text": "上传量"},
-                                            {"component": "th", "text": "下载量"},
-                                            {"component": "th", "text": "分享率"},
-                                            {"component": "th", "text": "做种数"},
-                                            {"component": "th", "text": "做种体积"},
-                                            {"component": "th", "text": "做种时魔"},
-                                            {"component": "th", "text": "后宫加成"},
-                                            {"component": "th", "text": "最后做种报告"},
-                                            {"component": "th", "text": "状态"}
-                                        ]
-                                    }]
-                                }, {
-                                    "component": "tbody",
-                                    "content": table_rows
-                                }]
-                            }]
-                        })
-                    
-                    cards.append(site_card)
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+                
+                content.append(site_card)
             
-            # 将站点卡片添加到页面
-            page_content.extend(cards)
-
-            # 添加说明提示
-            if not cards:
-                page_content.append({
-                    "component": "VAlert",
-                    "props": {
-                        "type": "warning",
-                        "text": "暂无数据，请先在配置中选择要管理的站点，并打开\"立即刷新数据\"开关获取数据",
-                        "variant": "tonal",
-                        "class": "mt-4"
-                    }
-                })
-
-            return page_content
-            
+            return [
+                {
+                    'component': 'div',
+                    'content': content
+                }
+            ]
         except Exception as e:
             logger.error(f"生成详情页面失败: {str(e)}")
-            return [{
-                "component": "VAlert",
-                "props": {
-                    "type": "error",
-                    "text": f"生成详情页面失败: {str(e)}"
+            # 返回错误信息
+            return [
+                {
+                    'component': 'VAlert',
+                    'props': {
+                        'type': 'error',
+                        'text': f'生成页面失败: {str(e)}'
+                    }
                 }
-            }]
+            ]
 
     def stop_service(self):
         """
@@ -919,7 +764,8 @@ class nexusinvitee(_PluginBase):
             return Response(success=False, message="API令牌错误!")
         
         try:
-            return Response(success=True, message="获取成功", data=self._config)
+            config = self.config_manager.get_config()
+            return Response(success=True, message="获取成功", data=config)
         except Exception as e:
             logger.error(f"获取配置失败: {str(e)}")
             return Response(success=False, message=f"获取配置失败: {str(e)}")
@@ -927,19 +773,33 @@ class nexusinvitee(_PluginBase):
     def update_config(self, request: dict) -> Response:
         """
         更新配置
+        :param request: 请求体
+        :return: 响应结果
         """
         try:
             # 更新内存中的配置
-            self._config.update(request)
+            self._enabled = request.get("enabled", False)
+            self._notify = request.get("notify", False)
+            self._cron = request.get("cron", "0 */4 * * *")
+            self._nexus_sites = request.get("nexus_sites", [])
             
-            # 同步到文件
-            if self._sync_to_file():
-                return Response(success=True, message="更新成功")
-            else:
-                return Response(success=False, message="保存配置失败")
+            # 如果开启了立即运行一次，则立即刷新所有站点数据
+            onlyonce = request.get("onlyonce", False)
+            
+            # 将配置写入文件
+            self._sync_to_file()
+            
+            # 同步到数据库
+            self.__update_config()
+            
+            if onlyonce:
+                # 异步刷新所有站点数据
+                threading.Thread(target=self._async_refresh_sites).start()
+                return {"code": 0, "msg": "保存成功，正在刷新站点数据..."}
+            
+            return {"code": 0, "msg": "保存成功"}
         except Exception as e:
-            logger.error(f"更新配置失败: {str(e)}")
-            return Response(success=False, message=f"更新配置失败: {str(e)}")
+            return {"code": 1, "msg": f"保存失败：{str(e)}"}
 
     def _get_site_invite_data(self, site_name):
         """
@@ -971,7 +831,7 @@ class nexusinvitee(_PluginBase):
             site_id = site_info.get("id", "")
 
             # 先验证此站点是否在用户选择的站点列表中
-            if str(site_id) not in [str(x) for x in self._site_ids]:
+            if str(site_id) not in [str(x) for x in self._nexus_sites]:
                 logger.warning(f"站点 {site_name} 不在用户选择的站点列表中，跳过处理")
                 return {
                     "error": "站点未被选择",
@@ -1318,8 +1178,8 @@ class nexusinvitee(_PluginBase):
                 try:
                     return float(size_str)
                 except ValueError:
-                        logger.warning(f"无法解析大小字符串: {size_str}")
-                        return 0
+                            logger.warning(f"无法解析大小字符串: {size_str}")
+                            return 0
 
             size_num, unit = matches.groups()
 
@@ -2080,210 +1940,188 @@ class nexusinvitee(_PluginBase):
         except:
             return "0 B"
 
-    def get_invitees(self, apikey: str = None, force_update: bool = False) -> dict:
+    def get_invitees(self, apikey: str = None, site_name: str = None) -> dict:
         """
-        获取所有站点的邀请数据API接口
+        获取后宫成员API接口
         """
         if apikey and apikey != settings.API_TOKEN:
             return {"code": 1, "message": "API令牌错误!"}
             
         try:
-            # 确保从配置文件加载最新数据
-            self._sync_from_file()
+            # 从数据文件获取站点数据
+            site_data = self.data_manager.get_site_data(site_name)
             
-            # 检查是否选择了站点
-            if not self._site_ids:
-                return {"code": 1, "message": "未选择任何站点，请先在配置中选择要管理的站点"}
-
-            # 获取当前缓存数据
-            cached_data = self._config.get("cached_data", {})
-
-            # 如果强制更新或者没有缓存数据，则重新获取数据
-            if force_update or not cached_data:
-                result = self.refresh_all_sites()
-                if not result or result.get("error") > 0:
-                    logger.warning(f"部分站点数据刷新失败: {result}")
-
-                # 重新获取缓存数据
-                cached_data = self._config.get("cached_data", {})
-
-            # 判断结果是否有效
-            if not cached_data:
-                return {"code": 1, "message": "暂无数据，请先刷新数据"}
-
-            # 统计各站点最后更新时间
-            update_times = []
-            for site_data in cached_data.values():
-                if site_data and "last_update" in site_data:
-                    update_times.append(site_data["last_update"])
-
-            # 找出最近的更新时间
-            last_update = max(update_times) if update_times else 0
+            # 获取最后更新时间
+            last_update = self.data_manager.get_last_update_time()
+            
+            if not site_data:
+                if site_name:
+                    return {"code": 1, "message": f"站点 {site_name} 数据不存在"}
+                else:
+                    return {"code": 1, "message": "暂无站点数据"}
 
             return {
                 "code": 0,
                 "message": "获取成功",
-                "last_update": last_update,
-                "data": cached_data
+                "data": {
+                    "sites": site_data,
+                    "last_update": last_update
             }
-
+            }
         except Exception as e:
-            logger.error(f"获取邀请数据失败: {str(e)}")
-            return {"code": 1, "message": f"获取邀请数据失败: {str(e)}"}
+            logger.error(f"获取后宫成员失败: {str(e)}")
+            return {"code": 1, "message": f"获取后宫成员失败: {str(e)}"}
 
     def refresh_data(self, apikey: str = None) -> dict:
         """
-        强制刷新所有站点数据API接口
+        刷新数据
+        :param apikey: API密钥
+        :return: 结果
         """
-        if apikey and apikey != settings.API_TOKEN:
-            return {"code": 1, "message": "API令牌错误!"}
-
         try:
-            # 调用refresh_all_sites方法刷新数据
-            result = self.refresh_all_sites()
-
-            if result.get("success", 0) > 0:
-                # 获取最新的更新时间
-                cached_data = self._config.get("cached_data", {})
-                update_times = []
-                for site_data in cached_data.values():
-                    if site_data and "last_update" in site_data:
-                        update_times.append(site_data["last_update"])
-
-                last_update = max(update_times) if update_times else 0
-
-                return {
-                    "code": 0,
-                    "message": f"数据刷新成功: {result.get('success')}个站点, 失败: {result.get('error')}个站点",
-                    "data": {
-                        "last_update": last_update,
-                        "site_count": len(cached_data),
-                        "success": result.get("success", 0),
-                        "error": result.get("error", 0)
-                    }
-                }
-            else:
-                return {"code": 1, "message": "数据刷新失败，没有成功刷新的站点"}
+            if not self._enabled:
+                return {"code": 1, "msg": "插件未启用"}
             
+            # 获取选定的站点列表
+            site_list = self._nexus_sites
+            
+            if not site_list:
+                return {"code": 1, "msg": "未选择任何站点，请在配置页面选择要管理的站点"}
+            
+            # 遍历站点刷新数据
+            result = {
+                "success": 0,
+                "fail": 0,
+                "start_time": int(time.time()),
+                "end_time": 0,
+                "details": []
+            }
+            
+            for site_id in site_list:
+                # 获取站点信息
+                site_info = None
+                for site in self.sites.get_sites():
+                    if site.id == site_id:
+                        site_info = {
+                            "id": site.id,
+                            "name": site.name,
+                            "url": site.url
+                        }
+                        break
+                
+                if not site_info:
+                    logger.error(f"未找到站点ID: {site_id}")
+                    result["fail"] += 1
+                    result["details"].append({
+                        "site_id": site_id,
+                        "status": "fail",
+                        "msg": "未找到站点"
+                    })
+                    continue
+                
+                # 获取站点数据
+                site_data = self._get_site_data(site_info)
+                
+                if site_data.get("status") == "success":
+                    # 更新站点数据
+                    self.data_manager.update_site_data(site_info["name"], site_data)
+                    result["success"] += 1
+                    result["details"].append({
+                        "site_id": site_id,
+                        "site_name": site_info["name"],
+                        "status": "success"
+                    })
+                else:
+                    result["fail"] += 1
+                    result["details"].append({
+                        "site_id": site_id,
+                        "site_name": site_info["name"],
+                        "status": "fail",
+                        "msg": site_data.get("error", "未知错误")
+                    })
+            
+            result["end_time"] = int(time.time())
+            
+            # 发送通知
+            if self._notify and self.notify_helper:
+                title = "后宫管理系统"
+                text = f"刷新完成，成功：{result['success']}，失败：{result['fail']}"
+                self.notify_helper.send_notification(title, text, self._notify)
+            
+            return {"code": 0, "msg": "刷新成功", "data": result}
+        
         except Exception as e:
-            logger.error(f"强制刷新数据失败: {str(e)}")
-            return {"code": 1, "message": f"强制刷新数据失败: {str(e)}"}
+            logger.error(f"刷新数据失败: {str(e)}")
+            return {"code": 1, "msg": f"刷新失败: {str(e)}"}
 
-    def _save_config(self):
-        """
-        保存配置到文件
-        """
-        try:
-            # 更新配置
-            self._config.update({
-                "cron": self._cron,
-                "onlyonce": self._onlyonce,
-                "site_ids": self._site_ids
-            })
-            # 同步到文件
-            self._sync_to_file()
-            return True
-        except Exception as e:
-            logger.error(f"保存配置失败: {str(e)}")
-            return False
-
-    def refresh_all_sites(self):
+    def refresh_all_sites(self) -> Dict[str, int]:
         """
         刷新所有站点数据
+        :return: 结果统计
         """
-        # 获取所有选中的站点
-        logger.info(f"开始刷新所有站点后宫数据...")
-        # 检查是否选择了站点
-        if not self._site_ids:
-            logger.error("未选择任何站点，无法刷新数据")
-            self.post_message(
-                mtype=NotificationType.SiteMessage,
-                title="后宫管理系统",
-                text="未选择任何站点，请在配置中选择要管理的站点"
-            )
-            return
-
-        # 准备有效站点列表
-        valid_sites = []
-        for site_id in self._site_ids:
-            # 使用正确的方法获取站点信息
+        if not self._enabled:
+            logger.info("插件未启用，不执行刷新")
+            return {"success": 0, "fail": 0}
+        
+        # 获取选定的站点列表
+        site_list = self._nexus_sites
+        
+        if not site_list:
+            logger.warning("未选择任何站点，不执行刷新。请在配置页面选择要管理的站点。")
+            # 发送通知提醒用户配置站点
+            if self._notify and self.notify_helper:
+                self.notify_helper.send_notification(
+                    title="后宫管理系统",
+                    text="未选择任何站点，请在配置页面选择要管理的站点",
+                    notify_switch=self._notify
+                )
+            return {"success": 0, "fail": 0}
+        
+        # 统计结果
+        result = {"success": 0, "fail": 0}
+        
+        for site_id in site_list:
+            # 获取站点信息
             site_info = None
-            for indexer in self.sites.get_indexers():
-                if str(indexer.get("id")) == str(site_id):
-                    site_info = indexer
-                    break
-                    
-            if not site_info:
-                logger.warning(f"站点ID {site_id} 配置不存在，跳过")
-                continue
-                
-            site_name = site_info.get('name')
-            if not site_name:
-                logger.warning(f"站点ID {site_id} 配置无效，跳过")
-                continue
-                
-            # 不再检查站点状态，直接使用配置中的站点
-            valid_sites.append(site_name)
-            
-        if not valid_sites:
-            logger.error("没有有效的站点配置，无法刷新数据")
-            self.post_message(
-                mtype=NotificationType.SiteMessage,
-                title="后宫管理系统",
-                text="没有有效的站点配置，请检查站点状态"
-            )
-            return
-
-        logger.info(f"将刷新以下站点数据: {', '.join(valid_sites)}")
-
-        # 初始化缓存数据字典（如果不存在）
-        if "cached_data" not in self._config:
-            self._config["cached_data"] = {}
-
-        # 依次刷新每个站点
-        success_count = 0
-        error_count = 0
-        for site_name in valid_sites:
-            try:
-                logger.info(f"开始获取站点 {site_name} 的后宫数据...")
-                site_data = self._get_site_invite_data(site_name)
-                if site_data and not site_data.get("error"):
-                    # 更新缓存数据
-                    self._config["cached_data"][site_name] = {
-                        "data": site_data,
-                        "last_update": int(time.time())
+            for site in self.sites.get_sites():
+                if site.id == site_id:
+                    site_info = {
+                        "id": site.id,
+                        "name": site.name,
+                        "url": site.url
                     }
-                    self._sync_to_file()
-                    success_count += 1
-                    logger.info(
-                        f"站点 {site_name} 数据刷新成功，已邀请 {len(site_data.get('invitees', []))} 人")
-                else:
-                    error_message = site_data.get("error", "未知错误")
-                    logger.error(f"站点 {site_name} 数据刷新失败: {error_message}")
-                    error_count += 1
-            except Exception as e:
-                logger.error(f"站点 {site_name} 数据刷新出错: {str(e)}")
-                error_count += 1
-
-        # 完成更新
-        message = f"刷新完成: 成功 {success_count} 个站点, 失败 {error_count} 个站点"
-        logger.info(message)
-        self.post_message(
-            mtype=NotificationType.SiteMessage,
-            title="后宫管理系统",
-            text=message
-        )
-        return {"success": success_count, "error": error_count}
+                    break
+            
+            if not site_info:
+                logger.error(f"未找到站点ID: {site_id}")
+                result["fail"] += 1
+                continue
+            
+            # 获取站点数据
+            site_data = self._get_site_data(site_info)
+            
+            if site_data.get("status") == "success":
+                # 更新站点数据
+                self.data_manager.update_site_data(site_info["name"], site_data)
+                result["success"] += 1
+                logger.info(f"站点 {site_info['name']} 数据刷新成功")
+            else:
+                result["fail"] += 1
+                logger.error(f"站点 {site_info['name']} 数据刷新失败: {site_data.get('error', '未知错误')}")
+        
+        return result
 
     def scheduler_handler(self, event=None):
         """
         定时任务处理
+        :param event: 事件
         """
-        logger.info(f"后宫管理系统定时任务开始执行：{event}")
-        # 强制刷新数据
-        self.refresh_all_sites()
-        logger.info("后宫管理系统定时任务完成")
-        return True
+        if not self._enabled:
+            return
+        
+        logger.info("后宫管理系统定时刷新开始执行")
+        # 异步刷新站点数据
+        threading.Thread(target=self._async_refresh_sites).start()
 
     @staticmethod
     def get_api_handlers():
@@ -2317,6 +2155,124 @@ class nexusinvitee(_PluginBase):
                 logger.error(f"定时任务配置错误：{str(err)}")
                 return []
         return []
+
+    def _sync_from_file(self):
+        """
+        从文件同步配置
+        """
+        # 同步配置文件到内存配置
+        _config = self.config_manager.get_config()
+        if _config:
+            self._config = _config
+            self._enabled = _config.get("enabled", False)
+            self._notify = _config.get("notify", False)
+            self._cron = _config.get("cron", "0 */4 * * *")
+            self._onlyonce = _config.get("onlyonce", False)
+            self._nexus_sites = _config.get("site_ids", [])
+            
+            # 迁移数据到独立文件
+            if "cached_data" in self._config:
+                cached_data = self._config.pop("cached_data", {})
+                # 将cached_data内容保存到数据文件
+                for site_name, site_data in cached_data.items():
+                    self.data_manager.update_site_data(site_name, site_data.get("data", {}))
+                # 保存清理后的配置
+                self._sync_to_file()
+                logger.info("已将数据从配置文件迁移到独立数据文件")
+                
+            return True
+        return False
+
+    def _sync_to_file(self):
+        """
+        同步配置到文件
+        """
+        # 更新内存配置到文件
+        config = {
+            "enabled": self._enabled,
+            "notify": self._notify,
+            "cron": self._cron,
+            "onlyonce": self._onlyonce,
+            "site_ids": self._nexus_sites
+        }
+        
+        return self.config_manager.update_config(config)
+
+    def __update_config(self):
+        """
+        更新内存配置
+        """
+        # 更新内存中的配置
+        self._config["enabled"] = self._enabled
+        self._config["notify"] = self._notify
+        self._config["cron"] = self._cron
+        self._config["onlyonce"] = self._onlyonce
+        self._config["site_ids"] = self._nexus_sites
+
+    def _get_site_data(self, site_info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        获取站点邀请系统数据
+        :param site_info: 站点信息
+        :return: 站点数据
+        """
+        site_name = site_info.get("name", "")
+        site_url = site_info.get("url", "")
+        
+        try:
+            # 使用SiteOper获取站点Cookie
+            site_cookie = self.siteoper.get_site_cookie(site_url)
+            if not site_cookie:
+                logger.error(f"站点 {site_name} 未配置Cookie")
+                return {
+                    "error": "未配置Cookie",
+                    "status": "error"
+                }
+            
+            # 准备请求会话
+            session = requests.Session()
+            session.headers.update({
+                'User-Agent': f'Mozilla/5.0 MoviePilot/NexusInvitee Plugin/1.0.0',
+                'Cookie': site_cookie
+            })
+            
+            # 获取匹配的站点处理器
+            site_handler = None
+            for handler_class in self._site_handlers:
+                if handler_class.match(site_url):
+                    site_handler = handler_class()
+                    logger.info(f"站点 {site_name} 使用 {handler_class.__name__} 处理器")
+                    break
+            
+            if not site_handler:
+                logger.error(f"站点 {site_name} 没有匹配的处理器")
+                return {
+                    "error": "不支持的站点类型",
+                    "status": "error"
+                }
+            
+            # 解析邀请页面
+            invite_data = site_handler.parse_invite_page(site_info, session)
+            
+            # 添加站点基本信息
+            invite_data["site_info"] = {
+                "name": site_name,
+                "url": site_url
+            }
+            
+            invite_data["status"] = "success"
+            logger.info(f"站点 {site_name} 数据获取成功")
+            return invite_data
+            
+        except Exception as e:
+            logger.error(f"获取站点 {site_name} 数据失败: {str(e)}")
+            return {
+                "error": str(e),
+                "status": "error",
+                "site_info": {
+                    "name": site_name,
+                    "url": site_url
+                }
+            }
 
 
 # 插件类导出
