@@ -420,29 +420,11 @@ class NexusPhpHandler(_ISiteHandler):
                     elif any(keyword in header for keyword in ['做种体积', '做種體積', 'seeding size']):
                         invitee["seeding_size"] = cell_text
                     
-                    # 做种时魔 - 重点关注
-                    elif any(keyword in header for keyword in ['做种时魔', '做种魔力', '做種時魔', '做種魔力', '純做種時魔', 'seed magic', 'seed time']):
-                        invitee["seed_magic"] = cell_text
+                    # 做种时间/魔力值
+                    elif any(keyword in header for keyword in ['做种时间', '做種時間', 'seed time']):
+                        invitee["seed_time"] = cell_text
                     
-                    # 后宫加成 - 重点关注
-                    elif any(keyword in header for keyword in ['后宫加成', '後宮加成', 'harem bonus']):
-                        invitee["harem_bonus"] = cell_text
-                    
-                    # 最后做种报告 - 重点关注
-                    elif any(keyword in header for keyword in ['最后做种', '最后汇报', '最後做種', '最後報告', '最后做种汇报', 'last seed', 'last report']):
-                        invitee["last_seed_report"] = cell_text
-                    
-                    # 做种魔力/积分/加成
-                    elif any(keyword in header for keyword in ['魔力', 'magic', '积分', 'bonus', '加成', 'leeched']):
-                        header_lower = header.lower()
-                        if '魔力' in header_lower or 'magic' in header_lower:
-                            invitee["magic"] = cell_text
-                        elif '加成' in header_lower or 'bonus' in header_lower:
-                            invitee["bonus"] = cell_text
-                        elif '积分' in header_lower or 'credit' in header_lower:
-                            invitee["credit"] = cell_text
-                        elif 'leeched' in header_lower:
-                            invitee["leeched"] = cell_text
+                    # 其他字段处理...
                 
                 # 如果尚未设置enabled状态，根据行类或图标判断
                 if "enabled" not in invitee:
