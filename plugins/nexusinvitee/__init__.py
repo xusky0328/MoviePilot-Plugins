@@ -36,7 +36,7 @@ class nexusinvitee(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png"
     # 插件版本
-    plugin_version = "1.0.4"
+    plugin_version = "1.0.5"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -52,7 +52,7 @@ class nexusinvitee(_PluginBase):
     _config = {}  # 配置字典
     _enabled = False
     _notify = False
-    _cron = "0 */4 * * *"  # 默认每4小时检查一次
+    _cron = "0 9 * * *"  # 默认每天早上9点检查一次
     _onlyonce = False
     _nexus_sites = []  # 支持多选的站点列表
     
@@ -108,7 +108,7 @@ class nexusinvitee(_PluginBase):
         if config:
             self._enabled = config.get("enabled", False)
             self._notify = config.get("notify", False)
-            self._cron = config.get("cron", "0 */4 * * *")
+            self._cron = config.get("cron", "0 9 * * *")
             self._onlyonce = config.get("onlyonce", False)
             
             # 如果配置中有站点ID
@@ -211,6 +211,265 @@ class nexusinvitee(_PluginBase):
             "description": "强制刷新所有站点数据",
         }]
 
+    def get_dashboard_meta(self) -> Optional[List[Dict[str, str]]]:
+        """
+        获取插件仪表盘元信息
+        """
+        return [{
+            "key": "nexusinvitee_dashboard",
+            "name": "后宫管理系统"
+        }]
+        
+    def get_dashboard(self, key: str, **kwargs) -> Optional[Tuple[Dict[str, Any], Dict[str, Any], List[dict]]]:
+        """
+        获取插件仪表盘页面
+        """
+        if key != "nexusinvitee_dashboard":
+            return None
+            
+        try:
+            # 从data_manager获取站点数据
+            cached_data = {}
+            site_data = self.data_manager.get_site_data()
+            for site_name, site_info in site_data.items():
+                cached_data[site_name] = site_info
+                
+            last_update = "未知"
+            if cached_data:
+                # 找出最新更新时间
+                update_times = [cache.get("last_update", 0)
+                                for cache in cached_data.values() if cache]
+                if update_times:
+                    last_update = time.strftime(
+                        "%Y-%m-%d %H:%M:%S", time.localtime(max(update_times)))
+
+            # 计算所有站点统计信息
+            total_sites = len(cached_data)
+            total_invitees = 0
+            total_low_ratio = 0
+            total_banned = 0
+
+            for site_name, cache in cached_data.items():
+                invite_data = cache.get("data", {})
+                invitees = invite_data.get("invitees", [])
+                total_invitees += len(invitees)
+
+                # 计算分享率低和被ban的用户
+                for invitee in invitees:
+                    # 检查是否被ban
+                    if invitee.get('enabled', '').lower() == 'no':
+                        total_banned += 1
+
+                    # 检查分享率是否低于1
+                    ratio_str = invitee.get('ratio', '')
+                    if ratio_str != '∞' and ratio_str.lower() != 'inf.' and ratio_str.lower() != 'inf':
+                        try:
+                            # 标准化字符串，替换逗号为点
+                            ratio_str = ratio_str.replace(',', '.')
+                            ratio_val = float(ratio_str) if ratio_str else 0
+                            if ratio_val < 1:
+                                total_low_ratio += 1
+                        except (ValueError, TypeError):
+                            # 转换错误时记录警告
+                            logger.warning(f"分享率转换失败: {ratio_str}")
+                                
+            # 列配置
+            col_config = {
+                "cols": 16,
+                "md": 12
+            }
+            
+            # 全局配置
+            global_config = {
+                "refresh": 3600,  # 1小时自动刷新一次
+                "title": "后宫总览",
+                "subtitle": f"更新时间: {last_update}",
+                "border": False
+            }
+            
+            # 页面元素
+            elements = []
+            
+            # 添加全局统计信息 - 与详情页完全一致
+            elements.append({
+                "component": "VCard",
+                "props": {
+                    "class": "mb-4",
+                    "variant": "outlined"
+                },
+                "content": [
+                    {
+                        "component": "VCardTitle",
+                        "text": "后宫总览"
+                    },
+                    {
+                        "component": "VCardText",
+                        "content": [
+                            {
+                                "component": "VRow",
+                                "content": [
+                                    {
+                                        "component": "VCol",
+                                        "props": {"cols": 3},
+                                        "content": [{
+                                            "component": "div",
+                                            "props": {
+                                                "class": "text-center"
+                                            },
+                                            "content": [
+                                                {
+                                                    "component": "VIcon",
+                                                    "props": {
+                                                        "size": "36",
+                                                        "color": "primary",
+                                                        "class": "mb-2"
+                                                    },
+                                                    "text": "mdi-web"
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-h5"},
+                                                    "text": str(total_sites)
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-caption"},
+                                                    "text": "站点数量"
+                                                }
+                                            ]
+                                        }]
+                                    },
+                                    {
+                                        "component": "VCol",
+                                        "props": {"cols": 3},
+                                        "content": [{
+                                            "component": "div",
+                                            "props": {
+                                                "class": "text-center"
+                                            },
+                                            "content": [
+                                                {
+                                                    "component": "VIcon",
+                                                    "props": {
+                                                        "size": "36",
+                                                        "color": "info",
+                                                        "class": "mb-2"
+                                                    },
+                                                    "text": "mdi-human-queue"
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-h5"},
+                                                    "text": str(total_invitees)
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-caption"},
+                                                    "text": "后宫成员"
+                                                }
+                                            ]
+                                        }]
+                                    },
+                                    {
+                                        "component": "VCol",
+                                        "props": {"cols": 3},
+                                        "content": [{
+                                            "component": "div",
+                                            "props": {
+                                                "class": "text-center"
+                                            },
+                                            "content": [
+                                                {
+                                                    "component": "VIcon",
+                                                    "props": {
+                                                        "size": "36",
+                                                        "color": "warning",
+                                                        "class": "mb-2"
+                                                    },
+                                                    "text": "mdi-alert-circle"
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-h5 text-warning"},
+                                                    "text": str(total_low_ratio)
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-caption"},
+                                                    "text": "低分享率成员"
+                                                }
+                                            ]
+                                        }]
+                                    },
+                                    {
+                                        "component": "VCol",
+                                        "props": {"cols": 3},
+                                        "content": [{
+                                            "component": "div",
+                                            "props": {
+                                                "class": "text-center"
+                                            },
+                                            "content": [
+                                                {
+                                                    "component": "VIcon",
+                                                    "props": {
+                                                        "size": "36",
+                                                        "color": "error",
+                                                        "class": "mb-2"
+                                                    },
+                                                    "text": "mdi-account-cancel"
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-h5 text-error"},
+                                                    "text": str(total_banned)
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-caption"},
+                                                    "text": "已禁用成员"
+                                                }
+                                            ]
+                                        }]
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            })
+            
+            # 如果没有数据，显示提示信息
+            if not cached_data:
+                elements = [{
+                    "component": "VAlert",
+                    "props": {
+                        "type": "info",
+                        "variant": "tonal",
+                        "text": "暂无站点数据，请先在插件设置中选择要管理的站点。"
+                    }
+                }]
+            
+            return col_config, global_config, elements
+            
+        except Exception as e:
+            logger.error(f"生成仪表盘失败: {str(e)}")
+            return {
+                "cols": 12,
+                "md": 6
+            }, {
+                "refresh": 3600,
+                "title": "后宫管理系统",
+                "subtitle": "发生错误"
+            }, [{
+                "component": "VAlert",
+                "props": {
+                    "type": "error",
+                    "variant": "tonal",
+                    "text": f"生成仪表盘失败: {str(e)}"
+                }
+            }]
+
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         """
         配置页面
@@ -291,6 +550,29 @@ class nexusinvitee(_PluginBase):
                                 },
                                 'content': [
                                     {
+                                        'component': 'VAlert',
+                                        'props': {
+                                            'type': 'warning',
+                                            'variant': 'tonal',
+                                            'density': 'compact',
+                                            'text': '注意！"立即运行一次"开关：由于数据存储特殊性，使用后需手动关闭，请在数据刷新后再次关闭此开关并保存',
+                                            'class': 'mt-2 mb-4'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12
+                                },
+                                'content': [
+                                    {
                                         'component': 'VSelect',
                                         'props': {
                                             'model': 'site_ids',
@@ -341,7 +623,7 @@ class nexusinvitee(_PluginBase):
                                         'props': {
                                             'type': 'info',
                                             'variant': 'tonal',
-                                            'text': '【使用说明】\n本插件适配各站点中，不排除bug，目前尚未适配mt、ptt、ttg等，以及我没有的站点，欢迎大佬们报错时提交错误站点的邀请页和发邀页html结构\n1. 选择要管理的站点（支持多选）\n2. 设置执行周期，建议每4小时检查一次\n3. 可选择开启通知，在状态变更时收到通知\n4. 需要立即刷新数据时，打开"立即运行一次"开关并保存（每次保存后自动关闭）\n5. 数据默认缓存6小时，打开详情页不会自动刷新数据'
+                                            'text': '【使用说明】\n本插件适配各站点中，不排除bug，目前尚未适配mt、ptt、ttg等，以及我没有的站点，欢迎大佬们报错时提交错误站点的邀请页和发邀页html结构\n1. 选择要管理的站点（支持多选）\n2. 设置执行周期，建议每天早上9点执行一次\n3. 可选择开启通知，在状态变更时收到通知\n4. 【特别说明】"立即运行一次"开关：由于配置特殊性，使用后需手动关闭，请在数据刷新后再次关闭此开关并保存\n5. 本插件不会自动刷新数据，打开详情页也不会自动刷新数据，需手动刷新'
                                         }
                                     }
                                 ]
@@ -353,7 +635,7 @@ class nexusinvitee(_PluginBase):
         ], {
             "enabled": self._enabled,
             "notify": self._notify,
-            "cron": self._cron,
+            "cron": "0 9 * * *",
             "onlyonce": False,
             "site_ids": self._nexus_sites
         }
@@ -393,7 +675,7 @@ class nexusinvitee(_PluginBase):
                 "component": "VAlert",
                 "props": {
                     "type": "info",
-                    "text": f"后宫管理系统 - 共 {len(cached_data)} 个站点，数据最后更新时间: {last_update}\n注: 数据默认缓存6小时，只显示在MP中已配置并选择的站点",
+                    "text": f"后宫管理系统 - 共 {len(cached_data)} 个站点，数据最后更新时间: {last_update}\n注: 本插件不会自动刷新数据，只显示在MP中已配置并选择的站点",
                     "variant": "tonal",
                     "class": "mb-4"
                 }
@@ -404,7 +686,7 @@ class nexusinvitee(_PluginBase):
                 "component": "VAlert",
                 "props": {
                     "type": "warning",
-                    "text": "如需刷新数据，请在配置页面打开\"立即运行一次\"开关并保存",
+                    "text": "如需刷新数据，请在配置页面打开\"立即运行一次\"开关并保存，使用后记得关闭该开关并再次保存",
                     "variant": "tonal",
                     "class": "mb-4"
                 }
@@ -1471,7 +1753,7 @@ class nexusinvitee(_PluginBase):
             self._config = _config
             self._enabled = _config.get("enabled", False)
             self._notify = _config.get("notify", False)
-            self._cron = _config.get("cron", "0 */4 * * *")
+            self._cron = _config.get("cron", "0 9 * * *")
             self._onlyonce = _config.get("onlyonce", False)
             self._nexus_sites = _config.get("site_ids", [])
             
