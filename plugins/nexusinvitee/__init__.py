@@ -36,7 +36,7 @@ class nexusinvitee(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png"
     # 插件版本
-    plugin_version = "1.0.3"
+    plugin_version = "1.0.4"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -733,25 +733,25 @@ class nexusinvitee(_PluginBase):
                                                     "content": [
                                                         {
                                                             "component": "VIcon",
-                                                            "props": {
+                                                    "props": {
                                                                 "size": "24",
                                                                 "color": "primary",
                                                                 "class": "mr-2"
-                                                            },
+                                                    },
                                                             "text": "mdi-ticket-confirmation"
                                                         },
                                                         {
                                                             "component": "div",
-                                                            "content": [
-                                                                {
-                                                                    "component": "div",
+                                                    "content": [
+                                                        {
+                                                            "component": "div",
                                                                     "props": {"class": "text-body-1 font-weight-medium"},
                                                                     "text": str(invite_data.get("invite_status", {}).get("normal_invite_count", 0))
-                                                                },
-                                                                {
-                                                                    "component": "div",
-                                                                    "props": {"class": "text-caption"},
-                                                                    "text": "永久邀请"
+                                                        },
+                                                        {
+                                                            "component": "div",
+                                                            "props": {"class": "text-caption"},
+                                                            "text": "永久邀请"
                                                                 }
                                                             ]
                                                         }
@@ -783,11 +783,11 @@ class nexusinvitee(_PluginBase):
                                                                     "component": "div",
                                                                     "props": {"class": "text-body-1 font-weight-medium"},
                                                                     "text": str(invite_data.get("invite_status", {}).get("temp_invite_count", 0))
-                                                                },
-                                                                {
-                                                                    "component": "div",
-                                                                    "props": {"class": "text-caption"},
-                                                                    "text": "临时邀请"
+                                                        },
+                                                        {
+                                                            "component": "div",
+                                                            "props": {"class": "text-caption"},
+                                                            "text": "临时邀请"
                                                                 }
                                                             ]
                                                         }
@@ -819,10 +819,10 @@ class nexusinvitee(_PluginBase):
                                                                     "component": "div",
                                                                     "props": {"class": "text-body-1 font-weight-medium"},
                                                                     "text": str(len(invitees))
-                                                                },
-                                                                {
-                                                                    "component": "div",
-                                                                    "props": {"class": "text-caption"},
+                                                        },
+                                                        {
+                                                            "component": "div",
+                                                            "props": {"class": "text-caption"},
                                                                     "text": "邀请人数"
                                                                 }
                                                             ]
@@ -854,12 +854,12 @@ class nexusinvitee(_PluginBase):
                                                                 {
                                                                     "component": "div",
                                                                     "props": {"class": "text-body-1 font-weight-medium"},
-                                                                    "text": "可邀请" if invite_data.get("invite_status", {}).get("can_invite") else "不可邀请"
-                                                                },
-                                                                {
-                                                                    "component": "div",
-                                                                    "props": {"class": "text-caption"},
-                                                                    "text": "邀请权限"
+                                                            "text": "可邀请" if invite_data.get("invite_status", {}).get("can_invite") else "不可邀请"
+                                                        },
+                                                        {
+                                                            "component": "div",
+                                                            "props": {"class": "text-caption"},
+                                                            "text": "邀请权限"
                                                                 }
                                                             ]
                                                         }
@@ -872,6 +872,34 @@ class nexusinvitee(_PluginBase):
                             }
                         ]
                     }
+
+                    # 添加错误信息或不可邀请原因的显示部分
+                    # 获取错误信息和不可邀请原因
+                    error_message = cache.get("error", "")
+                    invite_status = invite_data.get("invite_status", {})
+                    can_invite = invite_status.get("can_invite", False)
+                    reason = invite_status.get("reason", "")
+
+                    # 只有当不可邀请或有错误信息时才显示
+                    if (not can_invite and reason) or error_message:
+                        site_card["content"].insert(2, {
+                            "component": "VCardText",
+                            "props": {
+                                "class": "py-1"
+                            },
+                            "content": [
+                                {
+                                    "component": "VAlert",
+                                    "props": {
+                                        "type": "warning",
+                                        "variant": "tonal",
+                                        "density": "compact",
+                                        "class": "my-1"
+                                    },
+                                    "text": error_message or f"不可邀请原因: {reason}"
+                                }
+                            ]
+                        })
 
                     # 只有在有邀请列表时才添加表格
                     if invite_data.get("invitees"):
