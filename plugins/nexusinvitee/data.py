@@ -95,4 +95,18 @@ class DataManager:
             if "last_update" in site_data:
                 update_times.append(site_data["last_update"])
         
-        return max(update_times) if update_times else 0 
+        return max(update_times) if update_times else 0
+        
+    def clear_all_site_data(self) -> bool:
+        """
+        清空所有站点数据
+        :return: 是否成功
+        """
+        try:
+            if os.path.exists(self.data_file):
+                # 直接清空为空字典
+                return self.save_data({})
+            return True
+        except Exception as e:
+            logger.error(f"清空站点数据失败: {str(e)}")
+            return False 

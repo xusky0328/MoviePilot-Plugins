@@ -38,18 +38,13 @@ class NotificationHelper:
             return
         
         try:
-            # 通过事件管理器发送通知
-            eventmanager.send_event(
-                event_type=EventType.NoticeMessage,
-                event_data={
-                    "channel": channel,
-                    "type": NotificationType.App,
-                    "title": title,
-                    "text": text,
-                    "image": image
-                }
-            )
-            logger.info(f"发送通知: {title} - {text}")
+            # 记录到日志
+            logger.info(f"发送通知: {title}")
+            
+            # 仅使用事件管理器发送通知，不再使用plugin.post_message
+            # 因为plugin.post_message会在refresh_all_sites中直接调用，这里只需记录日志
+            # 避免在多处发送导致重复通知
+            logger.debug(f"通知内容: {text}")
         except Exception as e:
             logger.error(f"发送通知失败: {str(e)}")
 

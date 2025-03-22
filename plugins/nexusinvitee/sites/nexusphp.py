@@ -27,7 +27,7 @@ class NexusPhpHandler(_ISiteHandler):
         :return: 是否匹配
         """
         # 排除已知的特殊站点
-        special_sites = ["m-team", "totheglory", "hdchina"]
+        special_sites = ["m-team", "totheglory", "hdchina", "butterfly", "dmhy", "蝶粉"]
         if any(site in site_url.lower() for site in special_sites):
             return False
             
@@ -36,17 +36,17 @@ class NexusPhpHandler(_ISiteHandler):
             "php",                  # 大多数NexusPHP站点URL包含php
             "nexus",                # 部分站点URL中包含nexus
             "agsvpt",               # 红豆饭
-            "pterclub",             # 猫站
+
             "audiences",            # 观众
             "hdpt",                 # HD盘他
             "wintersakura",         # 冬樱
-            "open.cd",              # 皇后
+
             "hdmayi",               # 蚂蚁
             "u2.dmhy",              # U2
             "hddolby",              # 杜比
             "hdarea",               # 高清地带
             "pt.soulvoice",         # 聆音
-            "pt.btschool",          # 学校
+
             "ptsbao",               # PT书包
             "hdhome",               # HD家园
             "hdatmos",              # 阿童木
@@ -424,6 +424,31 @@ class NexusPhpHandler(_ISiteHandler):
                     elif any(keyword in header for keyword in ['做种时间', '做種時間', 'seed time']):
                         invitee["seed_time"] = cell_text
                     
+                    # 做种时魔/当前纯做种时魔 - 这是我们需要特别解析的字段
+                    elif any(keyword in header for keyword in ['做种时魔', '纯做种时魔', '当前纯做种时魔', '做种积分', 'seed bonus', 'seed magic']):
+                        invitee["seed_magic"] = cell_text
+                    
+                    # 后宫加成 - 新增字段
+                    elif any(keyword in header for keyword in ['后宫加成', '後宮加成', 'invitee bonus', 'bonus']):
+                        # 统一字段名为seed_bonus，与butterfly处理器保持一致
+                        invitee["seed_bonus"] = cell_text
+                    
+                    # 最后做种汇报时间/最后做种报告 - 新增字段
+                    elif any(keyword in header for keyword in ['最后做种汇报', '最后做种报告', '最后做种', '最後做種報告', 'last seed report']):
+                        invitee["last_seed_report"] = cell_text
+                    
+                    # 做种魔力/积分/加成
+                    elif any(keyword in header for keyword in ['魔力', 'magic', '积分', 'bonus', '加成', 'leeched']):
+                        header_lower = header.lower()
+                        if '魔力' in header_lower or 'magic' in header_lower:
+                            invitee["magic"] = cell_text
+                        elif '加成' in header_lower or 'bonus' in header_lower:
+                            invitee["bonus"] = cell_text
+                        elif '积分' in header_lower or 'credit' in header_lower:
+                            invitee["credit"] = cell_text
+                        elif 'leeched' in header_lower:
+                            invitee["leeched"] = cell_text
+                    
                     # 其他字段处理...
                 
                 # 如果尚未设置enabled状态，根据行类或图标判断
@@ -444,6 +469,14 @@ class NexusPhpHandler(_ISiteHandler):
                         invitee["ratio_health"] = "warning"
                     else:
                         invitee["ratio_health"] = "danger"
+                
+                # 设置分享率标签
+                if invitee["ratio_value"] < 0:
+                    invitee["ratio_label"] = ["危险", "red"]
+                elif invitee["ratio_value"] < 1.0:
+                    invitee["ratio_label"] = ["较低", "orange"]
+                elif invitee["ratio_value"] >= 1.0:
+                    invitee["ratio_label"] = ["良好", "green"]
                 
                 # 将解析到的用户添加到列表中
                 if invitee.get("username"):

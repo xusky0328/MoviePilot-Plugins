@@ -32,11 +32,11 @@ class nexusinvitee(_PluginBase):
     # 插件名称
     plugin_name = "后宫管理系统"
     # 插件描述
-    plugin_desc = "管理NexusPHP站点的邀请系统，包括邀请名额、已邀请用户状态等"
+    plugin_desc = "管理添加到MP站点的邀请系统，包括邀请名额、已邀请用户状态等"
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png"
     # 插件版本
-    plugin_version = "1.0.2"
+    plugin_version = "1.0.3"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -104,43 +104,39 @@ class nexusinvitee(_PluginBase):
         # 从配置加载设置
         self._sync_from_file()
 
-        # 刷新插件配置
+        # 处理配置参数
         if config:
-            # 更新配置
             self._enabled = config.get("enabled", False)
             self._notify = config.get("notify", False)
             self._cron = config.get("cron", "0 */4 * * *")
             self._onlyonce = config.get("onlyonce", False)
-            self._nexus_sites = config.get("site_ids", [])
             
-            # 更新内存中的配置
-            self.__update_config()
+            # 如果配置中有站点ID
+            if config.get("site_ids"):
+                self._nexus_sites = config.get("site_ids", [])
             
-            # 保存配置
+            # 更新配置
             self._sync_to_file()
-
-            # 立即刷新数据开关
-            if self._onlyonce:
-                # 关闭开关
-                self._config['onlyonce'] = False
-                self._onlyonce = False
-                self._sync_to_file()
-                # 立即刷新
-                logger.info(f"手动触发刷新站点数据...")
-                # 发送刷新开始通知（不受_notify控制）
-                self.notify_helper.send_notification(
-                    title="后宫管理系统",
-                    text="正在刷新所有站点后宫数据...",
-                    notify_switch=False,
-                    force=True
-                )
-                # 使用后台线程刷新，避免阻塞UI
-                self._async_refresh_sites()
         
-        # 统计实际选中的站点数量
-        selected_sites = len([site for site in self.sites.get_indexers() 
-                              if str(site.get("id")) in [str(x) for x in self._nexus_sites]])
-        logger.info(f"后宫管理系统初始化完成，已选择 {selected_sites} 个站点")
+        # 如果启用了插件
+        if self._enabled:
+            # 检查是否配置了站点
+            if not self._nexus_sites:
+                logger.warning("未选择任何站点，插件将无法正常工作")
+            else:
+                logger.info(f"后宫管理系统初始化完成，已选择 {len(self._nexus_sites)} 个站点")
+                
+            # 处理立即运行一次开关
+            if self._onlyonce:
+                logger.info("立即运行一次开关已开启，3秒后开始刷新数据...")
+                # 关闭开关
+                self._onlyonce = False
+                self._config['onlyonce'] = False
+                self._sync_to_file()
+                # 延迟3秒执行，避免与初始化冲突
+                t = threading.Timer(3, self._async_refresh_sites)
+                t.daemon = True
+                t.start()
 
     def _save_config(self):
         """
@@ -170,16 +166,8 @@ class nexusinvitee(_PluginBase):
         """
         后台刷新处理函数
         """
-        # 执行刷新
-        result = self.refresh_all_sites()
-        
-        # 刷新完成后发送通知
-        if result and self._notify:
-            self.notify_helper.send_notification(
-                title="后宫管理系统 - 刷新结果",
-                text=f"刷新完成: 成功 {result.get('success', 0)} 个站点，失败 {result.get('error', 0)} 个站点",
-                notify_switch=self._notify
-            )
+        # 执行刷新，但不在这里发送通知（由refresh_all_sites负责发送）
+        self.refresh_all_sites()
 
     def get_state(self) -> bool:
         """
@@ -286,7 +274,7 @@ class nexusinvitee(_PluginBase):
                                         'component': 'VSwitch',
                                         'props': {
                                             'model': 'onlyonce',
-                                            'label': '立即刷新数据'
+                                            'label': '立即运行一次'
                                         }
                                     }
                                 ]
@@ -353,7 +341,7 @@ class nexusinvitee(_PluginBase):
                                         'props': {
                                             'type': 'info',
                                             'variant': 'tonal',
-                                            'text': '【使用说明】\n本插件适配各站点中，不排除bug，目前尚未适配mt、ptt、ttg等，以及我没有的站点，欢迎大佬们报错时提交错误站点的邀请页和发邀页html结构\n1. 选择要管理的站点（支持多选）\n2. 设置执行周期，建议每4小时检查一次\n3. 可选择开启通知，在状态变更时收到通知\n4. 需要手动刷新数据时，打开"立即刷新数据"并保存\n5. 数据默认缓存6小时，打开详情页不会自动刷新数据'
+                                            'text': '【使用说明】\n本插件适配各站点中，不排除bug，目前尚未适配mt、ptt、ttg等，以及我没有的站点，欢迎大佬们报错时提交错误站点的邀请页和发邀页html结构\n1. 选择要管理的站点（支持多选）\n2. 设置执行周期，建议每4小时检查一次\n3. 可选择开启通知，在状态变更时收到通知\n4. 需要立即刷新数据时，打开"立即运行一次"开关并保存（每次保存后自动关闭）\n5. 数据默认缓存6小时，打开详情页不会自动刷新数据'
                                         }
                                     }
                                 ]
@@ -366,7 +354,7 @@ class nexusinvitee(_PluginBase):
             "enabled": self._enabled,
             "notify": self._notify,
             "cron": self._cron,
-            "onlyonce": self._onlyonce,
+            "onlyonce": False,
             "site_ids": self._nexus_sites
         }
 
@@ -416,7 +404,7 @@ class nexusinvitee(_PluginBase):
                 "component": "VAlert",
                 "props": {
                     "type": "warning",
-                    "text": "如需刷新数据，请在配置页面打开\"立即刷新数据\"开关并保存",
+                    "text": "如需刷新数据，请在配置页面打开\"立即运行一次\"开关并保存",
                     "variant": "tonal",
                     "class": "mb-4"
                 }
@@ -483,6 +471,15 @@ class nexusinvitee(_PluginBase):
                                             },
                                             "content": [
                                                 {
+                                                    "component": "VIcon",
+                                                    "props": {
+                                                        "size": "36",
+                                                        "color": "primary",
+                                                        "class": "mb-2"
+                                                    },
+                                                    "text": "mdi-web"
+                                                },
+                                                {
                                                     "component": "div",
                                                     "props": {"class": "text-h5"},
                                                     "text": str(total_sites)
@@ -504,6 +501,15 @@ class nexusinvitee(_PluginBase):
                                                 "class": "text-center"
                                             },
                                             "content": [
+                                                {
+                                                    "component": "VIcon",
+                                                    "props": {
+                                                        "size": "36",
+                                                        "color": "info",
+                                                        "class": "mb-2"
+                                                    },
+                                                    "text": "mdi-human-queue"
+                                                },
                                                 {
                                                     "component": "div",
                                                     "props": {"class": "text-h5"},
@@ -527,8 +533,17 @@ class nexusinvitee(_PluginBase):
                                             },
                                             "content": [
                                                 {
+                                                    "component": "VIcon",
+                                                    "props": {
+                                                        "size": "36",
+                                                        "color": "warning",
+                                                        "class": "mb-2"
+                                                    },
+                                                    "text": "mdi-alert-circle"
+                                                },
+                                                {
                                                     "component": "div",
-                                                    "props": {"class": "text-h5 warning--text"},
+                                                    "props": {"class": "text-h5 text-warning"},
                                                     "text": str(total_low_ratio)
                                                 },
                                                 {
@@ -549,8 +564,17 @@ class nexusinvitee(_PluginBase):
                                             },
                                             "content": [
                                                 {
+                                                    "component": "VIcon",
+                                                    "props": {
+                                                        "size": "36",
+                                                        "color": "error",
+                                                        "class": "mb-2"
+                                                    },
+                                                    "text": "mdi-account-cancel"
+                                                },
+                                                {
                                                     "component": "div",
-                                                    "props": {"class": "text-h5 error--text"},
+                                                    "props": {"class": "text-h5 text-error"},
                                                     "text": str(total_banned)
                                                 },
                                                 {
@@ -603,7 +627,9 @@ class nexusinvitee(_PluginBase):
                     site_card = {
                         "component": "VCard",
                         "props": {
-                            "class": "mb-4"
+                            "class": "mb-4",
+                            "variant": "outlined",
+                            "elevation": "1"
                         },
                         "content": [
                             # 站点信息头部
@@ -623,25 +649,59 @@ class nexusinvitee(_PluginBase):
                                                 },
                                                 "content": [
                                                     {
-                                                        "component": "VAvatar",
+                                                        "component": "VIcon",
                                                         "props": {
+                                                            "color": "primary",
                                                             "size": "24",
                                                             "class": "mr-2"
                                                         },
-                                                        "content": [{
-                                                            "component": "VImg",
-                                                            "props": {
-                                                                "src": site_info.get("icon", ""),
-                                                                "alt": site_name
-                                                            }
-                                                        }]
+                                                        "text": "mdi-crown"
                                                     },
                                                     {
                                                         "component": "span",
                                                         "props": {
                                                             "class": "text-h6"
                                                         },
-                                                        "text": f"{site_name} - 后宫: {len(invitees)}人 (低分享率: {low_ratio_count}, 已禁用: {banned_count})"
+                                                        "text": site_info.get("name")
+                                                    },
+                                                    {
+                                                        "component": "VSpacer"
+                                                    },
+                                                    {
+                                                        "component": "div",
+                                                        "props": {
+                                                            "class": "d-flex align-center"
+                                                        },
+                                                        "content": [
+                                                            {
+                                                                "component": "VIcon",
+                                                                "props": {
+                                                                    "size": "small",
+                                                                    "color": "error",
+                                                                    "class": "mr-1"
+                                                                },
+                                                                "text": "mdi-alert-circle" if low_ratio_count > 0 else ""
+                                                            },
+                                                            {
+                                                                "component": "span",
+                                                                "props": {"class": "text-caption mr-2"},
+                                                                "text": f"{low_ratio_count}人低分享" if low_ratio_count > 0 else ""
+                                                            },
+                                                            {
+                                                                "component": "VIcon",
+                                                                "props": {
+                                                                    "size": "small",
+                                                                    "color": "error",
+                                                                    "class": "mr-1"
+                                                                },
+                                                                "text": "mdi-block-helper" if banned_count > 0 else ""
+                                                            },
+                                                            {
+                                                                "component": "span",
+                                                                "props": {"class": "text-caption"},
+                                                                "text": f"{banned_count}人禁用" if banned_count > 0 else ""
+                                                            }
+                                                        ]
                                                     }
                                                 ]
                                             }
@@ -664,38 +724,36 @@ class nexusinvitee(_PluginBase):
                                         "content": [
                                             {
                                                 "component": "VCol",
-                                                "props": {"cols": 12},
-                                                "content": [{
-                                                    "component": "VAlert",
-                                                    "props": {
-                                                        "type": "error" if not invite_data.get("invite_status", {}).get("can_invite") else "success",
-                                                        "text": invite_data.get("invite_status", {}).get("reason") or (
-                                                            "可以发送邀请" if invite_data.get("invite_status", {}).get("can_invite") 
-                                                            else "不能发送邀请"
-                                                        ),
-                                                        "variant": "tonal",
-                                                        "density": "compact"
-                                                    }
-                                                }]
-                                            },
-                                            {
-                                                "component": "VCol",
                                                 "props": {"cols": 3},
                                                 "content": [{
                                                     "component": "div",
                                                     "props": {
-                                                        "class": "text-center"
+                                                        "class": "d-flex align-center"
                                                     },
                                                     "content": [
                                                         {
-                                                            "component": "div",
-                                                            "props": {"class": "text-h6"},
-                                                            "text": str(invite_data.get("invite_status", {}).get("permanent_count", 0))
+                                                            "component": "VIcon",
+                                                            "props": {
+                                                                "size": "24",
+                                                                "color": "primary",
+                                                                "class": "mr-2"
+                                                            },
+                                                            "text": "mdi-ticket-confirmation"
                                                         },
                                                         {
                                                             "component": "div",
-                                                            "props": {"class": "text-caption"},
-                                                            "text": "永久邀请"
+                                                            "content": [
+                                                                {
+                                                                    "component": "div",
+                                                                    "props": {"class": "text-body-1 font-weight-medium"},
+                                                                    "text": str(invite_data.get("invite_status", {}).get("normal_invite_count", 0))
+                                                                },
+                                                                {
+                                                                    "component": "div",
+                                                                    "props": {"class": "text-caption"},
+                                                                    "text": "永久邀请"
+                                                                }
+                                                            ]
                                                         }
                                                     ]
                                                 }]
@@ -706,18 +764,32 @@ class nexusinvitee(_PluginBase):
                                                 "content": [{
                                                     "component": "div",
                                                     "props": {
-                                                        "class": "text-center"
+                                                        "class": "d-flex align-center"
                                                     },
                                                     "content": [
                                                         {
-                                                            "component": "div",
-                                                            "props": {"class": "text-h6"},
-                                                            "text": str(invite_data.get("invite_status", {}).get("temporary_count", 0))
+                                                            "component": "VIcon",
+                                                            "props": {
+                                                                "size": "24",
+                                                                "color": "info",
+                                                                "class": "mr-2"
+                                                            },
+                                                            "text": "mdi-ticket-outline"
                                                         },
                                                         {
                                                             "component": "div",
-                                                            "props": {"class": "text-caption"},
-                                                            "text": "临时邀请"
+                                                            "content": [
+                                                                {
+                                                                    "component": "div",
+                                                                    "props": {"class": "text-body-1 font-weight-medium"},
+                                                                    "text": str(invite_data.get("invite_status", {}).get("temp_invite_count", 0))
+                                                                },
+                                                                {
+                                                                    "component": "div",
+                                                                    "props": {"class": "text-caption"},
+                                                                    "text": "临时邀请"
+                                                                }
+                                                            ]
                                                         }
                                                     ]
                                                 }]
@@ -728,18 +800,32 @@ class nexusinvitee(_PluginBase):
                                                 "content": [{
                                                     "component": "div",
                                                     "props": {
-                                                        "class": "text-center"
+                                                        "class": "d-flex align-center"
                                                     },
                                                     "content": [
                                                         {
-                                                            "component": "div",
-                                                            "props": {"class": "text-h6"},
-                                                            "text": str(len(invite_data.get("invitees", [])))
+                                                            "component": "VIcon",
+                                                            "props": {
+                                                                "size": "24",
+                                                                "color": "success",
+                                                                "class": "mr-2"
+                                                            },
+                                                            "text": "mdi-account-group"
                                                         },
                                                         {
                                                             "component": "div",
-                                                            "props": {"class": "text-caption"},
-                                                            "text": "已邀请用户"
+                                                            "content": [
+                                                                {
+                                                                    "component": "div",
+                                                                    "props": {"class": "text-body-1 font-weight-medium"},
+                                                                    "text": str(len(invitees))
+                                                                },
+                                                                {
+                                                                    "component": "div",
+                                                                    "props": {"class": "text-caption"},
+                                                                    "text": "邀请人数"
+                                                                }
+                                                            ]
                                                         }
                                                     ]
                                                 }]
@@ -750,18 +836,32 @@ class nexusinvitee(_PluginBase):
                                                 "content": [{
                                                     "component": "div",
                                                     "props": {
-                                                        "class": "text-center"
+                                                        "class": "d-flex align-center"
                                                     },
                                                     "content": [
                                                         {
-                                                            "component": "div",
-                                                            "props": {"class": "text-h6 " + ("success--text" if invite_data.get("invite_status", {}).get("can_invite") else "error--text")},
-                                                            "text": "可邀请" if invite_data.get("invite_status", {}).get("can_invite") else "不可邀请"
+                                                            "component": "VIcon",
+                                                            "props": {
+                                                                "size": "24",
+                                                                "color": "success" if invite_data.get("invite_status", {}).get("can_invite") else "error",
+                                                                "class": "mr-2"
+                                                            },
+                                                            "text": "mdi-check-circle" if invite_data.get("invite_status", {}).get("can_invite") else "mdi-close-circle"
                                                         },
                                                         {
                                                             "component": "div",
-                                                            "props": {"class": "text-caption"},
-                                                            "text": "邀请权限"
+                                                            "content": [
+                                                                {
+                                                                    "component": "div",
+                                                                    "props": {"class": "text-body-1 font-weight-medium"},
+                                                                    "text": "可邀请" if invite_data.get("invite_status", {}).get("can_invite") else "不可邀请"
+                                                                },
+                                                                {
+                                                                    "component": "div",
+                                                                    "props": {"class": "text-caption"},
+                                                                    "text": "邀请权限"
+                                                                }
+                                                            ]
                                                         }
                                                     ]
                                                 }]
@@ -799,19 +899,18 @@ class nexusinvitee(_PluginBase):
 
                             row_class = ""
                             if is_banned:
-                                row_class = "error lighten-4"
+                                row_class = "bg-error-lighten-4"
                             elif is_low_ratio:
-                                row_class = "warning lighten-4"
+                                row_class = "bg-warning-lighten-4"
 
                             # 判断分享率样式
                             ratio_class = ""
                             if ratio_str == '∞' or ratio_str.lower() == 'inf.' or ratio_str.lower() == 'inf':
-                                ratio_class = "success--text"
+                                ratio_class = "text-success"
                             else:
                                 try:
-                                    ratio_val = float(ratio_str.replace(
-                                        ',', '.')) if ratio_str else 0
-                                    ratio_class = "success--text" if ratio_val >= 1 else "error--text font-weight-bold"
+                                    ratio_val = float(ratio_str.replace(',', '.')) if ratio_str else 0
+                                    ratio_class = "text-success" if ratio_val >= 1 else "text-error font-weight-bold"
                                 except (ValueError, TypeError):
                                     ratio_class = ""
 
@@ -853,16 +952,16 @@ class nexusinvitee(_PluginBase):
                                     {"component": "td", "text": invitee.get(
                                         "seeding_size", "")},
                                     {"component": "td", "text": invitee.get(
-                                        "seed_magic", "") or invitee.get("seed_time", "")},
+                                        "seed_magic", "") or invitee.get("magic", "") or invitee.get("seed_time", "")},
                                     {"component": "td", "text": invitee.get(
-                                        "seed_bonus", "")},
+                                        "seed_bonus", "") or invitee.get("invitee_bonus", "") or invitee.get("bonus", "")},
                                     {"component": "td", "text": invitee.get(
                                         "last_seed_report", "") or invitee.get("last_seen", "")},
                                     {
                                         "component": "td",
                                         "props": {
-                                            "class": ("success--text" if invitee.get('status') == '已确认' else "") +
-                                                     (" error--text font-weight-bold" if invitee.get('enabled', '').lower() == 'no' else "")
+                                            "class": ("text-success" if invitee.get('status') == '已确认' else "") +
+                                                     (" text-error font-weight-bold" if invitee.get('enabled', '').lower() == 'no' else "")
                                         },
                                         "text": invitee.get("status", "") + (" (已禁用)" if invitee.get('enabled', '').lower() == 'no' else "")
                                     }
@@ -878,24 +977,107 @@ class nexusinvitee(_PluginBase):
                                 "component": "VTable",
                                 "props": {
                                     "hover": True,
-                                    "density": "compact"
+                                    "density": "compact",
+                                    "fixed-header": True,
+                                    "class": "site-invitees-table"
                                 },
                                 "content": [{
                                     "component": "thead",
                                     "content": [{
                                         "component": "tr",
+                                        "props": {
+                                            "class": "bg-primary-lighten-5"
+                                        },
                                         "content": [
-                                            {"component": "th", "text": "用户名"},
-                                            {"component": "th", "text": "邮箱"},
-                                            {"component": "th", "text": "上传量"},
-                                            {"component": "th", "text": "下载量"},
-                                            {"component": "th", "text": "分享率"},
-                                            {"component": "th", "text": "做种数"},
-                                            {"component": "th", "text": "做种体积"},
-                                            {"component": "th", "text": "做种时魔"},
-                                            {"component": "th", "text": "后宫加成"},
-                                            {"component": "th", "text": "最后做种报告"},
-                                            {"component": "th", "text": "状态"}
+                                            {"component": "th", "props": {"class": "text-subtitle-2"}, "text": "用户名"},
+                                            {"component": "th", "props": {"class": "text-subtitle-2"}, "text": "邮箱"},
+                                            {"component": "th", "props": {"class": "text-subtitle-2"}, "text": "上传量"},
+                                            {"component": "th", "props": {"class": "text-subtitle-2"}, "text": "下载量"},
+                                            {
+                                                "component": "th", 
+                                                "props": {"class": "text-subtitle-2"},
+                                                "content": [
+                                                    {
+                                                        "component": "div",
+                                                        "props": {
+                                                            "class": "d-flex align-center justify-center"
+                                                        },
+                                                        "content": [
+                                                            {
+                                                                "component": "VIcon",
+                                                                "props": {
+                                                                    "size": "small",
+                                                                    "class": "mr-1",
+                                                                    "color": "primary"
+                                                                },
+                                                                "text": "mdi-poll"
+                                                            },
+                                                            {
+                                                                "component": "span",
+                                                                "text": "分享率"
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            {"component": "th", "props": {"class": "text-subtitle-2"}, "text": "做种数"},
+                                            {"component": "th", "props": {"class": "text-subtitle-2"}, "text": "做种体积"},
+                                            {"component": "th", "props": {"class": "text-subtitle-2"}, "text": "做种时魔"},
+                                            {
+                                                "component": "th", 
+                                                "props": {"class": "text-subtitle-2"},
+                                                "content": [
+                                                    {
+                                                        "component": "div",
+                                                        "props": {
+                                                            "class": "d-flex align-center justify-center"
+                                                        },
+                                                        "content": [
+                                                            {
+                                                                "component": "VIcon",
+                                                                "props": {
+                                                                    "size": "small",
+                                                                    "class": "mr-1",
+                                                                    "color": "success"
+                                                                },
+                                                                "text": "mdi-crown"
+                                                            },
+                                                            {
+                                                                "component": "span",
+                                                                "text": "后宫加成"
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            {"component": "th", "props": {"class": "text-subtitle-2"}, "text": "最后做种报告"},
+                                            {
+                                                "component": "th", 
+                                                "props": {"class": "text-subtitle-2"},
+                                                "content": [
+                                                    {
+                                                        "component": "div",
+                                                        "props": {
+                                                            "class": "d-flex align-center justify-center"
+                                                        },
+                                                        "content": [
+                                                            {
+                                                                "component": "VIcon",
+                                                                "props": {
+                                                                    "size": "small",
+                                                                    "class": "mr-1",
+                                                                    "color": "info"
+                                                                },
+                                                                "text": "mdi-information"
+                                                            },
+                                                            {
+                                                                "component": "span",
+                                                                "text": "状态"
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            }
                                         ]
                                     }]
                                 }, {
@@ -916,7 +1098,7 @@ class nexusinvitee(_PluginBase):
                     "component": "VAlert",
                     "props": {
                         "type": "warning",
-                        "text": "暂无数据，请先在配置中选择要管理的站点，并打开\"立即刷新数据\"开关获取数据",
+                        "text": "暂无数据，请先在配置中选择要管理的站点，并打开\"立即运行一次\"开关获取数据",
                         "variant": "tonal",
                         "class": "mt-4"
                     }
@@ -984,14 +1166,7 @@ class nexusinvitee(_PluginBase):
                     self._sync_to_file()
                     # 立即刷新
                     logger.info(f"手动触发刷新站点数据...")
-                    # 发送刷新开始通知（不受_notify控制）
-                    self.notify_helper.send_notification(
-                            title="后宫管理系统",
-                        text="正在刷新所有站点后宫数据...",
-                        notify_switch=False,
-                        force=True
-                        )
-                    # 异步刷新数据
+                    # 异步刷新数据，通知会在refresh_all_sites中发送，不需要这里发送
                     self._async_refresh_sites()
                 return Response(success=True, message="更新成功")
             else:
@@ -1138,1260 +1313,93 @@ class nexusinvitee(_PluginBase):
                     invite_response = session.get(invite_url, timeout=(10, 30))
                     invite_response.raise_for_status()
                     
-                    return self._parse_mteam_invite_page(invite_response.text, stats_data)
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"访问M-Team API失败: {str(e)}")
+                    # 使用站点处理器
+                    handler = ModuleLoader.get_handler_for_site(site_url)
+                    if handler:
+                        # 如果有匹配的站点处理器，使用处理器解析
+                        return handler.parse_invite_page(site_info, session)
+                    else:
+                        logger.error(f"找不到适合站点 {site_name} 的处理器")
                     return {
-                        "error": f"访问站点API失败: {str(e)}",
+                            "error": f"找不到适合站点 {site_name} 的处理器",
                         "invite_status": {
                             "can_invite": False,
                             "permanent_count": 0,
                             "temporary_count": 0,
-                            "reason": f"访问站点API失败: {str(e)}"
+                                "reason": f"找不到适合站点 {site_name} 的处理器"
+                            }
+                        }
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"访问站点 {site_name} API或页面失败: {str(e)}")
+                    return {
+                        "error": f"访问站点API或页面失败: {str(e)}",
+                        "invite_status": {
+                            "can_invite": False,
+                            "permanent_count": 0,
+                            "temporary_count": 0,
+                            "reason": f"访问站点API或页面失败: {str(e)}"
                         }
                     }
             elif "hdchina" in site_url.lower() or "totheglory" in site_url.lower():
                 # 特殊站点预留处理位置 - HDChina/TTG等
                 logger.warning(f"站点 {site_name} 使用特殊架构，采用通用方法尝试获取数据")
                 try:
-                    invite_url = urljoin(site_url, f"invite.php?id={user_id}")
-                    response = session.get(invite_url, timeout=(10, 30))
-                    response.raise_for_status()
-                    return self._parse_nexusphp_invite_page(site_name, response.text)
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"访问特殊站点邀请页面失败: {str(e)}")
+                    # 使用站点处理器
+                    handler = ModuleLoader.get_handler_for_site(site_url, self._site_handlers)
+                    if handler:
+                        return handler.parse_invite_page(site_info, session)
+                    else:
+                        # 如果找不到处理器，尝试导入NexusPhpHandler作为后备处理器
+                        try:
+                            from plugins.nexusinvitee.sites.nexusphp import NexusPhpHandler
+                            backup_handler = NexusPhpHandler()
+                            return backup_handler.parse_invite_page(site_info, session)
+                        except Exception as import_err:
+                            logger.error(f"导入通用NexusPHP处理器失败: {str(import_err)}")
                     return {
-                        "error": f"访问特殊站点邀请页面失败: {str(e)}",
+                                "error": f"找不到匹配的站点处理器，且后备处理器加载失败",
                         "invite_status": {
                             "can_invite": False,
                             "permanent_count": 0,
                             "temporary_count": 0,
-                            "reason": f"访问特殊站点邀请页面失败: {str(e)}"
-                        }
-                    }
-            elif "open.cd" in site_url.lower() or "moecat" in site_url.lower() or "pterclub.com" in site_url.lower():
-                # 猫站等特殊处理 - 需要检查坑位
-                logger.info(f"处理猫站类型站点: {site_name} ({site_url})")
-                try:
-                    # 普通邀请页面
-                    invite_url = urljoin(site_url, f"invite.php?id={user_id}")
-                    response = session.get(invite_url, timeout=(10, 30))
-                    response.raise_for_status()
-                    result = self._parse_nexusphp_invite_page(
-                        site_name, response.text)
-
-                    # 额外检查是否有坑位
-                    # 访问发送邀请页面
-                    send_invite_url = urljoin(
-                        site_url, f"invite.php?id={user_id}&type=new")
-                    send_response = session.get(
-                        send_invite_url, timeout=(10, 30))
-                    send_response.raise_for_status()
-
-                    # 创建BeautifulSoup对象解析页面
-                    send_soup = BeautifulSoup(send_response.text, 'html.parser')
-                    
-                    # 检查是否有takeinvite.php表单
-                    has_form = bool(send_soup.select('form[action*="takeinvite.php"]'))
-                    
-                    # 检查是否有"当前账户上限数已到"的消息
-                    no_slot_text = send_soup.find(text=re.compile(r'当前账户上限数已到|帐户上限|没有可用的邀请名额|has reached'))
-                    if no_slot_text:
-                        result["invite_status"]["can_invite"] = False
-                        result["invite_status"]["reason"] = "当前账户上限数已到，没有可用坑位"
-                        logger.info(f"站点 {site_name} 坑位已满，无法邀请")
-                    elif not has_form:
-                        # 如果没有表单，检查是否有其他限制消息
-                        sorry_text = send_soup.find(text=re.compile(r'对不起|sorry'))
-                        if sorry_text:
-                            parent_element = None
-                            for parent in sorry_text.parents:
-                                if parent.name in ['td', 'div', 'p']:
-                                    parent_element = parent
-                                    break
-                            
-                            if parent_element:
-                                restriction_text = parent_element.get_text().strip()
-                                result["invite_status"]["can_invite"] = False
-                                result["invite_status"]["reason"] = restriction_text
-                                logger.info(f"站点 {site_name} 有邀请限制: {restriction_text}")
-                    elif has_form:
-                        # 确认有表单，检查提交按钮
-                        submit_buttons = send_soup.select('input[type="submit"]')
-                        if submit_buttons:
-                            result["invite_status"]["can_invite"] = True
-                            if not result["invite_status"]["reason"]:
-                                result["invite_status"]["reason"] = "可以发送邀请，有可用坑位"
-                            logger.info(f"站点 {site_name} 可以发送邀请，有可用坑位")
-
-                    return result
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"访问猫站邀请页面失败: {str(e)}")
+                                    "reason": f"找不到匹配的站点处理器，且后备处理器加载失败"
+                                }
+                            }
+                except Exception as e:
+                    logger.error(f"处理站点 {site_name} 失败: {str(e)}")
                     return {
-                        "error": f"访问猫站邀请页面失败: {str(e)}",
+                        "error": f"处理站点失败: {str(e)}",
                         "invite_status": {
                             "can_invite": False,
                             "permanent_count": 0,
                             "temporary_count": 0,
-                            "reason": f"访问猫站邀请页面失败: {str(e)}"
+                            "reason": f"处理站点失败: {str(e)}"
                         }
                     }
+            
+            # 使用通用处理方式
+            logger.info(f"站点 {site_name} 使用通用方式处理")
+            handler = ModuleLoader.get_handler_for_site(site_url, self._site_handlers)
+            if handler:
+                return handler.parse_invite_page(site_info, session)
             else:
-                # 标准NexusPHP站点
-                try:
-                    # 首先获取普通邀请页面的数据
-                    invite_url = urljoin(site_url, f"invite.php?id={user_id}")
-                    response = session.get(invite_url, timeout=(10, 30))
-                    response.raise_for_status()
-                    result = self._parse_nexusphp_invite_page(site_name, response.text)
-                    
-                    # 访问发送邀请页面，这是判断权限的关键
-                    send_invite_url = urljoin(site_url, f"invite.php?id={user_id}&type=new")
-                    try:
-                        send_response = session.get(send_invite_url, timeout=(10, 30))
-                        send_response.raise_for_status()
-                        
-                        # 解析页面
-                        send_soup = BeautifulSoup(send_response.text, 'html.parser')
-                        
-                        # 检查是否有takeinvite.php表单 - 最直接的权限判断
-                        invite_form = send_soup.select('form[action*="takeinvite.php"]')
-                        if invite_form:
-                            # 确认有表单，权限正常
-                            result["invite_status"]["can_invite"] = True
-                            result["invite_status"]["reason"] = "可以发送邀请"
-                            logger.info(f"站点 {site_name} 可以发送邀请，确认有takeinvite表单")
-                        else:
-                            # 没有表单，检查是否有错误消息
-                            sorry_text = send_soup.find(text=re.compile(r'对不起|sorry'))
-                            if sorry_text:
-                                parent_element = None
-                                for parent in sorry_text.parents:
-                                    if parent.name in ['td', 'div', 'p', 'h2']:
-                                        parent_element = parent
-                                        break
-                                
-                                if parent_element:
-                                    # 获取整个限制文本
-                                    restriction_text = ""
-                                    for parent in parent_element.parents:
-                                        if parent.name in ['table']:
-                                            restriction_text = parent.get_text().strip()
-                                            break
-                                    
-                                    if not restriction_text:
-                                        restriction_text = parent_element.get_text().strip()
-                                    
-                                    result["invite_status"]["can_invite"] = False
-                                    result["invite_status"]["reason"] = restriction_text
-                                    logger.info(f"站点 {site_name} 有邀请限制: {restriction_text}")
-                            
-                    except requests.exceptions.RequestException as e:
-                        logger.warning(f"访问站点发送邀请页面失败，使用默认权限判断: {str(e)}")
-                    
-                    return result
-                    
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"访问邀请页面失败: {str(e)}")
-                    return {
-                        "error": f"访问邀请页面失败: {str(e)}",
-                        "invite_status": {
-                            "can_invite": False,
-                            "permanent_count": 0,
-                            "temporary_count": 0,
-                            "reason": f"访问邀请页面失败: {str(e)}"
-                        }
-                    }
+                # 如果找不到合适的处理器，使用通用NexusPHP处理器
+                from plugins.nexusinvitee.sites.nexusphp import NexusPhpHandler
+                default_handler = NexusPhpHandler()
+                return default_handler.parse_invite_page(site_info, session)
 
         except Exception as e:
             logger.error(f"获取站点 {site_name} 邀请数据失败: {str(e)}")
             return {
-                "error": str(e),
+                "error": f"获取站点邀请数据失败: {str(e)}",
                 "invite_status": {
                     "can_invite": False,
                     "permanent_count": 0,
                     "temporary_count": 0,
-                    "reason": str(e)
+                    "reason": f"获取站点邀请数据失败: {str(e)}"
                 }
             }
-
-    def _get_user_id(self, session: requests.Session, site_info: dict) -> Optional[str]:
-        """
-        获取用户ID
-        """
-        try:
-            site_url = site_info.get("url", "").strip()
             
-            # 访问个人信息页面
-            usercp_url = urljoin(site_url, "usercp.php")
-            response = session.get(usercp_url, timeout=(5, 15))
-            response.raise_for_status()
-            
-            # 解析页面获取用户ID
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # 方法1: 从个人信息链接获取
-            user_link = soup.select_one('a[href*="userdetails.php"]')
-            if user_link and 'href' in user_link.attrs:
-                import re
-                user_id_match = re.search(r'id=(\d+)', user_link['href'])
-                if user_id_match:
-                    return user_id_match.group(1)
-            
-            # 方法2: 从其他链接获取
-            invite_link = soup.select_one('a[href*="invite.php"]')
-            if invite_link and 'href' in invite_link.attrs:
-                user_id_match = re.search(r'id=(\d+)', invite_link['href'])
-                if user_id_match:
-                    return user_id_match.group(1)
-            
-            return None
-        except Exception as e:
-            logger.error(f"获取用户ID失败: {str(e)}")
-            return None
-
-    def _convert_size_to_bytes(self, size_str: str) -> float:
-        """
-        将大小字符串转换为字节数
-        """
-        if not size_str or size_str.strip() == '':
-            logger.warning(f"空的大小字符串")
-            return 0
-
-        # 处理特殊情况
-        if size_str.lower() == 'inf.' or size_str.lower() == 'inf' or size_str == '∞':
-            logger.info(f"识别到无限大值: {size_str}")
-            return 1e20  # 使用一个非常大的数值代替无穷大
-
-        try:
-            # 标准化字符串，替换逗号为点
-            size_str = size_str.replace(',', '.')
-
-            # 分离数字和单位
-            # 正则表达式匹配数字部分和单位部分
-            matches = re.match(
-                r'([\d.]+)\s*([KMGTPEZY]?i?B)', size_str, re.IGNORECASE)
-
-            if not matches:
-                # 尝试匹配仅有数字的情况
-                try:
-                    return float(size_str)
-                except ValueError:
-                            logger.warning(f"无法解析大小字符串: {size_str}")
-                            return 0
-
-            size_num, unit = matches.groups()
-
-            # 尝试转换数字
-            try:
-                size_value = float(size_num)
-            except ValueError:
-                logger.warning(f"无法转换大小值为浮点数: {size_num}")
-                return 0
-
-            # 单位转换
-            unit = unit.upper()
-
-            units = {
-                'B': 1,
-                'KB': 1024,
-                'KIB': 1024,
-                'MB': 1024 ** 2,
-                'MIB': 1024 ** 2,
-                'GB': 1024 ** 3,
-                'GIB': 1024 ** 3,
-                'TB': 1024 ** 4,
-                'TIB': 1024 ** 4,
-                'PB': 1024 ** 5,
-                'PIB': 1024 ** 5,
-                'EB': 1024 ** 6,
-                'EIB': 1024 ** 6,
-                'ZB': 1024 ** 7,
-                'ZIB': 1024 ** 7,
-                'YB': 1024 ** 8,
-                'YIB': 1024 ** 8
-            }
-
-            # 处理简写单位
-            if unit in ['K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y']:
-                unit = unit + 'B'
-
-            if unit not in units:
-                logger.warning(f"未知的大小单位: {unit}")
-                return size_value  # 假设是字节
-
-            return size_value * units[unit]
-
-        except Exception as e:
-            logger.warning(f"转换大小字符串到字节时出错 '{size_str}': {str(e)}")
-            return 0
-
-    def _calculate_ratio(self, uploaded: str, downloaded: str) -> str:
-        """
-        计算分享率
-        """
-        try:
-            up_bytes = self._convert_size_to_bytes(uploaded)
-            down_bytes = self._convert_size_to_bytes(downloaded)
-            
-            if down_bytes == 0:
-                return "∞" if up_bytes > 0 else "0"
-            
-            ratio = up_bytes / down_bytes
-            return f"{ratio:.3f}"
-        except Exception as e:
-            logger.error(f"计算分享率失败: {str(e)}")
-            return "0"
-
-    def _parse_nexusphp_invite_page(self, site_name, html_content) -> dict:
-        """
-        解析NexusPHP邀请页面
-        """
-        result = {
-                "invite_status": {
-                    "can_invite": False,
-                "reason": "",
-                    "permanent_count": 0,
-                "temporary_count": 0
-            },
-            "invitees": []
-        }
-
-        # 初始化BeautifulSoup对象
-        soup = BeautifulSoup(html_content, 'html.parser')
-        
-        # 检查是否有特殊标题，如"我的后宫"或"邀請系統"等
-        special_title = False
-        title_elem = soup.select_one('h1')
-        if title_elem:
-            title_text = title_elem.get_text().strip()
-            if '后宫' in title_text or '後宮' in title_text or '邀請系統' in title_text or '邀请系统' in title_text:
-                logger.info(f"站点 {site_name} 检测到特殊标题: {title_text}")
-                special_title = True
-
-        # 先检查info_block中的邀请信息
-        info_block = soup.select_one('#info_block')
-        if info_block:
-            info_text = info_block.get_text()
-            logger.info(f"站点 {site_name} 获取到info_block信息")
-            
-            # 识别邀请数量 - 查找邀请链接并获取数量
-            invite_link = info_block.select_one('a[href*="invite.php"]')
-            if invite_link:
-                # 获取invite链接周围的文本
-                parent_text = invite_link.parent.get_text() if invite_link.parent else ""
-                
-                # 尝试匹配常见格式: 数字(数字) 或 单个数字
-                invite_pattern = re.compile(r'(?:邀请|探视权|invite).*?:?\s*(\d+)(?:\s*\((\d+)\))?', re.IGNORECASE)
-                invite_match = invite_pattern.search(parent_text)
-                
-                if invite_match:
-                    # 获取永久邀请数量
-                    if invite_match.group(1):
-                        result["invite_status"]["permanent_count"] = int(invite_match.group(1))
-                    
-                    # 如果有临时邀请数量
-                    if len(invite_match.groups()) > 1 and invite_match.group(2):
-                        result["invite_status"]["temporary_count"] = int(invite_match.group(2))
-                    
-                    logger.info(f"站点 {site_name} 解析到邀请数量: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}")
-                    
-                    # 如果有邀请名额，初步判断为可邀请
-                    if result["invite_status"]["permanent_count"] > 0 or result["invite_status"]["temporary_count"] > 0:
-                        result["invite_status"]["can_invite"] = True
-                        result["invite_status"]["reason"] = f"可用邀请数: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}"
-                else:
-                    # 尝试在邀请链接后面的文本中查找数字
-                    after_text = ""
-                    next_sibling = invite_link.next_sibling
-                    while next_sibling and not after_text.strip():
-                        if isinstance(next_sibling, str):
-                            after_text = next_sibling
-                        next_sibling = next_sibling.next_sibling if hasattr(next_sibling, 'next_sibling') else None
-                    
-                    if after_text:
-                        nums = re.findall(r'\d+', after_text)
-                        if nums and len(nums) >= 1:
-                            result["invite_status"]["permanent_count"] = int(nums[0])
-                            if len(nums) >= 2:
-                                result["invite_status"]["temporary_count"] = int(nums[1])
-                            
-                            logger.info(f"站点 {site_name} 从后续文本解析到邀请数量: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}")
-                            
-                            # 如果有邀请名额，初步判断为可邀请
-                            if result["invite_status"]["permanent_count"] > 0 or result["invite_status"]["temporary_count"] > 0:
-                                result["invite_status"]["can_invite"] = True
-                                result["invite_status"]["reason"] = f"可用邀请数: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}"
-
-        # 检查是否有标准的NexusPHP邀请页面结构
-        invite_tables = soup.select('table.main > tbody > tr > td > table')
-
-        # 如果页面没有invite_tables可能是未登录或者错误页面
-        if not invite_tables:
-            # 检查是否有其他表格
-            any_tables = soup.select('table')
-            if not any_tables:
-                result["invite_status"]["reason"] = "页面解析错误，可能未登录或者站点结构特殊"
-                logger.error(f"站点 {site_name} 邀请页面解析失败：没有找到任何表格")
-                return result
-            else:
-                # 使用任意表格继续尝试
-                invite_tables = any_tables
-
-        # 检查是否存在"没有邀请权限"或"当前没有可用邀请名额"等提示
-        error_patterns = [
-            r"没有邀请权限",
-            r"不能使用邀请",
-            r"当前没有可用邀请名额",
-            r"低于要求的等级",
-            r"需要更高的用户等级",
-            r"无法进行邀请注册",
-            r"当前账户上限数已到",
-            r"抱歉，目前没有开放注册",
-            r"当前邀请注册人数已达上限",
-            r"对不起",
-            r"只有.*等级才能发送邀请",
-            r"及以上.*才能发送邀请",
-            r"\w+\s*or above can send invites"
-        ]
-
-        # 解析邀请权限状态
-        page_text = soup.get_text()
-
-        # 查找是否有邀请限制文本
-        has_restriction = False
-        restriction_reason = ""
-
-        for pattern in error_patterns:
-            matches = re.search(pattern, page_text, re.IGNORECASE)
-            if matches:
-                has_restriction = True
-                restriction_reason = matches.group(0)
-                result["invite_status"]["can_invite"] = False
-                result["invite_status"]["reason"] = f"无法发送邀请: {restriction_reason}"
-                logger.info(f"站点 {site_name} 发现邀请限制: {restriction_reason}")
-                break
-
-        # 检查是否存在发送邀请表单，这是最直接的判断依据
-        invite_form = soup.select('form[action*="takeinvite.php"]')
-        if invite_form:
-            if not has_restriction:
-                result["invite_status"]["can_invite"] = True
-                if not result["invite_status"]["reason"]:
-                    result["invite_status"]["reason"] = "存在邀请表单，可以发送邀请"
-                logger.info(f"站点 {site_name} 存在邀请表单，可以发送邀请")
-        else:
-            # 如果没有找到takeinvite.php表单，再尝试更深入的检查
-            
-            # 1. 检查是否有"对不起"和等级限制的消息
-            sorry_text = soup.find(text=re.compile(r'对不起|sorry'))
-            if sorry_text:
-                parent_element = None
-                for parent in sorry_text.parents:
-                    if parent.name in ['td', 'div', 'p']:
-                        parent_element = parent
-                        break
-                
-                if parent_element:
-                    parent_text = parent_element.get_text()
-                    # 检查是否包含等级限制或账户上限信息
-                    if re.search(r'等级才|及以上|才可以|账户上限|上限数已到', parent_text):
-                        result["invite_status"]["can_invite"] = False
-                        result["invite_status"]["reason"] = parent_text.strip()
-                        logger.info(f"站点 {site_name} 发现限制信息: {parent_text.strip()}")
-                        has_restriction = True
-            
-            # 2. 尝试查找提交按钮，如果页面有提交按钮但不是在"对不起"消息中，可能有权限
-            if not has_restriction:
-                submit_buttons = soup.select('input[type="submit"]')
-                if submit_buttons:
-                    for button in submit_buttons:
-                        # 获取按钮上下文
-                        button_context = ""
-                        parent = button.parent
-                        while parent and parent.name != 'form':
-                            button_context = parent.get_text()
-                            parent = parent.parent
-                        
-                        # 检查按钮是否与邀请相关
-                        if re.search(r'邀请|探视权|invite', button_context, re.IGNORECASE):
-                            # 检查是否在表单内
-                            is_in_form = False
-                            for parent in button.parents:
-                                if parent.name == 'form':
-                                    is_in_form = True
-                                    break
-                            
-                            if is_in_form:
-                                result["invite_status"]["can_invite"] = True
-                                if not result["invite_status"]["reason"]:
-                                    result["invite_status"]["reason"] = "存在邀请提交按钮，可以发送邀请"
-                                logger.info(f"站点 {site_name} 存在邀请提交按钮，可以发送邀请")
-                                break
-
-        # 查找可用邀请数量文本，常见格式有：
-        # 1. "你有 X 个邀请名额"
-        # 2. "您有 X 个邀请"
-        invite_count_patterns = [
-            r"你有\s*(\d+)\s*个邀请名额",
-            r"您有\s*(\d+)\s*个邀请",
-            r"你有\s*(\d+)\s*个邀请",
-            r"邀请.*?(\d+).*?\((\d+)\)",  # 匹配 "邀请: 1(0)" 格式
-            r"剩余邀请\s*:\s*(\d+)",
-            r"invites? left:?\s*(\d+)"
-        ]
-
-        # 如果之前没有找到邀请数量，再次尝试从页面文本中查找
-        if result["invite_status"]["permanent_count"] == 0:
-            # 检查是否存在永久邀请数量
-            for pattern in invite_count_patterns:
-                matches = re.search(pattern, page_text, re.IGNORECASE)
-                if matches:
-                    invite_count = int(matches.group(1))
-                    result["invite_status"]["permanent_count"] = invite_count
-                    
-                    # 如果有第二个捕获组，可能是临时邀请
-                    if len(matches.groups()) > 1 and matches.group(2):
-                        try:
-                            temp_count = int(matches.group(2))
-                            result["invite_status"]["temporary_count"] = temp_count
-                        except (ValueError, TypeError):
-                            pass
-
-                    # 如果有邀请名额且没有发现限制，则可以邀请
-                    if invite_count > 0 and not has_restriction:
-                        result["invite_status"]["can_invite"] = True
-                        result["invite_status"]["reason"] = f"可用邀请数: {invite_count}"
-                        logger.info(f"站点 {site_name} 可用邀请数: {invite_count}")
-                    break
-
-        # 如果找不到永久邀请，也看看是否有临时邀请
-        temp_invite_patterns = [
-            r"临时邀请\s*:\s*(\d+)",
-            r"限时邀请\s*:\s*(\d+)"
-        ]
-
-        if result["invite_status"]["temporary_count"] == 0:
-            for pattern in temp_invite_patterns:
-                matches = re.search(pattern, page_text, re.IGNORECASE)
-                if matches:
-                    temp_count = int(matches.group(1))
-                    result["invite_status"]["temporary_count"] = temp_count
-
-                    # 如果有临时邀请且没有其他限制，则可以邀请
-                    if temp_count > 0 and not has_restriction and not result["invite_status"]["can_invite"]:
-                        result["invite_status"]["can_invite"] = True
-                        result["invite_status"]["reason"] = f"可用临时邀请数: {temp_count}"
-                        logger.info(f"站点 {site_name} 可用临时邀请数: {temp_count}")
-                    break
-
-        # 优先查找带有border属性的表格，这通常是用户列表表格
-        invitee_tables = soup.select('table[border="1"]')
-        
-        # 如果没找到，再尝试标准表格结构
-        if not invitee_tables:
-            invitee_tables = soup.select('table.main table.torrents')
-            
-            # 如果还没找到，尝试查找任何可能包含用户数据的表格
-            if not invitee_tables:
-                all_tables = soup.select('table')
-                # 过滤掉小表格
-                invitee_tables = [table for table in all_tables 
-                                 if len(table.select('tr')) > 2]
-        
-        # 处理找到的表格
-        for table in invitee_tables:
-            # 获取表头
-            header_row = table.select_one('tr')
-            if not header_row:
-                continue
-                
-            headers = []
-            header_cells = header_row.select('td.colhead, th.colhead, td, th')
-            for cell in header_cells:
-                headers.append(cell.get_text(strip=True))
-                
-            # 检查是否是用户表格 - 查找关键列头
-            if not any(keyword in ' '.join(headers).lower() for keyword in 
-                      ['用户名', '邮箱', 'email', '分享率', 'ratio', 'username']):
-                continue
-                
-            logger.info(f"站点 {site_name} 找到后宫用户表，表头: {headers}")
-            
-            # 解析表格行
-            rows = table.select('tr:not(:first-child)')
-            for row in rows:
-                cells = row.select('td')
-                if not cells or len(cells) < 3:  # 至少需要3列才可能是有效数据
-                    continue
-                    
-                invitee = {}
-                
-                # 检查行类和禁用标记
-                row_classes = row.get('class', [])
-                is_banned = any(cls in ['rowbanned', 'banned', 'disabled'] 
-                               for cls in row_classes)
-                
-                # 查找禁用图标
-                disabled_img = row.select_one('img.disabled, img[alt="Disabled"]')
-                if disabled_img:
-                    is_banned = True
-                
-                # 解析各列数据
-                for idx, cell in enumerate(cells):
-                    if idx >= len(headers):
-                        break
-                        
-                    header = headers[idx].lower()
-                    cell_text = cell.get_text(strip=True)
-                    
-                    # 用户名和链接
-                    if any(keyword in header for keyword in ['用户名', 'username', '名字', 'user']):
-                        username_link = cell.select_one('a')
-                        if username_link:
-                            invitee["username"] = username_link.get_text(strip=True)
-                            href = username_link.get('href', '')
-                            site_info = self.sites.get_indexer(site_name)
-                            site_url = site_info.get("url", "") if site_info else ""
-                            invitee["profile_url"] = urljoin(site_url, href) if href else ""
-                        else:
-                            invitee["username"] = cell_text
-                    
-                    # 邮箱
-                    elif any(keyword in header for keyword in ['邮箱', 'email', '电子邮件', 'mail']):
-                        invitee["email"] = cell_text
-                    
-                    # 启用状态 - 直接检查yes/no
-                    elif any(keyword in header for keyword in ['启用', '狀態', 'enabled', 'status']):
-                        status_text = cell_text.lower()
-                        if status_text == 'no' or '禁' in status_text or 'disabled' in status_text or 'banned' in status_text:
-                            invitee["enabled"] = "No"
-                            is_banned = True
-                        else:
-                            invitee["enabled"] = "Yes"
-                    
-                    # 上传量
-                    elif any(keyword in header for keyword in ['上传', '上傳', 'uploaded', 'upload']):
-                        invitee["uploaded"] = cell_text
-                    
-                    # 下载量
-                    elif any(keyword in header for keyword in ['下载', '下載', 'downloaded', 'download']):
-                        invitee["downloaded"] = cell_text
-                    
-                    # 分享率 - 特别处理∞、Inf.等情况
-                    elif any(keyword in header for keyword in ['分享率', '分享', 'ratio']):
-                        # 标准化分享率表示
-                        ratio_text = cell_text
-                        if ratio_text == '---' or not ratio_text:
-                            ratio_text = '0'
-                        elif ratio_text.lower() in ['inf.', 'inf', '无限']:
-                            ratio_text = '∞'
-                            
-                        invitee["ratio"] = ratio_text
-                        
-                        # 计算分享率数值
-                        try:
-                            if ratio_text == '∞':
-                                invitee["ratio_value"] = 1e20
-                            else:
-                                # 替换逗号为点
-                                normalized_ratio = ratio_text.replace(',', '.')
-                                invitee["ratio_value"] = float(normalized_ratio)
-                        except (ValueError, TypeError):
-                            invitee["ratio_value"] = 0
-                            logger.warning(f"无法解析分享率: {ratio_text}")
-                    
-                    # 做种数
-                    elif any(keyword in header for keyword in ['做种数', '做種數', 'seeding', 'seed']):
-                        invitee["seeding"] = cell_text
-                    
-                    # 做种体积
-                    elif any(keyword in header for keyword in ['做种体积', '做種體積', 'seeding size']):
-                        invitee["seeding_size"] = cell_text
-                    
-                    # 做种时间/魔力值
-                    elif any(keyword in header for keyword in ['做种时间', '做種時間', 'seed time']):
-                        invitee["seed_time"] = cell_text
-                    
-                    # 后宫加成/魔力值
-                    elif any(keyword in header for keyword in ['后宫加成', '魔力值', '後宮加成', 'bonus']):
-                        invitee["seed_bonus"] = cell_text
-                    
-                    # 最后活动/做种时间
-                    elif any(keyword in header for keyword in ['最后活动', '最後活動', 'last seen', 'last activity']):
-                        invitee["last_seen"] = cell_text
-                    
-                    # 做种时魔（纯做种时魔）
-                    elif any(keyword in header for keyword in ['做种时魔', '純做種時魔', 'seed bonus', '纯做种时魔', '当前纯做种时魔']):
-                        invitee["seed_magic"] = cell_text
-                    
-                    # 最后做种汇报时间
-                    elif any(keyword in header for keyword in ['最后做种汇报时间', '最後做種匯報時間', 'last seed report', '做种汇报']):
-                        invitee["last_seed_report"] = cell_text
-                    
-                    # 用户状态
-                    elif any(keyword in header for keyword in ['状态', '狀態', 'status']) and "enabled" not in invitee:
-                        invitee["status"] = cell_text
-                        
-                        # 根据状态文本判断是否被禁用
-                        status_lower = cell_text.lower()
-                        if any(ban_word in status_lower for ban_word in ['banned', 'disabled', '禁止', '封禁']):
-                            invitee["enabled"] = "No"
-                            is_banned = True
-                
-                # 如果尚未设置enabled状态，根据行类或图标判断
-                if "enabled" not in invitee:
-                    invitee["enabled"] = "No" if is_banned else "Yes"
-                
-                # 设置状态字段(如果尚未设置)
-                if "status" not in invitee:
-                    invitee["status"] = "已禁用" if is_banned else "已确认"
-                
-                # 计算分享率健康状态
-                if "ratio_value" in invitee:
-                    if invitee["ratio_value"] >= 1e20:
-                        invitee["ratio_health"] = "excellent"
-                    elif invitee["ratio_value"] >= 1.0:
-                        invitee["ratio_health"] = "good"
-                    elif invitee["ratio_value"] >= 0.5:
-                        invitee["ratio_health"] = "warning"
-                    else:
-                        invitee["ratio_health"] = "danger"
-                
-                # 将解析到的用户添加到列表中
-                if invitee.get("username"):
-                            result["invitees"].append(invitee)
-
-            # 如果已找到用户数据，跳出循环
-            if result["invitees"]:
-                logger.info(f"站点 {site_name} 已解析 {len(result['invitees'])} 个后宫成员")
-                break
-
-        # 如果没有解析到数据，可能是特殊页面结构，尝试处理
-        if special_title and not result["invitees"]:
-            logger.info(f"站点 {site_name} 尝试处理特殊页面结构")
-            
-            # 直接查找border="1"的表格，这通常是用户列表表格
-            border_tables = soup.select('table[border="1"]')
-            if border_tables:
-                # 选取第一个border="1"表格
-                table = border_tables[0]
-                
-                # 获取表头
-                header_row = table.select_one('tr')
-                if header_row:
-                    # 获取所有表头单元格
-                    header_cells = header_row.select('td.colhead, th.colhead, td, th')
-                    headers = [cell.get_text(strip=True).lower() for cell in header_cells]
-                    
-                    logger.info(f"站点 {site_name} 找到用户表格，表头: {headers}")
-                    
-                    # 找到所有数据行（跳过表头行）
-                    data_rows = table.select('tr.rowfollow')
-                    
-                    # 清空已有数据，避免重复
-                    result["invitees"] = []
-                    processed_usernames = set()  # 用于跟踪已处理的用户名，避免重复
-                    
-                    for row in data_rows:
-                        cells = row.select('td')
-                        if len(cells) < len(headers):
-                            continue
-                        
-                        invitee = {}
-                        username = ""
-                        is_banned = False
-                        
-                        # 检查行类和禁用标记
-                        row_classes = row.get('class', [])
-                        if isinstance(row_classes, list) and any(cls in ['rowbanned', 'banned'] for cls in row_classes):
-                            is_banned = True
-                        
-                        # 逐列解析数据
-                        for idx, header in enumerate(headers):
-                            if idx >= len(cells):
-                                break
-                            
-                            cell = cells[idx]
-                            cell_text = cell.get_text(strip=True)
-                            
-                            # 用户名列（通常是第一列）
-                            if idx == 0 or any(kw in header for kw in ['用户名', '用戶名', 'username', 'user']):
-                                username_link = cell.select_one('a')
-                                disabled_img = cell.select_one('img.disabled, img[alt="Disabled"]')
-                                
-                                if disabled_img:
-                                    is_banned = True
-                                
-                                if username_link:
-                                    username = username_link.get_text(strip=True)
-                                    invitee["username"] = username
-                                    
-                                    # 处理可能在用户名中附带的Disabled文本
-                                    if "Disabled" in cell.get_text():
-                                        is_banned = True
-                                    
-                                    # 获取用户个人页链接
-                                    href = username_link.get('href', '')
-                                    site_info = self.sites.get_indexer(site_name)
-                                    site_url = site_info.get("url", "") if site_info else ""
-                                    invitee["profile_url"] = urljoin(site_url, href) if href else ""
-                                else:
-                                    username = cell_text
-                                    invitee["username"] = username
-                            
-                            # 邮箱列
-                            elif any(kw in header for kw in ['郵箱', '邮箱', 'email', 'mail']):
-                                invitee["email"] = cell_text
-                            
-                            # 启用状态列
-                            elif any(kw in header for kw in ['啟用', '启用', 'enabled']):
-                                status_text = cell_text.lower()
-                                if status_text == 'no' or '禁' in status_text:
-                                    invitee["enabled"] = "No"
-                                    is_banned = True
-                                else:
-                                    invitee["enabled"] = "Yes"
-                            
-                            # 上传量列
-                            elif any(kw in header for kw in ['上傳', '上传', 'uploaded', 'upload']):
-                                invitee["uploaded"] = cell_text
-                            
-                            # 下载量列
-                            elif any(kw in header for kw in ['下載', '下载', 'downloaded', 'download']):
-                                invitee["downloaded"] = cell_text
-                            
-                            # 分享率列 - 特别处理∞、Inf.等情况
-                            elif any(kw in header for kw in ['分享率', '分享比率', 'ratio']):
-                                ratio_text = cell_text
-                                
-                                # 处理特殊分享率表示
-                                if ratio_text.lower() in ['inf.', 'inf', '∞', 'infinite', '无限']:
-                                    invitee["ratio"] = "∞"
-                                    invitee["ratio_value"] = 1e20
-                                elif ratio_text == '---' or not ratio_text:
-                                    invitee["ratio"] = "0"
-                                    invitee["ratio_value"] = 0
-                                else:
-                                    # 获取font标签内的文本，如果存在
-                                    font_tag = cell.select_one('font')
-                                    if font_tag:
-                                        ratio_text = font_tag.get_text(strip=True)
-                                    
-                                    invitee["ratio"] = ratio_text
-                                    
-                                    # 尝试解析为浮点数
-                                    try:
-                                        # 替换逗号为点
-                                        normalized_ratio = ratio_text.replace(',', '.')
-                                        invitee["ratio_value"] = float(normalized_ratio)
-                                    except (ValueError, TypeError):
-                                        logger.warning(f"无法解析分享率: {ratio_text}")
-                                        invitee["ratio_value"] = 0
-                            
-                            # 做种数列
-                            elif any(kw in header for kw in ['做種數', '做种数', 'seeding', 'seeds']):
-                                invitee["seeding"] = cell_text
-                            
-                            # 做种体积列
-                            elif any(kw in header for kw in ['做種體積', '做种体积', 'seeding size', 'seed size']):
-                                invitee["seeding_size"] = cell_text
-                            
-                            # 当前纯做种时魔列
-                            elif any(kw in header for kw in ['純做種時魔', '当前纯做种时魔', '纯做种时魔', 'seed magic']):
-                                invitee["seed_magic"] = cell_text
-                            
-                            # 后宫加成列
-                            elif any(kw in header for kw in ['後宮加成', '后宫加成', 'bonus']):
-                                invitee["seed_bonus"] = cell_text
-                            
-                            # 最后做种汇报时间列
-                            elif any(kw in header for kw in ['最後做種匯報時間', '最后做种汇报时间', '最后做种报告', 'last seed']):
-                                invitee["last_seed_report"] = cell_text
-                            
-                            # 状态列
-                            elif any(kw in header for kw in ['狀態', '状态', 'status']):
-                                invitee["status"] = cell_text
-                                
-                                # 根据状态判断是否禁用
-                                status_lower = cell_text.lower()
-                                if any(ban_word in status_lower for ban_word in ['banned', 'disabled', '禁止', '禁用', '封禁']):
-                                    is_banned = True
-                        
-                        # 如果用户名不为空且未处理过
-                        if username and username not in processed_usernames:
-                            processed_usernames.add(username)
-                            
-                            # 设置启用状态（如果尚未设置）
-                            if "enabled" not in invitee:
-                                invitee["enabled"] = "No" if is_banned else "Yes"
-                            
-                            # 设置状态（如果尚未设置）
-                            if "status" not in invitee:
-                                invitee["status"] = "已禁用" if is_banned else "已確認"
-                            
-                            # 计算分享率健康状态
-                            if "ratio_value" in invitee:
-                                if invitee["ratio_value"] >= 1e20:
-                                    invitee["ratio_health"] = "excellent"
-                                elif invitee["ratio_value"] >= 1.0:
-                                    invitee["ratio_health"] = "good"
-                                elif invitee["ratio_value"] >= 0.5:
-                                    invitee["ratio_health"] = "warning"
-                                else:
-                                    invitee["ratio_health"] = "danger"
-                            
-                            # 将用户数据添加到结果中
-                            if invitee.get("username"):
-                                result["invitees"].append(invitee.copy())
-                    
-                    # 记录解析结果
-                    if result["invitees"]:
-                        logger.info(f"站点 {site_name} 从特殊格式表格解析到 {len(result['invitees'])} 个后宫成员")
-            
-            # 检查邀请权限
-            form_disabled = soup.select_one('input[disabled][value*="貴賓 或以上等級才可以"]')
-            if form_disabled:
-                disabled_text = form_disabled.get('value', '')
-                result["invite_status"]["can_invite"] = False
-                result["invite_status"]["reason"] = disabled_text
-                logger.info(f"站点 {site_name} 邀请按钮被禁用: {disabled_text}")
-
-        return result
-
-    def _parse_mteam_invite_page(self, html_content: str, stats_data: dict = None) -> dict:
-        """
-        解析M-Team邀请页面
-        """
-        try:
-            result = {
-                "invitees": [],
-                "sent_invites": [],
-                "temp_invites": [],
-                "invite_status": {
-                    "can_invite": False,
-                    "permanent_count": 0,
-                    "temporary_count": 0,
-                    "reason": "",
-                    "stats": stats_data or {}
-                }
-            }
-
-            # 尝试从页面中提取JSON数据
-            json_match = re.search(
-                r'window\.__INITIAL_STATE__\s*=\s*({.*?});', html_content)
-            if json_match:
-                try:
-                    data = json.loads(json_match.group(1))
-                    
-                    # 解析邀请名额
-                    if "inviteQuota" in data:
-                        result["invite_status"].update({
-                            "permanent_count": data["inviteQuota"].get("permanent", 0),
-                            "temporary_count": data["inviteQuota"].get("temporary", 0),
-                            "can_invite": data["inviteQuota"].get("permanent", 0) > 0 or 
-                                        data["inviteQuota"].get("temporary", 0) > 0
-                        })
-
-                    # 解析被邀请人列表
-                    if "invitees" in data:
-                        for invitee in data["invitees"]:
-                            result["invitees"].append({
-                                "username": invitee.get("username", ""),
-                                "email": invitee.get("email", ""),
-                                "uploaded": self._format_size(invitee.get("uploaded", 0)),
-                                "downloaded": self._format_size(invitee.get("downloaded", 0)),
-                                # 转换为字符串
-                                "ratio": str(round(float(invitee.get("ratio", 0)), 2)),
-                                "status": invitee.get("status", ""),
-                                "profile_url": f"/profile/detail/{invitee.get('uid', '')}"
-                            })
-
-                    # 解析已发送邀请
-                    if "sentInvites" in data:
-                        for invite in data["sentInvites"]:
-                            result["sent_invites"].append({
-                                "email": invite.get("email", ""),
-                                "send_date": invite.get("created_at", ""),
-                                "status": invite.get("status", ""),
-                                "hash": invite.get("hash", "")
-                            })
-
-                except json.JSONDecodeError:
-                    logger.error("解析M-Team页面JSON数据失败")
-
-            return result
-
-        except Exception as e:
-            logger.error(f"解析M-Team邀请页面失败: {str(e)}")
-            return {}
-
-    def _format_size(self, size_bytes: int) -> str:
-        """
-        格式化文件大小
-        """
-        try:
-            for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-                if size_bytes < 1024.0:
-                    return f"{size_bytes:.2f} {unit}"
-                size_bytes /= 1024.0
-            return f"{size_bytes:.2f} PB"
-        except:
-            return "0 B"
-
-    def get_invitees(self, apikey: str = None, site_name: str = None) -> dict:
-        """
-        获取后宫成员API接口
-        """
-        if apikey and apikey != settings.API_TOKEN:
-            return {"code": 1, "message": "API令牌错误!"}
-
-        try:
-            # 从数据文件获取站点数据
-            site_data = self.data_manager.get_site_data(site_name)
-            
-            # 获取最后更新时间
-            last_update = self.data_manager.get_last_update_time()
-            
-            if not site_data:
-                if site_name:
-                    return {"code": 1, "message": f"站点 {site_name} 数据不存在"}
-                else:
-                    return {"code": 1, "message": "暂无站点数据"}
-            
-            return {
-                "code": 0,
-                "message": "获取成功",
-                "data": {
-                    "sites": site_data,
-                    "last_update": last_update
-                }
-            }
-        except Exception as e:
-            logger.error(f"获取后宫成员失败: {str(e)}")
-            return {"code": 1, "message": f"获取后宫成员失败: {str(e)}"}
-
-    def refresh_data(self, apikey: str = None) -> dict:
-        """
-        强制刷新所有站点数据API接口
-        """
-        if apikey and apikey != settings.API_TOKEN:
-            return {"code": 1, "message": "API令牌错误!"}
-
-        try:
-            # 重新加载站点处理器以确保使用最新的处理逻辑
-            self._site_handlers = ModuleLoader.load_site_handlers()
-            logger.info(f"已重新加载 {len(self._site_handlers)} 个站点处理器")
-            
-            # 调用refresh_all_sites方法刷新数据
-            result = self.refresh_all_sites()
-
-            if result and result.get("success", 0) > 0:
-                # 获取最新的更新时间和站点数据
-                site_data = self.data_manager.get_site_data()
-                last_update = self.data_manager.get_last_update_time()
-
-                return {
-                    "code": 0,
-                    "message": f"数据刷新成功: {result.get('success')}个站点, 失败: {result.get('error')}个站点",
-                    "data": {
-                        "last_update": last_update,
-                        "site_count": len(site_data),
-                        "success": result.get("success", 0),
-                        "error": result.get("error", 0)
-                    }
-                }
-            else:
-                return {"code": 1, "message": "数据刷新失败，没有成功刷新的站点"}
-            
-        except Exception as e:
-            logger.error(f"强制刷新数据失败: {str(e)}")
-            return {"code": 1, "message": f"强制刷新数据失败: {str(e)}"}
-
-    def refresh_all_sites(self) -> Dict[str, int]:
-        """
-        刷新所有站点数据
-        :return: 刷新结果统计
-        """
-        if not self._enabled:
-            logger.info("后宫管理系统未启用，跳过刷新")
-            return {"success": 0, "error": 0}
-        
-        logger.info("开始刷新所有站点后宫数据...")
-        
-        # 发送开始刷新通知（仅在开启了通知才发送）
-        if self._notify:
-            self.notify_helper.send_notification(
-                title="后宫管理系统",
-                text="正在刷新所有站点后宫数据...",
-                notify_switch=self._notify
-            )
-        
-        # 获取所有站点列表
-        all_sites = self.sites.get_indexers()
-        selected_sites = [site for site in all_sites if str(site.get("id")) in [str(x) for x in self._nexus_sites]]
-        
-        if not selected_sites:
-            logger.warning("未选择任何站点，无法刷新")
-            return {"success": 0, "error": 0}
-        
-        logger.info(f"将刷新 {len(selected_sites)} 个站点的数据: {', '.join([site.get('name', '') for site in selected_sites])}")
-        
-        # 统计成功和失败站点
-        success_count = 0
-        error_count = 0
-        error_sites = []
-        
-        # 处理每个站点
-        for site in selected_sites:
-            site_name = site.get("name", "")
-            logger.info(f"开始获取站点 {site_name} 的后宫数据...")
-            
-            try:
-                # 获取站点数据
-                site_data = self._get_site_data(site)
-                
-                # 判断处理结果
-                if site_data and not site_data.get("error"):
-                    success_count += 1
-                    invitees_count = len(site_data.get("invitees", []))
-                    logger.info(f"站点 {site_name} 数据刷新成功，已邀请 {invitees_count} 人")
-                else:
-                    error_count += 1
-                    error_reason = site_data.get("error", "未知错误") if site_data else "获取数据失败"
-                    error_sites.append(f"{site_name}({error_reason})")
-                    logger.error(f"站点 {site_name} 数据刷新失败: {error_reason}")
-            except Exception as e:
-                error_count += 1
-                error_sites.append(f"{site_name}({str(e)})")
-                logger.error(f"站点 {site_name} 数据刷新出错: {str(e)}")
-        
-        # 刷新完成日志
-        logger.info(f"刷新完成: 成功 {success_count} 个站点, 失败 {error_count} 个站点")
-        
-        # 发送刷新结果通知（仅在开启了通知才发送）
-        if self._notify:
-            # 构建通知消息
-            notify_text = f"刷新完成: 成功 {success_count} 个站点，失败 {error_count} 个站点"
-            if error_sites:
-                notify_text += f"\n失败站点: {', '.join(error_sites)}"
-                
-            self.notify_helper.send_notification(
-                title="后宫管理系统 - 刷新结果",
-                text=notify_text,
-                notify_switch=self._notify
-            )
-        
-        return {"success": success_count, "error": error_count}
-    
-    def _get_site_data(self, site_info: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        获取站点数据
-        :param site_info: 站点信息
-        :return: 站点数据
-        """
-        site_name = site_info.get("name", "")
-        site_url = site_info.get("url", "").strip()
-        site_cookie = site_info.get("cookie", "").strip()
-        ua = site_info.get("ua", "").strip()
-        site_id = site_info.get("id", "")
-        
-        result = {
-            "invite_status": {
-                "can_invite": False,
-                "permanent_count": 0,
-                "temporary_count": 0,
-                "reason": "初始化"
-            },
-            "invitees": []
-        }
-        
-        # 验证站点ID是否在选择列表中
-        if str(site_id) not in [str(x) for x in self._nexus_sites]:
-            logger.warning(f"站点 {site_name} 不在用户选择的站点列表中，跳过处理")
-            result["error"] = "站点未被选择"
-            result["invite_status"]["reason"] = "站点未被选择"
-            return result
-        
-        # 验证站点信息完整性
-        if not all([site_url, site_cookie, ua]):
-            logger.error(f"站点 {site_name} 信息不完整")
-            result["error"] = "站点信息不完整，请在站点管理中完善配置"
-            result["invite_status"]["reason"] = "站点信息不完整，请在站点管理中完善配置"
-            return result
-            
-        try:
-            # 构建请求Session
-            session = requests.Session()
-            session.headers.update({
-                'User-Agent': ua,
-                'Cookie': site_cookie,
-                'Referer': site_url,
-                'Accept': 'application/json, text/plain, */*',
-                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                'Cache-Control': 'no-cache',
-                'Pragma': 'no-cache'
-            })
-            
-            # 测试cookie是否有效
-            test_url = urljoin(site_url, "index.php")
-            test_response = session.get(test_url, timeout=(5, 15))
-            if test_response.status_code == 403:
-                logger.error(f"站点 {site_name} 的Cookie已失效，请更新")
-                result["error"] = "Cookie已失效，请更新站点Cookie"
-                result["invite_status"]["reason"] = "Cookie已失效，请更新站点Cookie"
-                return result
-            
-            # 根据站点URL获取对应的处理器
-            handler = ModuleLoader.get_handler_for_site(site_url, self._site_handlers)
-            if handler:
-                logger.info(f"使用 {handler.__class__.__name__} 处理站点 {site_name}")
-                site_data = handler.parse_invite_page(site_info, session)
-                
-                # 成功获取数据后，保存到数据文件
-                if site_data and not site_data.get("error"):
-                    self.data_manager.update_site_data(site_name, site_data)
-                    logger.info(f"站点 {site_name} 数据已保存到数据文件")
-                
-                return site_data
-            else:
-                logger.warning(f"未找到匹配的站点处理器，尝试使用通用NexusPHP处理器处理站点 {site_name}")
-                
-                # 尝试导入NexusPhpHandler作为后备处理器
-                try:
-                    from plugins.nexusinvitee.sites.nexusphp import NexusPhpHandler
-                    backup_handler = NexusPhpHandler()
-                    logger.info(f"使用通用NexusPHP处理器作为后备处理站点 {site_name}")
-                    site_data = backup_handler.parse_invite_page(site_info, session)
-                    
-                    # 成功获取数据后，保存到数据文件
-                    if site_data and not site_data.get("error"):
-                        self.data_manager.update_site_data(site_name, site_data)
-                        logger.info(f"站点 {site_name} 数据已保存到数据文件")
-                    
-                    return site_data
-                except Exception as import_err:
-                    logger.error(f"导入通用NexusPHP处理器失败: {str(import_err)}")
-                    result["error"] = f"未找到匹配的站点处理器，且后备处理器加载失败"
-                    result["invite_status"]["reason"] = f"未找到匹配的站点处理器，且后备处理器加载失败"
-                    return result
-                
-        except Exception as e:
-            logger.error(f"获取站点 {site_name} 数据失败: {str(e)}")
-            result["error"] = str(e)
-            result["invite_status"]["reason"] = str(e)
-            return result
-
-    def scheduler_handler(self, event=None):
-        """
-        定时任务处理
-        """
-        logger.info(f"后宫管理系统定时任务开始执行：{event}")
-        # 强制刷新数据
-        self.refresh_all_sites()
-        logger.info("后宫管理系统定时任务完成")
-        return True
-
     @staticmethod
     def get_api_handlers():
         """
@@ -2477,6 +1485,278 @@ class nexusinvitee(_PluginBase):
         self._config["cron"] = self._cron
         self._config["onlyonce"] = self._onlyonce
         self._config["site_ids"] = self._nexus_sites
+
+    def refresh_all_sites(self) -> Dict[str, int]:
+        """
+        刷新所有站点数据
+        """
+        if not self._nexus_sites:
+            logger.error("没有选择任何站点，请先在配置中选择站点")
+            return {"success": 0, "error": 0}
+
+        # 重新加载站点处理器以确保使用最新的处理逻辑
+        self._site_handlers = ModuleLoader.load_site_handlers()
+        logger.info(f"加载了 {len(self._site_handlers)} 个站点处理器")
+            
+        # 清空旧数据
+        self.data_manager.save_data({})
+        
+        # 获取所有站点配置
+        all_sites = self.sites.get_indexers()
+        
+        # 筛选已选择站点配置
+        selected_sites = []
+        for site in all_sites:
+            site_id = site.get("id")
+            if str(site_id) in [str(x) for x in self._nexus_sites]:
+                selected_sites.append(site)
+        
+        logger.info(f"将刷新 {len(selected_sites)} 个站点的数据: {', '.join([site.get('name', '') for site in selected_sites])}")
+        
+        if not selected_sites:
+            return {"success": 0, "error": 0, "message": "没有发现可供刷新的站点"}
+        
+        # 统计成功/失败站点数
+        success_count = 0
+        error_count = 0
+        
+        # 逐个刷新站点数据
+        for site in selected_sites:
+            site_name = site.get("name", "")
+            site_id = site.get("id", "")
+            
+            logger.info(f"开始获取站点 {site_name} 的后宫数据...")
+            
+            site_data = self._get_site_invite_data(site_name)
+            if "error" in site_data:
+                logger.error(f"站点 {site_name} 数据刷新失败: {site_data.get('error', '未知错误')}")
+                error_count += 1
+            else:
+                # 保存站点数据
+                self.data_manager.update_site_data(site_name, site_data)
+                logger.info(f"站点 {site_name} 数据刷新成功，已邀请 {len(site_data.get('invitees', []))} 人")
+                success_count += 1
+        
+        # 发送通知
+        if self._notify:
+            total_invitees = 0
+            low_ratio_count = 0
+            banned_count = 0
+            
+            # 统计所有站点数据
+            all_site_data = self.data_manager.get_site_data()
+            for site_name, site_data in all_site_data.items():
+                site_invitees = site_data.get("data", {}).get("invitees", [])
+                total_invitees += len(site_invitees)
+                
+                # 统计分享率低的用户和已禁用用户
+                for invitee in site_invitees:
+                    ratio_value = invitee.get("ratio_value", 0)
+                    enabled = invitee.get("enabled", "Yes")
+                    
+                    # 分享率阈值从0.5改为1.0
+                    if ratio_value < 1.0:
+                        low_ratio_count += 1
+                    
+                    if enabled.lower() == "no":
+                        banned_count += 1
+            
+            title = "后宫管理系统 - 刷新结果"
+            if success_count > 0 or error_count > 0:
+                text = f"刷新完成: 成功 {success_count} 个站点，失败 {error_count} 个站点\n\n"
+                text += f"👨‍👩‍👧‍👦 总邀请人数: {total_invitees}人\n"
+                # 更新提示文本
+                text += f"⚠️ 分享率低于1.0: {low_ratio_count}人\n"
+                text += f"🚫 已禁用用户: {banned_count}人\n\n"
+                
+                # 添加刷新时间
+                text += f"🕙 {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
+                
+                # 只使用post_message发送一次通知，避免重复发送
+                self.post_message(
+                    mtype=NotificationType.SiteMessage,
+                    title=title,
+                    text=text
+                )
+                logger.info(f"发送通知: {title} - 刷新完成: 成功 {success_count} 个站点，失败 {error_count} 个站点")
+                
+                # 移除通知助手发送，避免重复
+                # self.notify_helper.send_notification(title, text, self._notify)
+        
+        logger.info(f"刷新完成: 成功 {success_count} 个站点, 失败 {error_count} 个站点")
+        
+        # 如果是立即运行一次，关闭开关并保存配置
+        if self._onlyonce:
+            self._onlyonce = False
+            self.__update_config()
+        
+        return {"success": success_count, "error": error_count}
+        
+    def get_invitees(self, apikey: str = None, site_name: str = None) -> dict:
+        """
+        获取后宫成员API接口
+        """
+        if apikey and apikey != settings.API_TOKEN:
+            return {"code": 1, "message": "API令牌错误!"}
+            
+        try:
+            # 从数据文件获取站点数据
+            site_data = self.data_manager.get_site_data(site_name)
+            
+            # 获取最后更新时间
+            last_update = self.data_manager.get_last_update_time()
+            
+            if not site_data:
+                if site_name:
+                    return {"code": 1, "message": f"站点 {site_name} 数据不存在"}
+                else:
+                    return {"code": 1, "message": "暂无站点数据"}
+
+            return {
+                "code": 0,
+                "message": "获取成功",
+                "data": {
+                    "sites": site_data,
+                    "last_update": last_update
+            }
+            }
+        except Exception as e:
+            logger.error(f"获取后宫成员失败: {str(e)}")
+            return {"code": 1, "message": f"获取后宫成员失败: {str(e)}"}
+
+    def refresh_data(self, apikey: str = None) -> dict:
+        """
+        强制刷新所有站点数据API接口
+        """
+        if apikey and apikey != settings.API_TOKEN:
+            return {"code": 1, "message": "API令牌错误!"}
+
+        try:
+            # 重新加载站点处理器以确保使用最新的处理逻辑
+            self._site_handlers = ModuleLoader.load_site_handlers()
+            logger.info(f"已重新加载 {len(self._site_handlers)} 个站点处理器")
+            
+            # 调用refresh_all_sites方法刷新数据
+            result = self.refresh_all_sites()
+
+            if result and result.get("success", 0) > 0:
+                # 获取最新的更新时间和站点数据
+                site_data = self.data_manager.get_site_data()
+                last_update = self.data_manager.get_last_update_time()
+
+                return {
+                    "code": 0,
+                        "message": f"数据刷新成功: {result.get('success')}个站点, 失败: {result.get('error')}个站点",
+                        "data": {
+                            "last_update": last_update,
+                        "site_count": len(site_data),
+                            "success": result.get("success", 0),
+                            "error": result.get("error", 0)
+                    }
+                }
+            else:
+                return {"code": 1, "message": "数据刷新失败，没有成功刷新的站点"}
+            
+        except Exception as e:
+            logger.error(f"强制刷新数据失败: {str(e)}")
+            return {"code": 1, "message": f"强制刷新数据失败: {str(e)}"}
+
+    def _get_user_id(self, session: requests.Session, site_info: Dict[str, Any]) -> str:
+        """
+        从站点获取用户ID
+        :param session: 请求会话
+        :param site_info: 站点信息
+        :return: 用户ID
+        """
+        try:
+            site_url = site_info.get("url", "").strip()
+            site_name = site_info.get("name", "")
+            
+            # 访问个人页面提取ID
+            profile_url = urljoin(site_url, "index.php")
+            response = session.get(profile_url, timeout=(5, 15))
+            response.raise_for_status()
+            html_content = response.text
+            
+            # 尝试从多种常见格式中提取用户ID
+            # 方法1：从class="searchrecord td"中提取
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # 查找欢迎语中的用户名和ID链接
+            welcome_text = soup.select_one('.welcome')
+            if welcome_text:
+                user_link = welcome_text.select_one('a[href*="userdetails.php"]')
+                if user_link:
+                    href = user_link.get('href', '')
+                    id_match = re.search(r'id=(\d+)', href)
+                    if id_match:
+                        return id_match.group(1)
+            
+            # 方法2：从个人资料链接中提取
+            for pattern in [
+                r'userdetails\.php\?id=(\d+)',
+                r'getusertorrentlistajax\.php\?userid=(\d+)',
+                r'<input[^>]*name=["\']passkey["\'][^>]*value=["\']([a-zA-Z0-9]+)["\']',
+                r'passkey=([a-zA-Z0-9]+)',
+                r'usercp\.php\?action=personal&userid=(\d+)',
+                r'id=(\d+)',
+                r'uid=(\d+)'
+            ]:
+                matches = re.search(pattern, html_content)
+                if matches:
+                    return matches.group(1)
+            
+            # 方法3：尝试通过访问具体的用户资料页面
+            try:
+                user_link = None
+                # 找到包含用户名的链接
+                for a_tag in soup.select('a[href*="userdetails.php"], a[href*="user.php"]'):
+                    if a_tag.get_text().strip():
+                        user_link = a_tag
+                        break
+                
+                if user_link:
+                    href = user_link.get('href', '')
+                    if 'id=' in href:
+                        id_match = re.search(r'id=(\d+)', href)
+                        if id_match:
+                            return id_match.group(1)
+                    
+                    # 访问用户链接，从重定向或内容中提取用户ID
+                    user_response = session.get(urljoin(site_url, href), timeout=(5, 15))
+                    user_response.raise_for_status()
+                    user_content = user_response.text
+                    
+                    # 在返回的内容中搜索用户ID
+                    for pattern in [r'userdetails\.php\?id=(\d+)', r'passkey=([a-zA-Z0-9]+)', r'id=(\d+)', r'uid=(\d+)']:
+                        matches = re.search(pattern, user_content)
+                        if matches:
+                            return matches.group(1)
+            except Exception as e:
+                logger.warning(f"通过用户资料页面获取用户ID失败: {str(e)}")
+            
+            # 方法4：尝试从邀请页面获取
+            try:
+                invite_url = urljoin(site_url, "invite.php")
+                invite_response = session.get(invite_url, timeout=(5, 15))
+                invite_response.raise_for_status()
+                invite_content = invite_response.text
+                
+                # 搜索邀请页面中的用户ID
+                for pattern in [r'id=(\d+)', r'uid=(\d+)', r'user(?:id|_id)=(\d+)']:
+                    matches = re.search(pattern, invite_content)
+                    if matches:
+                        return matches.group(1)
+            except Exception as e:
+                logger.warning(f"通过邀请页面获取用户ID失败: {str(e)}")
+            
+            # 未能从任何途径获取用户ID
+            logger.error(f"无法从站点 {site_name} 获取用户ID")
+            return ""
+            
+        except Exception as e:
+            logger.error(f"获取用户ID失败: {str(e)}")
+            return ""
 
 
 # 插件类导出
