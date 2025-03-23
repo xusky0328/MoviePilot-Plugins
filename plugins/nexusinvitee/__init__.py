@@ -36,7 +36,7 @@ class nexusinvitee(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png"
     # 插件版本
-    plugin_version = "1.0.6"
+    plugin_version = "1.0.8"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -252,40 +252,65 @@ class nexusinvitee(_PluginBase):
             total_temp_invites = 0
 
             for site_name, cache in cached_data.items():
-                site_cache_data = cache.get("data", {})
-                # 处理数据结构
-                invitees = site_cache_data.get("invitees", [])
-                if not invitees and "data" in site_cache_data:
-                    invitees = site_cache_data.get("data", {}).get("invitees", [])
+                # 获取站点缓存数据，处理可能的嵌套数据结构
+                def get_nested_value(data_dict, key_path, default=None):
+                    """递归获取嵌套字典中的值"""
+                    if not data_dict or not isinstance(data_dict, dict):
+                        return default
+                    
+                    if len(key_path) == 1:
+                        return data_dict.get(key_path[0], default)
+                    
+                    next_dict = data_dict.get(key_path[0], {})
+                    return get_nested_value(next_dict, key_path[1:], default)
                 
-                invite_status = site_cache_data.get("invite_status", {})
-                if not invite_status.get("permanent_count") and "data" in site_cache_data:
-                    invite_status = site_cache_data.get("data", {}).get("invite_status", {})
+                # 尝试不同的数据结构路径获取邀请列表
+                site_cache_data = cache.get("data", {})
+                invitees = []
+                
+                # 检查多种可能的路径
+                possible_paths = [
+                    ["invitees"],
+                    ["data", "invitees"],
+                    ["data", "data", "invitees"]
+                ]
+                
+                for path in possible_paths:
+                    result = get_nested_value(site_cache_data, path, [])
+                    if result:
+                        invitees = result
+                        break
+                
+                # 同样处理邀请状态
+                invite_status = {}
+                status_paths = [
+                    ["invite_status"],
+                    ["data", "invite_status"],
+                    ["data", "data", "invite_status"]
+                ]
+                
+                for path in status_paths:
+                    result = get_nested_value(site_cache_data, path, {})
+                    if result and isinstance(result, dict):
+                        invite_status = result
+                        # 调试输出临时邀请数量
+                        if "temporary_count" in result:
+                            logger.debug(f"仪表盘: 站点{site_name}临时邀请数量={result.get('temporary_count', 0)}")
+                        break
                 
                 # 统计各项数据
                 total_invitees += len(invitees)
-                total_perm_invites += invite_status.get("permanent_count", 0)
-                total_temp_invites += invite_status.get("temporary_count", 0)
                 
-                # 计算分享率低和被ban的用户
-                for invitee in invitees:
-                    # 检查是否被ban
-                    if invitee.get('enabled', '').lower() == 'no':
-                        total_banned += 1
+                # 确保获取正确的邀请数量
+                perm_count = invite_status.get("permanent_count", 0)
+                temp_count = invite_status.get("temporary_count", 0)
+                
+                # 记录日志以便确认数据
+                logger.debug(f"仪表盘统计: 站点{site_name} 永久邀请={perm_count}, 临时邀请={temp_count}")
+                
+                total_perm_invites += perm_count
+                total_temp_invites += temp_count
 
-                    # 检查分享率是否低于1
-                    ratio_str = invitee.get('ratio', '')
-                    if ratio_str != '∞' and ratio_str.lower() != 'inf.' and ratio_str.lower() != 'inf':
-                        try:
-                            # 标准化字符串，替换逗号为点
-                            ratio_str = ratio_str.replace(',', '.')
-                            ratio_val = float(ratio_str) if ratio_str else 0
-                            if ratio_val < 1:
-                                total_low_ratio += 1
-                        except (ValueError, TypeError):
-                            # 转换错误时记录警告
-                            logger.warning(f"分享率转换失败: {ratio_str}")
-                                
             # 列配置
             col_config = {
                 "cols": 16,
@@ -434,7 +459,7 @@ class nexusinvitee(_PluginBase):
                                                 },
                                                 {
                                                     "component": "div",
-                                                    "props": {"class": "text-h5 pink--text"},
+                                                    "props": {"class": "text-h5", "style": "color: #E91E63"},
                                                     "text": str(total_temp_invites)
                                                 },
                                                 {
@@ -784,6 +809,18 @@ class nexusinvitee(_PluginBase):
             # 准备站点卡片
             cards = []
             
+            # 辅助函数，用于获取嵌套数据
+            def get_nested_value(data_dict, key_path, default=None):
+                """递归获取嵌套字典中的值"""
+                if not data_dict or not isinstance(data_dict, dict):
+                    return default
+                
+                if len(key_path) == 1:
+                    return data_dict.get(key_path[0], default)
+                
+                next_dict = data_dict.get(key_path[0], {})
+                return get_nested_value(next_dict, key_path[1:], default)
+            
             # 计算所有站点统计信息
             total_sites = len(cached_data)
             total_invitees = 0
@@ -793,20 +830,54 @@ class nexusinvitee(_PluginBase):
             total_temp_invites = 0
 
             for site_name, cache in cached_data.items():
+                # 获取站点缓存数据
                 site_cache_data = cache.get("data", {})
-                # 处理数据结构
-                invitees = site_cache_data.get("invitees", [])
-                if not invitees and "data" in site_cache_data:
-                    invitees = site_cache_data.get("data", {}).get("invitees", [])
                 
-                invite_status = site_cache_data.get("invite_status", {})
-                if not invite_status.get("permanent_count") and "data" in site_cache_data:
-                    invite_status = site_cache_data.get("data", {}).get("invite_status", {})
-                    
+                # 尝试不同的数据结构路径获取邀请列表
+                invitees = []
+                possible_paths = [
+                    ["invitees"],
+                    ["data", "invitees"],
+                    ["data", "data", "invitees"]
+                ]
+                
+                for path in possible_paths:
+                    result = get_nested_value(site_cache_data, path, [])
+                    if result:
+                        invitees = result
+                        break
+                
+                # 同样处理邀请状态
+                invite_status = {}
+                status_paths = [
+                    ["invite_status"],
+                    ["data", "invite_status"],
+                    ["data", "data", "invite_status"]
+                ]
+                
+                for path in status_paths:
+                    result = get_nested_value(site_cache_data, path, {})
+                    if result and isinstance(result, dict):
+                        invite_status = result
+                        # 调试输出临时邀请数量
+                        if "temporary_count" in result:
+                            logger.debug(f"详情页: 站点{site_name}临时邀请数量={result.get('temporary_count', 0)}")
+                        if "reason" in result:
+                            logger.debug(f"详情页: 站点{site_name}不可邀请原因={result.get('reason', '')}")
+                        break
+                
                 # 统计各项数据
                 total_invitees += len(invitees)
-                total_perm_invites += invite_status.get("permanent_count", 0)
-                total_temp_invites += invite_status.get("temporary_count", 0)
+                
+                # 确保获取正确的邀请数量
+                perm_count = invite_status.get("permanent_count", 0)
+                temp_count = invite_status.get("temporary_count", 0)
+                
+                # 记录日志以便确认数据
+                logger.debug(f"详情页统计: 站点{site_name} 永久邀请={perm_count}, 临时邀请={temp_count}")
+                
+                total_perm_invites += perm_count
+                total_temp_invites += temp_count
 
                 # 计算分享率低和被ban的用户
                 for invitee in invitees:
@@ -958,7 +1029,7 @@ class nexusinvitee(_PluginBase):
                                                 },
                                                 {
                                                     "component": "div",
-                                                    "props": {"class": "text-h5 pink--text"},
+                                                    "props": {"class": "text-h5", "style": "color: #E91E63"},
                                                     "text": str(total_temp_invites)
                                                 },
                                                 {
@@ -1051,14 +1122,39 @@ class nexusinvitee(_PluginBase):
                 if site_info:
                     # 获取站点数据
                     site_cache_data = cache.get("data", {})
-                    # 处理数据结构
-                    invitees = site_cache_data.get("invitees", [])
-                    if not invitees and "data" in site_cache_data:
-                        invitees = site_cache_data.get("data", {}).get("invitees", [])
                     
-                    invite_status = site_cache_data.get("invite_status", {})
-                    if not invite_status.get("permanent_count") and "data" in site_cache_data:
-                        invite_status = site_cache_data.get("data", {}).get("invite_status", {})
+                    # 尝试不同的数据结构路径获取邀请列表
+                    invitees = []
+                    possible_paths = [
+                        ["invitees"],
+                        ["data", "invitees"],
+                        ["data", "data", "invitees"]
+                    ]
+                    
+                    for path in possible_paths:
+                        result = get_nested_value(site_cache_data, path, [])
+                        if result:
+                            invitees = result
+                            break
+                    
+                    # 同样处理邀请状态
+                    invite_status = {}
+                    status_paths = [
+                        ["invite_status"],
+                        ["data", "invite_status"],
+                        ["data", "data", "invite_status"]
+                    ]
+                    
+                    for path in status_paths:
+                        result = get_nested_value(site_cache_data, path, {})
+                        if result and isinstance(result, dict):
+                            invite_status = result
+                            # 调试输出临时邀请数量
+                            if "temporary_count" in result:
+                                logger.debug(f"详情页: 站点{site_name}临时邀请数量={result.get('temporary_count', 0)}")
+                            if "reason" in result:
+                                logger.debug(f"详情页: 站点{site_name}不可邀请原因={result.get('reason', '')}")
+                            break
                     
                     # 计算此站点的统计信息
                     banned_count = sum(1 for i in invitees if i.get(
@@ -1237,7 +1333,7 @@ class nexusinvitee(_PluginBase):
                                                             "content": [
                                                                 {
                                                                     "component": "div",
-                                                                    "props": {"class": "text-body-1 font-weight-medium pink--text"},
+                                                                    "props": {"class": "text-body-1 font-weight-medium", "style": "color: #E91E63"},
                                                                     "text": str(invite_status.get("temporary_count", 0))
                                                         },
                                                         {
@@ -1333,14 +1429,25 @@ class nexusinvitee(_PluginBase):
                     # 添加错误信息或不可邀请原因的显示部分
                     # 获取错误信息和不可邀请原因
                     error_message = cache.get("error", "")
-                    invite_status = site_cache_data.get("invite_status", {})
-                    if not invite_status.get("can_invite") is not None and "data" in site_cache_data:
-                        invite_status = site_cache_data.get("data", {}).get("invite_status", {})
-                    can_invite = invite_status.get("can_invite", False)
-                    reason = invite_status.get("reason", "")
+                    
+                    # 使用辅助函数检查不同路径的invite_status
+                    invite_status_for_check = invite_status  # 使用上面已获取的invite_status
+                    
+                    can_invite = invite_status_for_check.get("can_invite", False)
+                    reason = invite_status_for_check.get("reason", "")
+
+                    # 确保能正确显示不可邀请原因
+                    if not can_invite:
+                        logger.debug(f"站点 {site_name} 不可邀请原因: {reason}")
 
                     # 只有当不可邀请或有错误信息时才显示
                     if (not can_invite and reason) or error_message:
+                        display_reason = error_message or f"不可邀请原因: {reason}"
+                        # 确保原因文本非空
+                        if not display_reason.strip():
+                            # 设置默认原因
+                            display_reason = "不可邀请，但未提供原因"
+                        
                         site_card["content"].insert(2, {
                             "component": "VCardText",
                             "props": {
@@ -1355,7 +1462,7 @@ class nexusinvitee(_PluginBase):
                                         "density": "compact",
                                         "class": "my-1"
                                     },
-                                    "text": error_message or f"不可邀请原因: {reason}"
+                                    "text": display_reason
                                 }
                             ]
                         })
@@ -1898,6 +2005,58 @@ class nexusinvitee(_PluginBase):
             site_cookie = site_info.get("cookie", "").strip()
             ua = site_info.get("ua", "").strip()
             site_id = site_info.get("id", "")
+            
+            # 检查是否是M-Team站点
+            is_mteam = "m-team" in site_url.lower()
+            
+            # 如果是M-Team站点，检查API认证信息
+            if is_mteam:
+                api_key = site_info.get("apikey", "").strip()
+                token = site_info.get("token", "").strip()
+                
+                if not all([site_url, api_key, token, ua]):
+                    missing_fields = []
+                    if not site_url:
+                        missing_fields.append("站点URL")
+                    if not api_key:
+                        missing_fields.append("API Key")
+                    if not token:
+                        missing_fields.append("Authorization Token")
+                    if not ua:
+                        missing_fields.append("User-Agent")
+                        
+                    error_msg = f"M-Team API认证信息不完整: {', '.join(missing_fields)}"
+                    logger.error(f"站点 {site_name} {error_msg}")
+                    return {
+                        "error": error_msg,
+                        "invite_status": {
+                            "can_invite": False,
+                            "permanent_count": 0,
+                            "temporary_count": 0,
+                            "reason": error_msg
+                        }
+                    }
+            # 对于非M-Team站点，检查Cookie
+            elif not all([site_url, site_cookie, ua]):
+                missing_fields = []
+                if not site_url:
+                    missing_fields.append("站点URL")
+                if not site_cookie:
+                    missing_fields.append("Cookie")
+                if not ua:
+                    missing_fields.append("User-Agent")
+                    
+                error_msg = f"站点信息不完整: {', '.join(missing_fields)}"
+                logger.error(f"站点 {site_name} {error_msg}")
+                return {
+                    "error": error_msg,
+                    "invite_status": {
+                        "can_invite": False,
+                        "permanent_count": 0,
+                        "temporary_count": 0,
+                        "reason": error_msg
+                    }
+                }
 
             # 先验证此站点是否在用户选择的站点列表中
             if str(site_id) not in [str(x) for x in self._nexus_sites]:
@@ -1911,178 +2070,110 @@ class nexusinvitee(_PluginBase):
                         "reason": "站点未被选择"
                     }
                 }
-            
-            if not all([site_url, site_cookie, ua]):
-                logger.error(f"站点 {site_name} 信息不完整")
-                return {
-                    "error": "站点信息不完整，请在站点管理中完善配置",
-                    "invite_status": {
-                        "can_invite": False,
-                        "permanent_count": 0,
-                        "temporary_count": 0,
-                        "reason": "站点信息不完整，请在站点管理中完善配置"
-                    }
-                }
 
             # 构建请求Session
             session = requests.Session()
-            session.headers.update({
-                'User-Agent': ua,
-                'Cookie': site_cookie,
-                'Referer': site_url,
-                'Accept': 'application/json, text/plain, */*',
-                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                'Cache-Control': 'no-cache',
-                'Pragma': 'no-cache',
-                'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24"',
-                'sec-ch-ua-mobile': '?0',
-                'sec-ch-ua-platform': '"Windows"',
-                'sec-fetch-dest': 'empty',
-                'sec-fetch-mode': 'cors',
-                'sec-fetch-site': 'same-origin'
-            })
-
-            # 先测试cookie是否有效
-            test_url = urljoin(site_url, "index.php")
-            test_response = session.get(test_url, timeout=(5, 15))
-            if test_response.status_code == 403:
-                logger.error(f"站点 {site_name} 的Cookie已失效，请更新")
-                return {
-                    "error": "Cookie已失效，请更新站点Cookie",
-                    "invite_status": {
-                        "can_invite": False,
-                        "permanent_count": 0,
-                        "temporary_count": 0,
-                        "reason": "Cookie已失效，请更新站点Cookie"
-                    }
-                }
-
-            # 获取用户ID
-            user_id = self._get_user_id(session, site_info)
-            if not user_id:
-                logger.error(f"无法获取站点 {site_name} 的用户ID")
-                return {
-                    "error": "无法获取用户ID，请检查站点Cookie是否有效",
-                    "invite_status": {
-                        "can_invite": False,
-                        "permanent_count": 0,
-                        "temporary_count": 0,
-                        "reason": "无法获取用户ID，请检查站点Cookie是否有效"
-                    }
-                }
-
-            # 根据站点类型获取数据
-            if "m-team" in site_url.lower():
-                # 获取API认证信息
-                api_key = site_info.get("api_key")
-                auth_header = site_info.get("authorization")
-                
-                if not api_key or not auth_header:
-                    logger.error(f"站点 {site_name} API认证信息不完整")
-                    return {
-                        "error": "API认证信息不完整，请在站点设置中配置API Key和Authorization",
-                        "invite_status": {
-                            "can_invite": False,
-                            "permanent_count": 0,
-                            "temporary_count": 0,
-                            "reason": "API认证信息不完整，请在站点设置中配置API Key和Authorization"
-                        }
-                    }
-                
-                # 更新请求头
+            
+            # 根据站点类型设置不同的请求头
+            if is_mteam:
+                # M-Team站点使用API认证方式
                 session.headers.update({
-                    'Authorization': auth_header,
-                    'API-Key': api_key
+                    "Content-Type": "application/json",
+                    "User-Agent": ua,
+                    "Accept": "application/json, text/plain, */*",
+                    "Authorization": token,
+                    "API-Key": api_key,
+                    "Referer": site_url
                 })
                 
-                try:
-                    # 获取站点统计数据
-                    domain = site_url.split("//")[-1].split("/")[0]
-                    api_url = f"https://{domain}/api/v1/site/statistic/{domain}"
-                    stats_response = session.get(api_url, timeout=(10, 30))
-                    stats_response.raise_for_status()
-                    stats_data = stats_response.json()
-                    
-                    # 获取邀请页面数据
-                    invite_url = urljoin(site_url, "invite")
-                    invite_response = session.get(invite_url, timeout=(10, 30))
-                    invite_response.raise_for_status()
-                    
-                    # 使用站点处理器
-                    handler = ModuleLoader.get_handler_for_site(site_url)
-                    if handler:
-                        # 如果有匹配的站点处理器，使用处理器解析
-                        return handler.parse_invite_page(site_info, session)
-                    else:
-                        logger.error(f"找不到适合站点 {site_name} 的处理器")
+                # 测试API认证是否有效
+                test_url = site_url
+                test_response = session.get(test_url, timeout=(10, 30))
+                if test_response.status_code >= 400:
+                    logger.error(f"站点 {site_name} API认证测试失败，状态码: {test_response.status_code}")
                     return {
-                            "error": f"找不到适合站点 {site_name} 的处理器",
+                        "error": f"API认证失败，请检查Token是否有效，状态码: {test_response.status_code}",
                         "invite_status": {
                             "can_invite": False,
                             "permanent_count": 0,
                             "temporary_count": 0,
-                                "reason": f"找不到适合站点 {site_name} 的处理器"
-                            }
-                        }
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"访问站点 {site_name} API或页面失败: {str(e)}")
-                    return {
-                        "error": f"访问站点API或页面失败: {str(e)}",
-                        "invite_status": {
-                            "can_invite": False,
-                            "permanent_count": 0,
-                            "temporary_count": 0,
-                            "reason": f"访问站点API或页面失败: {str(e)}"
+                            "reason": f"API认证失败，请检查Token是否有效，状态码: {test_response.status_code}"
                         }
                     }
-            elif "hdchina" in site_url.lower() or "totheglory" in site_url.lower():
-                # 特殊站点预留处理位置 - HDChina/TTG等
-                logger.warning(f"站点 {site_name} 使用特殊架构，采用通用方法尝试获取数据")
-                try:
-                    # 使用站点处理器
-                    handler = ModuleLoader.get_handler_for_site(site_url, self._site_handlers)
-                    if handler:
-                        return handler.parse_invite_page(site_info, session)
-                    else:
-                        # 如果找不到处理器，尝试导入NexusPhpHandler作为后备处理器
-                        try:
-                            from plugins.nexusinvitee.sites.nexusphp import NexusPhpHandler
-                            backup_handler = NexusPhpHandler()
-                            return backup_handler.parse_invite_page(site_info, session)
-                        except Exception as import_err:
-                            logger.error(f"导入通用NexusPHP处理器失败: {str(import_err)}")
-                    return {
-                            "error": f"找不到匹配的站点处理器，且后备处理器加载失败",
-                        "invite_status": {
-                            "can_invite": False,
-                            "permanent_count": 0,
-                            "temporary_count": 0,
-                                "reason": f"找不到匹配的站点处理器，且后备处理器加载失败"
-                            },
-                            "invitees": []
-                        }
-                except Exception as e:
-                    logger.error(f"处理站点 {site_name} 失败: {str(e)}")
-                    return {
-                        "error": f"处理站点失败: {str(e)}",
-                        "invite_status": {
-                            "can_invite": False,
-                            "permanent_count": 0,
-                            "temporary_count": 0,
-                            "reason": f"处理站点失败: {str(e)}"
-                        }
-                    }
-            
-            # 使用通用处理方式
-            logger.info(f"站点 {site_name} 使用通用方式处理")
-            handler = ModuleLoader.get_handler_for_site(site_url, self._site_handlers)
-            if handler:
-                return handler.parse_invite_page(site_info, session)
             else:
-                # 如果找不到合适的处理器，使用通用NexusPHP处理器
-                from plugins.nexusinvitee.sites.nexusphp import NexusPhpHandler
-                default_handler = NexusPhpHandler()
-                return default_handler.parse_invite_page(site_info, session)
+                # 普通站点使用Cookie认证
+                session.headers.update({
+                    'User-Agent': ua,
+                    'Cookie': site_cookie,
+                    'Referer': site_url,
+                    'Accept': 'application/json, text/plain, */*',
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache',
+                    'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Windows"',
+                    'sec-fetch-dest': 'empty',
+                    'sec-fetch-mode': 'cors',
+                    'sec-fetch-site': 'same-origin'
+                })
+                
+                # 尝试验证Cookie有效性
+                test_url = site_url
+                test_response = session.get(test_url, timeout=(10, 30))
+                if test_response.status_code >= 400:
+                    logger.error(f"站点 {site_name} Cookie验证失败，状态码: {test_response.status_code}")
+                    return {
+                        "error": f"Cookie验证失败，状态码: {test_response.status_code}",
+                        "invite_status": {
+                            "can_invite": False,
+                            "permanent_count": 0,
+                            "temporary_count": 0,
+                            "reason": f"Cookie验证失败，状态码: {test_response.status_code}"
+                        }
+                    }
+
+            # 使用站点处理器
+            logger.info(f"站点 {site_name} 开始处理邀请数据")
+            
+            # 根据站点类型选择不同的处理器
+            if is_mteam:
+                logger.info(f"站点 {site_name} 使用M-Team处理器")
+                from plugins.nexusinvitee.sites.mteam import MTeamHandler
+                handler = MTeamHandler()
+            elif "hdchina" in site_url.lower():
+                logger.info(f"站点 {site_name} 使用HDChina处理器")
+                from plugins.nexusinvitee.sites.hdchina import HDChinaHandler
+                handler = HDChinaHandler()
+            else:
+                # 查找匹配的处理器
+                handler = ModuleLoader.get_handler_for_site(site_url, self._site_handlers)
+                if not handler:
+                    # 如果找不到合适的处理器，使用通用NexusPHP处理器
+                    logger.info(f"站点 {site_name} 未找到专用处理器，使用默认NexusPHP处理器")
+                    from plugins.nexusinvitee.sites.nexusphp import NexusPhpHandler
+                    handler = NexusPhpHandler()
+            
+            # 使用处理器解析邀请页面
+            site_data = handler.parse_invite_page(site_info, session)
+            
+            # 输出返回的数据结构用于调试
+            logger.debug(f"站点 {site_name} 返回数据结构: {site_data}")
+            
+            # 检查站点数据结构是否正确
+            if "invite_status" in site_data:
+                # 检查临时邀请数量
+                temp_count = site_data["invite_status"].get("temporary_count", 0)
+                if temp_count > 0:
+                    logger.info(f"站点 {site_name} 有 {temp_count} 个临时邀请")
+                
+                # 确保不可邀请原因也被正确处理和显示
+                if not site_data["invite_status"].get("can_invite", False):
+                    reason = site_data["invite_status"].get("reason", "")
+                    if reason:
+                        logger.info(f"站点 {site_name} 不可邀请原因: {reason}")
+            
+            return site_data
 
         except Exception as e:
             logger.error(f"获取站点 {site_name} 邀请数据失败: {str(e)}")
@@ -2095,7 +2186,7 @@ class nexusinvitee(_PluginBase):
                     "reason": f"获取站点邀请数据失败: {str(e)}"
                 }
             }
-            
+
     @staticmethod
     def get_api_handlers():
         """
@@ -2228,9 +2319,15 @@ class nexusinvitee(_PluginBase):
                 logger.error(f"站点 {site_name} 数据刷新失败: {site_data.get('error', '未知错误')}")
                 error_count += 1
             else:
+                # 输出关键数据，帮助调试
+                invite_status = site_data.get("invite_status", {})
+                invitees = site_data.get("invitees", [])
+                perm_count = invite_status.get("permanent_count", 0)
+                temp_count = invite_status.get("temporary_count", 0)
+                logger.info(f"站点 {site_name} 数据刷新成功，已邀请 {len(invitees)} 人，永久邀请 {perm_count} 个，临时邀请 {temp_count} 个")
+                
                 # 保存站点数据
                 self.data_manager.update_site_data(site_name, site_data)
-                logger.info(f"站点 {site_name} 数据刷新成功，已邀请 {len(site_data.get('invitees', []))} 人")
                 success_count += 1
         
         # 发送通知
@@ -2242,19 +2339,54 @@ class nexusinvitee(_PluginBase):
             # 统计所有站点数据
             all_site_data = self.data_manager.get_site_data()
             for site_name, site_data in all_site_data.items():
-                site_invitees = site_data.get("data", {}).get("invitees", [])
+                # 检查数据结构，确保正确处理
+                logger.debug(f"通知统计：站点 {site_name} 数据结构: {site_data}")
+                
+                # 处理可能的多级嵌套
+                site_invitees = []
+                site_invite_status = {}
+                
+                if "data" in site_data:
+                    site_content = site_data.get("data", {})
+                    
+                    # 尝试获取邀请用户列表
+                    if "invitees" in site_content:
+                        site_invitees = site_content.get("invitees", [])
+                    elif "data" in site_content and "invitees" in site_content.get("data", {}):
+                        site_invitees = site_content.get("data", {}).get("invitees", [])
+                    
+                    # 尝试获取邀请状态
+                    if "invite_status" in site_content:
+                        site_invite_status = site_content.get("invite_status", {})
+                    elif "data" in site_content and "invite_status" in site_content.get("data", {}):
+                        site_invite_status = site_content.get("data", {}).get("invite_status", {})
+                
                 total_invitees += len(site_invitees)
                 
                 # 统计分享率低的用户和已禁用用户
                 for invitee in site_invitees:
-                    ratio_value = invitee.get("ratio_value", 0)
-                    enabled = invitee.get("enabled", "Yes")
+                    # 处理分享率
+                    ratio_str = invitee.get('ratio', '')
+                    ratio_value = 0
+                    
+                    if isinstance(ratio_str, (int, float)):
+                        ratio_value = float(ratio_str)
+                    elif ratio_str and ratio_str != '∞' and ratio_str.lower() != 'inf.' and ratio_str.lower() != 'inf':
+                        try:
+                            # 标准化字符串，替换逗号为点
+                            ratio_str = ratio_str.replace(',', '.')
+                            ratio_value = float(ratio_str)
+                        except (ValueError, TypeError):
+                            # 转换错误时记录警告
+                            logger.warning(f"分享率转换失败: {ratio_str}")
                     
                     # 分享率阈值从0.5改为1.0
                     if ratio_value < 1.0:
                         low_ratio_count += 1
                     
-                    if enabled.lower() == "no":
+                    # 检查用户是否被禁用
+                    enabled = invitee.get("enabled", "Yes")
+                    if isinstance(enabled, str) and enabled.lower() == "no":
                         banned_count += 1
             
             title = "后宫管理系统 - 刷新结果"
@@ -2453,155 +2585,6 @@ class nexusinvitee(_PluginBase):
         except Exception as e:
             logger.error(f"获取用户ID失败: {str(e)}")
             return ""
-
-    def refresh_site_info(self, site_id):
-        """
-        刷新站点信息
-        """
-        site_info = self.get_site_info(site_id)
-        if not site_info:
-            return {
-                "code": 1,
-                "msg": "站点不存在"
-            }
-        # 回调消息
-        self.eventmanager.send_event(EventType.TransactionUpdate, {
-            "event_data": {
-                "title": "刷新站点信息",
-                "type_str": "站点信息",
-                "f_id": site_id,
-                "s_id": 0,
-                "status": "处理中"
-            }
-        })
-        # 查询站点信息
-        _site_message = PluginHelper().get_site_info(site_info.get("url"))
-        if not _site_message or not _site_message.get("cookie"):
-            return {
-                "code": 1,
-                "msg": "站点不存在"
-            }
-        cookies = _site_message.get("cookie")
-        ua = _site_message.get("ua")
-        # 获取站点处理器
-        _site_name = site_info.get("name")
-        _site_id = site_id
-        _site_url = site_info.get("url")
-        try:
-            # 根据站点类型选择处理器
-            if self._is_nexusphp(_site_url):
-                nexus_handler = self._load_site_handler("nexusphp")
-                if nexus_handler:
-                    nexus_handler.set_cookie(cookies)
-                    nexus_handler.set_ua(ua)
-                    # 创建会话并获取HTML内容
-                    session = nexus_handler.create_session(_site_url, cookies)
-                    content = nexus_handler.get_invite_page_content(_site_name, _site_url, session)
-                    # 解析邀请页面
-                    result = nexus_handler.parse_invite_page(_site_name, _site_url, content)
-                else:
-                    return {
-                        "code": 1,
-                        "msg": "未找到NexusPhp站点处理器"
-                    }
-            else:
-                # 尝试蝶粉站点
-                butterfly_handler = self._load_site_handler("butterfly")
-                if butterfly_handler:
-                    butterfly_handler.set_cookie(cookies)
-                    butterfly_handler.set_ua(ua)
-                    # 创建会话并获取HTML内容
-                    session = butterfly_handler.create_session(_site_url, cookies)
-                    content = butterfly_handler.get_invite_page_content(_site_name, _site_url, session)
-                    # 解析邀请页面
-                    result = butterfly_handler.parse_invite_page(_site_name, _site_url, content)
-                else:
-                    return {
-                        "code": 1,
-                        "msg": "未找到蝶粉站点处理器"
-                    }
-            
-            # 处理结果
-            if result:
-                invite_status = result.get("invite_status", {})
-                invitees = result.get("invitees", [])
-                
-                # 更新站点统计
-                site_info["can_invite"] = invite_status.get("can_invite", False)
-                site_info["invite_reason"] = invite_status.get("reason", "")
-                site_info["permanent_invite_count"] = invite_status.get("permanent_count", 0)
-                site_info["temporary_invite_count"] = invite_status.get("temporary_count", 0)
-                site_info["refresh_time"] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
-                
-                # 保存站点信息
-                self.update_site_info(site_info)
-                
-                # 处理邀请者
-                self.save_invitees(_site_id, invitees)
-                
-                # 发送成功消息
-                self.eventmanager.send_event(EventType.TransactionUpdate, {
-                    "event_data": {
-                        "title": "刷新站点信息",
-                        "type_str": "站点信息",
-                        "f_id": site_id,
-                        "s_id": 0,
-                        "status": "成功"
-                    }
-                })
-                
-                logger.info(f"站点 {_site_name} 信息刷新成功，后宫成员数: {len(invitees)}")
-                
-                # 发送通知
-                if invite_status.get("can_invite", False):
-                    invite_count = invite_status.get("permanent_count", 0) + invite_status.get("temporary_count", 0)
-                    if invite_count > 0:
-                        NotificationHelper.send_notification(
-                            self,
-                            title=f"站点 {_site_name} 可邀请",
-                            text=f"站点 {_site_name} 可邀请，永久邀请数: {invite_status.get('permanent_count', 0)}，临时邀请数: {invite_status.get('temporary_count', 0)}"
-                        )
-                
-                return {
-                    "code": 0,
-                    "msg": "站点信息刷新成功"
-                }
-            else:
-                # 发送失败消息
-                self.eventmanager.send_event(EventType.TransactionUpdate, {
-                    "event_data": {
-                        "title": "刷新站点信息",
-                        "type_str": "站点信息",
-                        "f_id": site_id,
-                        "s_id": 0,
-                        "status": "失败"
-                    }
-                })
-                
-                return {
-                    "code": 1,
-                    "msg": "未能解析邀请页面，请检查站点Cookie是否有效"
-                }
-        
-        except Exception as e:
-            logger.error(f"刷新站点信息失败: {str(e)}")
-            logger.exception(e)
-            
-            # 发送失败消息
-            self.eventmanager.send_event(EventType.TransactionUpdate, {
-                "event_data": {
-                    "title": "刷新站点信息",
-                    "type_str": "站点信息",
-                    "f_id": site_id,
-                    "s_id": 0,
-                    "status": "失败"
-                }
-            })
-            
-            return {
-                "code": 1,
-                "msg": f"刷新站点信息失败: {str(e)}"
-            }
 
 
 # 插件类导出
