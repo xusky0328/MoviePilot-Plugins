@@ -30,6 +30,23 @@ from plugins.nexusinvitee.data import DataManager
 from plugins.nexusinvitee.utils import NotificationHelper, SiteHelper
 from plugins.nexusinvitee.module_loader import ModuleLoader
 
+def get_nested_value(data_dict: dict, key_path: List[str], default: Any = None) -> Any:
+    """
+    递归获取嵌套字典中的值
+    :param data_dict: 要查询的字典
+    :param key_path: 键路径列表
+    :param default: 默认返回值
+    :return: 找到的值或默认值
+    """
+    if not data_dict or not isinstance(data_dict, dict):
+        return default
+    
+    if len(key_path) == 1:
+        return data_dict.get(key_path[0], default)
+    
+    next_dict = data_dict.get(key_path[0], {})
+    return get_nested_value(next_dict, key_path[1:], default)
+
 
 class nexusinvitee(_PluginBase):
     # 插件名称
@@ -39,7 +56,7 @@ class nexusinvitee(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png"
     # 插件版本
-    plugin_version = "1.0.9"
+    plugin_version = "1.1.0"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -235,25 +252,13 @@ class nexusinvitee(_PluginBase):
             total_banned = 0
             total_perm_invites = 0
             total_temp_invites = 0
+            total_no_data = 0  # 添加无数据计数器
 
             for site_name, cache in cached_data.items():
-                # 获取站点缓存数据，处理可能的嵌套数据结构
-                def get_nested_value(data_dict, key_path, default=None):
-                    """递归获取嵌套字典中的值"""
-                    if not data_dict or not isinstance(data_dict, dict):
-                        return default
-                    
-                    if len(key_path) == 1:
-                        return data_dict.get(key_path[0], default)
-                    
-                    next_dict = data_dict.get(key_path[0], {})
-                    return get_nested_value(next_dict, key_path[1:], default)
-                
-                # 尝试不同的数据结构路径获取邀请列表
                 site_cache_data = cache.get("data", {})
                 invitees = []
                 
-                # 检查多种可能的路径
+                # 尝试不同的数据结构路径获取邀请列表
                 possible_paths = [
                     ["invitees"],
                     ["data", "invitees"],
@@ -265,8 +270,11 @@ class nexusinvitee(_PluginBase):
                     if result:
                         invitees = result
                         break
+
+                # 统计各项数据
+                total_invitees += len(invitees)
                 
-                # 同样处理邀请状态
+                # 获取邀请状态
                 invite_status = {}
                 status_paths = [
                     ["invite_status"],
@@ -278,23 +286,26 @@ class nexusinvitee(_PluginBase):
                     result = get_nested_value(site_cache_data, path, {})
                     if result and isinstance(result, dict):
                         invite_status = result
-                        # 调试输出临时邀请数量
-                        if "temporary_count" in result:
-                            logger.debug(f"仪表盘: 站点{site_name}临时邀请数量={result.get('temporary_count', 0)}")
                         break
-                
-                # 统计各项数据
-                total_invitees += len(invitees)
-                
-                # 确保获取正确的邀请数量
-                perm_count = invite_status.get("permanent_count", 0)
-                temp_count = invite_status.get("temporary_count", 0)
-                
-                # 记录日志以便确认数据
-                logger.debug(f"仪表盘统计: 站点{site_name} 永久邀请={perm_count}, 临时邀请={temp_count}")
-                
-                total_perm_invites += perm_count
-                total_temp_invites += temp_count
+
+                # 统计邀请数量
+                total_perm_invites += invite_status.get("permanent_count", 0)
+                total_temp_invites += invite_status.get("temporary_count", 0)
+
+                # 统计用户状态 - 使用ratio_health字段
+                banned_count = sum(1 for i in invitees if i.get('enabled', '').lower() == 'no')
+                low_ratio_count = sum(1 for i in invitees if i.get('ratio_health') in ['warning', 'danger'])
+                no_data_count = sum(1 for i in invitees if i.get('ratio_health') == 'neutral')
+
+                # 累加到总数
+                total_banned += banned_count
+                total_low_ratio += low_ratio_count
+                total_no_data += no_data_count
+
+                logger.info(f"站点 {site_name} 统计结果: 总人数={len(invitees)}, 低分享率={low_ratio_count}, 已禁用={banned_count}, 无数据={no_data_count}")
+
+            # 记录总计算结果
+            logger.info(f"仪表盘总统计结果: 总站点数={total_sites}, 总后宫成员={total_invitees}, 低分享率={total_low_ratio}, 已禁用={total_banned}, 无数据={total_no_data}")
 
             # 列配置
             col_config = {
@@ -333,7 +344,7 @@ class nexusinvitee(_PluginBase):
                                 "content": [
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 3},
+                                        "props": {"cols": 2},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -457,7 +468,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 1.5},
+                                        "props": {"cols": 2},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -488,7 +499,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 1.5},
+                                        "props": {"cols": 1},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -513,6 +524,37 @@ class nexusinvitee(_PluginBase):
                                                     "component": "div",
                                                     "props": {"class": "text-caption"},
                                                     "text": "已禁用"
+                                                }
+                                            ]
+                                        }]
+                                    },
+                                    {
+                                        "component": "VCol",
+                                        "props": {"cols": 1},
+                                        "content": [{
+                                            "component": "div",
+                                            "props": {
+                                                "class": "text-center"
+                                            },
+                                            "content": [
+                                                {
+                                                    "component": "VIcon",
+                                                    "props": {
+                                                        "size": "36",
+                                                        "color": "#9E9E9E",
+                                                        "class": "mb-2"
+                                                    },
+                                                    "text": "mdi-database-off"
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"style": "color: #9E9E9E; font-size: 1.5rem; font-weight: 400; line-height: 2rem;"},
+                                                    "text": str(total_no_data)
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-caption"},
+                                                    "text": "无数据"
                                                 }
                                             ]
                                         }]
@@ -755,19 +797,211 @@ class nexusinvitee(_PluginBase):
             # 准备页面内容
             page_content = []
             
+            # 添加全局统计信息
+            total_sites = len(cached_data)
+            total_invitees = 0
+            total_low_ratio = 0
+            total_banned = 0
+            total_perm_invites = 0
+            total_temp_invites = 0
+            total_no_data = 0
+
+            for site_name, cache in cached_data.items():
+                site_cache_data = cache.get("data", {})
+                invitees = []
+                
+                # 获取邀请用户列表
+                if "data" in site_cache_data:
+                    invitees = site_cache_data.get("data", {}).get("invitees", [])
+                else:
+                    invitees = site_cache_data.get("invitees", [])
+
+                # 统计各项数据
+                total_invitees += len(invitees)
+                
+                # 统计用户状态
+                banned_count = sum(1 for i in invitees if i.get('enabled', '').lower() == 'no')
+                low_ratio_count = sum(1 for i in invitees if i.get('ratio_health') in ['warning', 'danger'])
+                no_data_count = sum(1 for i in invitees if i.get('ratio_health') == 'neutral')
+
+                # 累加到总数
+                total_banned += banned_count
+                total_low_ratio += low_ratio_count
+                total_no_data += no_data_count
+
+                # 获取邀请状态
+                invite_status = {}
+                if "data" in site_cache_data:
+                    invite_status = site_cache_data.get("data", {}).get("invite_status", {})
+                else:
+                    invite_status = site_cache_data.get("invite_status", {})
+
+                # 统计邀请数量
+                total_perm_invites += invite_status.get("permanent_count", 0)
+                total_temp_invites += invite_status.get("temporary_count", 0)
+
+            # 添加统计卡片
+            page_content.extend([
+                {
+                    "type": "div",
+                    "class": "dashboard-stats",
+                    "content": [
+                        {
+                            "type": "div",
+                            "class": "dashboard-stats__item",
+                            "content": [
+                                {
+                                    "type": "div",
+                                    "class": "dashboard-stats__title",
+                                    "content": "站点数量"
+                                },
+                                {
+                                    "type": "div",
+                                    "class": "dashboard-stats__value",
+                                    "content": str(total_sites)
+                                }
+                            ]
+                        },
+                        {
+                            "type": "div",
+                            "class": "dashboard-stats__item",
+                            "content": [
+                                {
+                                    "type": "div",
+                                    "class": "dashboard-stats__title",
+                                    "content": "后宫成员"
+                                },
+                                {
+                                    "type": "div",
+                                    "class": "dashboard-stats__value",
+                                    "content": str(total_invitees)
+                                }
+                            ]
+                        },
+                        {
+                            "type": "div",
+                            "class": "dashboard-stats__item",
+                            "content": [
+                                {
+                                    "type": "div",
+                                    "class": "dashboard-stats__title",
+                                    "content": "永久邀请"
+                                },
+                                {
+                                    "type": "div",
+                                    "class": "dashboard-stats__value",
+                                    "content": str(total_perm_invites)
+                                }
+                            ]
+                        },
+                        {
+                            "type": "div",
+                            "class": "dashboard-stats__item",
+                            "content": [
+                                {
+                                    "type": "div",
+                                    "class": "dashboard-stats__title",
+                                    "content": "临时邀请"
+                                },
+                                {
+                                    "type": "div",
+                                    "class": "dashboard-stats__value",
+                                    "content": str(total_temp_invites)
+                                }
+                            ]
+                        },
+                        {
+                            "type": "div",
+                            "class": "dashboard-stats__item",
+                            "content": [
+                                {
+                                    "type": "div",
+                                    "class": "dashboard-stats__title text-warning",
+                                    "content": "低分享率"
+                                },
+                                {
+                                    "type": "div",
+                                    "class": "dashboard-stats__value text-warning",
+                                    "content": str(total_low_ratio)
+                                }
+                            ]
+                        },
+                        {
+                            "type": "div",
+                            "class": "dashboard-stats__item",
+                            "content": [
+                                {
+                                    "type": "div",
+                                    "class": "dashboard-stats__title text-error",
+                                    "content": "已禁用"
+                                },
+                                {
+                                    "type": "div",
+                                    "class": "dashboard-stats__value text-error",
+                                    "content": str(total_banned)
+                                }
+                            ]
+                        },
+                        {
+                            "type": "div",
+                            "class": "dashboard-stats__item",
+                            "content": [
+                                {
+                                    "type": "div",
+                                    "class": "dashboard-stats__title text-grey",
+                                    "content": "无数据"
+                                },
+                                {
+                                    "type": "div",
+                                    "class": "dashboard-stats__value text-grey",
+                                    "content": str(total_no_data)
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ])
+
             # 添加样式，优化表格
-            page_content.append({
-                "component": "style",
-                "text": """
-                .site-invitees-table {
-                    width: auto !important;
+            page_content.extend([
+                {
+                    "type": "style",
+                    "content": """
+                        .dashboard-stats {
+                            display: flex;
+                            flex-wrap: wrap;
+                            gap: 1rem;
+                            margin-bottom: 2rem;
+                        }
+                        .dashboard-stats__item {
+                            flex: 1;
+                            min-width: 120px;
+                            padding: 1rem;
+                            background: var(--v-surface-variant);
+                            border-radius: 8px;
+                            text-align: center;
+                        }
+                        .dashboard-stats__title {
+                            font-size: 0.875rem;
+                            margin-bottom: 0.5rem;
+                            opacity: 0.7;
+                        }
+                        .dashboard-stats__value {
+                            font-size: 1.5rem;
+                            font-weight: bold;
+                        }
+                        .text-warning {
+                            color: var(--v-warning);
+                        }
+                        .text-error {
+                            color: var(--v-error);
+                        }
+                        .text-grey {
+                            color: var(--v-grey);
+                        }
+                    """
                 }
-                .site-invitees-table th, .site-invitees-table td {
-                    padding: 4px 8px !important;
-                    white-space: nowrap;
-                }
-                """
-            })
+            ])
 
             # 添加头部信息和提示
             page_content.append({
@@ -791,20 +1025,57 @@ class nexusinvitee(_PluginBase):
                 }
             })
 
+            # 添加样式
+            page_content.append({
+                "component": "style",
+                "text": """
+                .site-invitees-table {
+                    font-size: 12px !important;
+                }
+                .site-invitees-table td {
+                    padding: 4px 8px !important;
+                    height: 32px !important;
+                }
+                .site-invitees-table th {
+                    height: 36px !important;
+                }
+                .site-invitees-table .v-btn {
+                    font-size: 12px !important;
+                    height: 24px !important;
+                    min-width: 64px !important;
+                }
+                .site-invitees-table tr.error {
+                    background-color: rgba(244, 67, 54, 0.12) !important;
+                }
+                .site-invitees-table tr.warning-lighten-4 {
+                    background-color: rgba(255, 152, 0, 0.12) !important;
+                }
+                .site-invitees-table tr.grey-lighten-3 {
+                    background-color: rgba(158, 158, 158, 0.12) !important;
+                }
+                .site-invitees-table tr.error-lighten-4 {
+                    background-color: rgba(244, 67, 54, 0.08) !important;
+                }
+                .text-success {
+                    color: #4CAF50 !important;
+                }
+                .text-warning {
+                    color: #FF9800 !important;
+                }
+                .text-error {
+                    color: #F44336 !important;
+                }
+                .text-grey {
+                    color: #9E9E9E !important;
+                }
+                .font-weight-bold {
+                    font-weight: bold !important;
+                }
+                """
+            })
+
             # 准备站点卡片
             cards = []
-            
-            # 辅助函数，用于获取嵌套数据
-            def get_nested_value(data_dict, key_path, default=None):
-                """递归获取嵌套字典中的值"""
-                if not data_dict or not isinstance(data_dict, dict):
-                    return default
-                
-                if len(key_path) == 1:
-                    return data_dict.get(key_path[0], default)
-                
-                next_dict = data_dict.get(key_path[0], {})
-                return get_nested_value(next_dict, key_path[1:], default)
             
             # 计算所有站点统计信息
             total_sites = len(cached_data)
@@ -813,75 +1084,44 @@ class nexusinvitee(_PluginBase):
             total_banned = 0
             total_perm_invites = 0
             total_temp_invites = 0
+            total_no_data = 0
 
             for site_name, cache in cached_data.items():
-                # 获取站点缓存数据
                 site_cache_data = cache.get("data", {})
-                
-                # 尝试不同的数据结构路径获取邀请列表
                 invitees = []
-                possible_paths = [
-                    ["invitees"],
-                    ["data", "invitees"],
-                    ["data", "data", "invitees"]
-                ]
                 
-                for path in possible_paths:
-                    result = get_nested_value(site_cache_data, path, [])
-                    if result:
-                        invitees = result
-                        break
-                
-                # 同样处理邀请状态
-                invite_status = {}
-                status_paths = [
-                    ["invite_status"],
-                    ["data", "invite_status"],
-                    ["data", "data", "invite_status"]
-                ]
-                
-                for path in status_paths:
-                    result = get_nested_value(site_cache_data, path, {})
-                    if result and isinstance(result, dict):
-                        invite_status = result
-                        # 调试输出临时邀请数量
-                        if "temporary_count" in result:
-                            logger.debug(f"详情页: 站点{site_name}临时邀请数量={result.get('temporary_count', 0)}")
-                        if "reason" in result:
-                            logger.debug(f"详情页: 站点{site_name}不可邀请原因={result.get('reason', '')}")
-                        break
-                
+                # 获取邀请用户列表
+                if "data" in site_cache_data:
+                    invitees = site_cache_data.get("data", {}).get("invitees", [])
+                else:
+                    invitees = site_cache_data.get("invitees", [])
+
                 # 统计各项数据
                 total_invitees += len(invitees)
                 
-                # 确保获取正确的邀请数量
-                perm_count = invite_status.get("permanent_count", 0)
-                temp_count = invite_status.get("temporary_count", 0)
-                
-                # 记录日志以便确认数据
-                logger.debug(f"详情页统计: 站点{site_name} 永久邀请={perm_count}, 临时邀请={temp_count}")
-                
-                total_perm_invites += perm_count
-                total_temp_invites += temp_count
+                # 统计用户状态 - 直接使用ratio_health字段
+                banned_count = sum(1 for i in invitees if i.get('enabled', '').lower() == 'no')
+                low_ratio_count = sum(1 for i in invitees if i.get('ratio_health') in ['warning', 'danger'])
+                no_data_count = sum(1 for i in invitees if i.get('ratio_health') == 'neutral')
 
-                # 计算分享率低和被ban的用户
-                for invitee in invitees:
-                    # 检查是否被ban
-                    if invitee.get('enabled', '').lower() == 'no':
-                        total_banned += 1
+                # 累加到总数
+                total_banned += banned_count
+                total_low_ratio += low_ratio_count
+                total_no_data += no_data_count
 
-                    # 检查分享率是否低于1
-                    ratio_str = invitee.get('ratio', '')
-                    if ratio_str != '∞' and ratio_str.lower() != 'inf.' and ratio_str.lower() != 'inf':
-                        try:
-                            # 标准化字符串，替换逗号为点
-                            ratio_str = ratio_str.replace(',', '.')
-                            ratio_val = float(ratio_str) if ratio_str else 0
-                            if ratio_val < 1:
-                                total_low_ratio += 1
-                        except (ValueError, TypeError):
-                            # 转换错误时记录警告
-                            logger.warning(f"分享率转换失败: {ratio_str}")
+                # 获取邀请状态
+                invite_status = {}
+                if "data" in site_cache_data:
+                    invite_status = site_cache_data.get("data", {}).get("invite_status", {})
+                else:
+                    invite_status = site_cache_data.get("invite_status", {})
+
+                # 统计邀请数量
+                total_perm_invites += invite_status.get("permanent_count", 0)
+                total_temp_invites += invite_status.get("temporary_count", 0)
+
+            # 记录总计算结果
+            logger.info(f"仪表盘总统计结果: 总站点数={total_sites}, 总后宫成员={total_invitees}, 低分享率={total_low_ratio}, 已禁用={total_banned}, 无数据={total_no_data}")
 
             # 添加全局统计信息
             page_content.append({
@@ -903,7 +1143,7 @@ class nexusinvitee(_PluginBase):
                                 "content": [
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 3},
+                                        "props": {"cols": 2},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -1027,7 +1267,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 1.5},
+                                        "props": {"cols": 2},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -1058,7 +1298,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 1.5},
+                                        "props": {"cols": 1},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -1083,6 +1323,37 @@ class nexusinvitee(_PluginBase):
                                                     "component": "div",
                                                     "props": {"class": "text-caption"},
                                                     "text": "已禁用"
+                                                }
+                                            ]
+                                        }]
+                                    },
+                                    {
+                                        "component": "VCol",
+                                        "props": {"cols": 1},
+                                        "content": [{
+                                            "component": "div",
+                                            "props": {
+                                                "class": "text-center"
+                                            },
+                                            "content": [
+                                                {
+                                                    "component": "VIcon",
+                                                    "props": {
+                                                        "size": "36",
+                                                        "color": "#9E9E9E",
+                                                        "class": "mb-2"
+                                                    },
+                                                    "text": "mdi-database-off"
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"style": "color: #9E9E9E; font-size: 1.5rem; font-weight: 400; line-height: 2rem;"},
+                                                    "text": str(total_no_data)
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-caption"},
+                                                    "text": "无数据"
                                                 }
                                             ]
                                         }]
@@ -1142,23 +1413,51 @@ class nexusinvitee(_PluginBase):
                             break
                     
                     # 计算此站点的统计信息
-                    banned_count = sum(1 for i in invitees if i.get(
-                        'enabled', '').lower() == 'no')
-                    low_ratio_count = 0
+                    banned_count = sum(1 for i in invitees if i.get('enabled', '').lower() == 'no')
+                    low_ratio_count = sum(1 for i in invitees if i.get('ratio_health') == 'warning' or i.get('ratio_health') == 'danger')
+                    no_data_count = sum(1 for i in invitees if i.get('ratio_health') == 'neutral')
+
+                    # 更新总计数
+                    total_banned += banned_count
+                    total_low_ratio += low_ratio_count
+                    total_no_data += no_data_count
 
                     for invitee in invitees:
+                        # 检查是否是无数据情况（上传下载都是0）
+                        uploaded = invitee.get('uploaded', '0')
+                        downloaded = invitee.get('downloaded', '0')
+                        is_no_data = False
+                        
+                        # 简化判断逻辑，只关注字符串为"0"、"0.0"、"0B"或空字符串，或者数值为0的情况
+                        if isinstance(uploaded, str) and isinstance(downloaded, str):
+                            uploaded_zero = uploaded == '0' or uploaded == '' or uploaded == '0.0' or uploaded.lower() == '0b'
+                            downloaded_zero = downloaded == '0' or downloaded == '' or downloaded == '0.0' or downloaded.lower() == '0b'
+                            is_no_data = uploaded_zero and downloaded_zero
+                        elif isinstance(uploaded, (int, float)) and isinstance(downloaded, (int, float)):
+                            is_no_data = uploaded == 0 and downloaded == 0
+                        
+                        username = invitee.get('username', '未知')
+                        # 强制输出日志，确保无数据用户被记录
+                        if is_no_data:
+                            logger.info(f"【总览】检测到无数据用户: {username}, 上传={uploaded}, 下载={downloaded}, 当前无数据总计={total_no_data+1}")
+                            total_no_data += 1
+                            continue
+                        
+                        # 处理分享率
                         ratio_str = invitee.get('ratio', '')
-                        if ratio_str != '∞' and ratio_str.lower() != 'inf.' and ratio_str.lower() != 'inf':
-                            try:
-                                # 标准化字符串，替换逗号为点
-                                ratio_str = ratio_str.replace(',', '.')
-                                ratio_val = float(
-                                    ratio_str) if ratio_str else 0
-                                if ratio_val < 1:
-                                    low_ratio_count += 1
-                            except (ValueError, TypeError):
-                                # 转换错误时记录警告
-                                logger.warning(f"分享率转换失败: {ratio_str}")
+                        # 处理无限分享率情况
+                        if ratio_str == '∞' or ratio_str.lower() == 'inf.' or ratio_str.lower() == 'inf':
+                            continue  # 无限分享率不计入低分享率
+                        
+                        try:
+                            # 标准化字符串，替换逗号为点
+                            ratio_str = ratio_str.replace(',', '.')
+                            ratio_val = float(ratio_str) if ratio_str else 0
+                            if ratio_val < 1 and ratio_val > 0:  # 确保分享率大于0且小于1才算低分享率
+                                low_ratio_count += 1
+                        except (ValueError, TypeError):
+                            # 转换错误时记录警告
+                            logger.warning(f"分享率转换失败: {ratio_str}")
 
                     # 合并站点信息和数据到一张卡片
                     site_card = {
@@ -1207,7 +1506,7 @@ class nexusinvitee(_PluginBase):
                                                     {
                                                         "component": "div",
                                                         "props": {
-                                                            "class": "d-flex align-center"
+                                                            "style": "display: flex; align-items: center; white-space: nowrap;"
                                                         },
                                                         "content": [
                                                             {
@@ -1235,8 +1534,22 @@ class nexusinvitee(_PluginBase):
                                                             },
                                                             {
                                                                 "component": "span",
-                                                                "props": {"class": "text-caption"},
+                                                                "props": {"class": "text-caption mr-2"},
                                                                 "text": f"{banned_count}人禁用" if banned_count > 0 else ""
+                                                            },
+                                                            {
+                                                                "component": "VIcon",
+                                                                "props": {
+                                                                    "size": "small",
+                                                                    "color": "#9E9E9E",
+                                                                    "class": "mr-1"
+                                                                },
+                                                                "text": "mdi-database-off" if no_data_count > 0 else ""
+                                                            },
+                                                            {
+                                                                "component": "span",
+                                                                "props": {"class": "text-caption"},
+                                                                "text": f"{no_data_count}人无数据" if no_data_count > 0 else ""
                                                             }
                                                         ]
                                                     }
@@ -1424,22 +1737,70 @@ class nexusinvitee(_PluginBase):
                     # 确保能正确显示不可邀请原因
                     if not can_invite:
                         logger.debug(f"站点 {site_name} 不可邀请原因: {reason}")
-
-                    # 特别适配M-Team站点，添加用户等级和魔力值信息
-                    site_url = site_info.get("url", "").lower()
-                    if "m-team" in site_url or invite_status_for_check.get("is_mteam", False):
-                        # 直接从invite_status获取数据
-                        user_role_name = invite_status_for_check.get("user_role_name", "")
-                        user_role = invite_status_for_check.get("user_role", "")
-                        user_bonus = invite_status_for_check.get("user_bonus", 0)
-                        buyable_invites = invite_status_for_check.get("buyable_invites", 0)
+                    
+                    # 检查是否为M-Team站点
+                    is_mteam_site = False
+                    site_url_lower = site_info.get("url", "").lower()
+                    mteam_features = ["m-team", "api.m-team.cc", "api.m-team.io"]
+                    for feature in mteam_features:
+                        if feature in site_url_lower:
+                            is_mteam_site = True
+                            break
+                    
+                    # 获取站点魔力值和邀请价格信息
+                    bonus = invite_status.get("bonus", 0)
+                    permanent_invite_price = invite_status.get("permanent_invite_price", 0)
+                    temporary_invite_price = invite_status.get("temporary_invite_price", 0)
+                    
+                    # M-Team站点特殊处理
+                    if is_mteam_site:
+                        # 尝试从reason中提取用户等级和魔力值信息
+                        import re
                         
-                        # 确保有用户等级或魔力值数据时才添加信息卡片
-                        if user_role or user_bonus:
-                            mteam_info_card = {
+                        # 记录原始reason用于调试
+                        logger.debug(f"M-Team站点 {site_name} 原始reason: {reason}")
+                        
+                        # 提取用户等级
+                        user_role = ""
+                        level_match = re.search(r'用户等级\(([^)]+)\)', reason)
+                        if level_match:
+                            user_role = level_match.group(1)
+                            logger.debug(f"M-Team站点 {site_name} 提取到用户等级: {user_role}")
+                        
+                        # 提取魔力值
+                        user_bonus = ""
+                        bonus_match = re.search(r'魔力值\(([0-9.]+)\)', reason)
+                        if bonus_match:
+                            user_bonus = bonus_match.group(1)
+                            logger.debug(f"M-Team站点 {site_name} 提取到魔力值: {user_bonus}")
+                        
+                        # 提取可购买邀请数
+                        buyable_invites = 0
+                        buy_match = re.search(r'可购买(\d+)个', reason)
+                        if buy_match:
+                            buyable_invites = int(buy_match.group(1))
+                            logger.debug(f"M-Team站点 {site_name} 提取到可购买邀请数: {buyable_invites}")
+                        
+                        # 如果魔力值和用户等级有效
+                        if user_bonus and user_role:
+                            logger.info(f"M-Team站点 {site_name} 成功提取特殊信息，准备展示")
+                            
+                            # 计算还需多少魔力
+                            try:
+                                user_bonus_float = float(user_bonus)
+                                needed_bonus = 80000 - (user_bonus_float % 80000)
+                                needed_bonus_text = f"(还需{needed_bonus:.1f}魔力)" if buyable_invites == 0 and user_bonus_float > 0 else ""
+                            except (ValueError, TypeError):
+                                logger.warning(f"M-Team站点 {site_name} 魔力值转换失败: {user_bonus}")
+                                user_bonus_float = 0
+                                needed_bonus = 80000
+                                needed_bonus_text = ""
+                            
+                            # 添加用户等级卡片
+                            site_card["content"].append({
                                 "component": "VCardText",
                                 "props": {
-                                    "class": "py-1"
+                                    "class": "py-0"
                                 },
                                 "content": [
                                     {
@@ -1447,134 +1808,125 @@ class nexusinvitee(_PluginBase):
                                         "props": {
                                             "dense": True
                                         },
-                                        "content": []
+                                        "content": [
+                                            # 用户等级
+                                            {
+                                                "component": "VCol",
+                                                "props": {"cols": 3},
+                                                "content": [{
+                                                    "component": "div",
+                                                    "props": {
+                                                        "class": "d-flex align-center py-2"
+                                                    },
+                                                    "content": [
+                                                        {
+                                                            "component": "VIcon",
+                                                            "props": {
+                                                                "color": "deep-purple",
+                                                                "size": "small",
+                                                                "class": "mr-2"
+                                                            },
+                                                            "text": "mdi-crown"
+                                                        },
+                                                        {
+                                                            "component": "div",
+                                                            "content": [
+                                                                {
+                                                                    "component": "div",
+                                                                    "props": {"class": "text-subtitle-2 font-weight-medium"},
+                                                                    "text": user_role
+                                                                },
+                                                                {
+                                                                    "component": "div",
+                                                                    "props": {"class": "text-caption"},
+                                                                    "text": "用户等级"
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }]
+                                            },
+                                            # 魔力值
+                                            {
+                                                "component": "VCol",
+                                                "props": {"cols": 3},
+                                                "content": [{
+                                                    "component": "div",
+                                                    "props": {
+                                                        "class": "d-flex align-center py-2"
+                                                    },
+                                                    "content": [
+                                                        {
+                                                            "component": "VIcon",
+                                                            "props": {
+                                                                "color": "orange",
+                                                                "size": "small",
+                                                                "class": "mr-2"
+                                                            },
+                                                            "text": "mdi-diamond"
+                                                        },
+                                                        {
+                                                            "component": "div",
+                                                            "content": [
+                                                                {
+                                                                    "component": "div",
+                                                                    "props": {"class": "text-subtitle-2 font-weight-medium"},
+                                                                    "text": user_bonus
+                                                                },
+                                                                {
+                                                                    "component": "div",
+                                                                    "props": {"class": "text-caption"},
+                                                                    "text": "魔力值"
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }]
+                                            },
+                                            # 可购买邀请
+                                            {
+                                                "component": "VCol",
+                                                "props": {"cols": 6},
+                                                "content": [{
+                                                    "component": "div",
+                                                    "props": {
+                                                        "class": "d-flex align-center py-2"
+                                                    },
+                                                    "content": [
+                                                        {
+                                                            "component": "VIcon",
+                                                            "props": {
+                                                                "color": "cyan",
+                                                                "size": "small",
+                                                                "class": "mr-2"
+                                                            },
+                                                            "text": "mdi-cart"
+                                                        },
+                                                        {
+                                                            "component": "div",
+                                                            "content": [
+                                                                {
+                                                                    "component": "div",
+                                                                    "props": {"class": "text-subtitle-2 font-weight-medium"},
+                                                                    "text": str(buyable_invites) + " " + needed_bonus_text
+                                                                },
+                                                                {
+                                                                    "component": "div",
+                                                                    "props": {"class": "text-caption"},
+                                                                    "text": "可购买邀请"
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }]
+                                            }
+                                        ]
                                     }
                                 ]
-                            }
-                            
-                            # 添加用户等级信息
-                            if user_role_name:
-                                user_role_display = f"{user_role_name}({user_role})" if user_role else user_role_name
-                                mteam_info_card["content"][0]["content"].append({
-                                    "component": "VCol",
-                                    "props": {"cols": 4},
-                                    "content": [{
-                                        "component": "div",
-                                        "props": {
-                                            "class": "d-flex align-center"
-                                        },
-                                        "content": [
-                                            {
-                                                "component": "VIcon",
-                                                "props": {
-                                                    "size": "24",
-                                                    "color": "#673AB7",
-                                                    "class": "mr-2"
-                                                },
-                                                "text": "mdi-badge-account"
-                                            },
-                                            {
-                                                "component": "div",
-                                                "content": [
-                                                    {
-                                                        "component": "div",
-                                                        "props": {"class": "text-body-1 font-weight-medium deep-purple--text"},
-                                                        "text": user_role_display
-                                                    },
-                                                    {
-                                                        "component": "div",
-                                                        "props": {"class": "text-caption"},
-                                                        "text": "用户等级"
-                                                    }
-                                                ]
-                                            }
-                                        ]
-                                    }]
-                                })
-                            
-                            # 添加魔力值信息
-                            if user_bonus:
-                                mteam_info_card["content"][0]["content"].append({
-                                    "component": "VCol",
-                                    "props": {"cols": 4},
-                                    "content": [{
-                                        "component": "div",
-                                        "props": {
-                                            "class": "d-flex align-center"
-                                        },
-                                        "content": [
-                                            {
-                                                "component": "VIcon",
-                                                "props": {
-                                                    "size": "24",
-                                                    "color": "#FF9800",
-                                                    "class": "mr-2"
-                                                },
-                                                "text": "mdi-star-circle"
-                                            },
-                                            {
-                                                "component": "div",
-                                                "content": [
-                                                    {
-                                                        "component": "div",
-                                                        "props": {"class": "text-body-1 font-weight-medium warning--text"},
-                                                        "text": str(user_bonus)
-                                                    },
-                                                    {
-                                                        "component": "div",
-                                                        "props": {"class": "text-caption"},
-                                                        "text": "魔力值"
-                                                    }
-                                                ]
-                                            }
-                                        ]
-                                    }]
-                                })
-                            
-                            # 添加可购买邀请数信息
-                            needed_bonus = 80000 - (user_bonus % 80000) if user_bonus < 80000 else 0
-                            mteam_info_card["content"][0]["content"].append({
-                                "component": "VCol",
-                                "props": {"cols": 4},
-                                "content": [{
-                                    "component": "div",
-                                    "props": {
-                                        "class": "d-flex align-center"
-                                    },
-                                    "content": [
-                                        {
-                                            "component": "VIcon",
-                                            "props": {
-                                                "size": "24",
-                                                "color": "#00BCD4",
-                                                "class": "mr-2"
-                                            },
-                                            "text": "mdi-cart"
-                                        },
-                                        {
-                                            "component": "div",
-                                            "content": [
-                                                {
-                                                    "component": "div",
-                                                    "props": {"class": "text-body-1 font-weight-medium info--text"},
-                                                    "text": f"{buyable_invites}" + (f" (还需{needed_bonus:.1f}魔力)" if needed_bonus > 0 else "")
-                                                },
-                                                {
-                                                    "component": "div",
-                                                    "props": {"class": "text-caption"},
-                                                    "text": "可购买邀请"
-                                                }
-                                            ]
-                                        }
-                                    ]
-                                }]
                             })
                             
-                            # 将M-Team特别信息卡插入到第三个位置(索引2)
-                            site_card["content"].insert(2, mteam_info_card)
-                            
-                            # 添加购买提示，附带购买链接
-                            mteam_buy_tip = {
+                            # 添加提示信息
+                            site_card["content"].append({
                                 "component": "VCardText",
                                 "props": {
                                     "class": "py-1"
@@ -1586,45 +1938,233 @@ class nexusinvitee(_PluginBase):
                                             "type": "info",
                                             "variant": "tonal",
                                             "density": "compact",
-                                            "class": "my-1"
+                                            "class": "my-1 d-flex align-center"
                                         },
                                         "content": [
                                             {
+                                                "component": "VIcon",
+                                                "props": {
+                                                    "start": True,
+                                                    "size": "small"
+                                                },
+                                                "text": "mdi-information"
+                                            },
+                                            {
                                                 "component": "span",
-                                                "text": "M-Team每80000魔力可购买一个临时邀请，"
+                                                "props": {"class": "flex-grow-1"},
+                                                "text": "M-Team每80000魔力可购买一个临时邀请"
                                             },
                                             {
                                                 "component": "VBtn",
                                                 "props": {
                                                     "variant": "text",
-                                                    "href": f"{site_url}/store.php",
-                                                    "target": "_blank",
+                                                    "density": "compact",
                                                     "color": "primary",
-                                                    "x-small": True,
-                                                    "class": "pa-1"
+                                                    "href": site_url_lower + "/mybonus",
+                                                    "target": "_blank",
+                                                    "size": "small"
                                                 },
-                                                "text": "前往商店购买"
+                                                "content": [
+                                                    {
+                                                        "component": "VIcon",
+                                                        "props": {
+                                                            "start": True,
+                                                            "size": "small"
+                                                        },
+                                                        "text": "mdi-store"
+                                                    },
+                                                    {
+                                                        "component": "span",
+                                                        "text": "前往商店购买"
+                                                    }
+                                                ]
                                             }
                                         ]
                                     }
                                 ]
-                            }
+                            })
                             
-                            # 将购买提示卡插入到M-Team特别信息卡后面
-                            site_card["content"].insert(3, mteam_buy_tip)
-
-                    # 只有当不可邀请或有错误信息时才显示
-                    if (not can_invite and reason) or error_message:
-                        display_reason = error_message or f"不可邀请原因: {reason}"
-                        # 确保原因文本非空
-                        if not display_reason.strip():
-                            # 设置默认原因
-                            display_reason = "不可邀请，但未提供原因"
+                            # M-Team特殊显示时跳过原来的警告提示
+                            error_message = ""
+                            reason = ""
+                    
+                    # 通用NexusPHP和蝶粉站点处理
+                    elif bonus > 0 and (permanent_invite_price > 0 or temporary_invite_price > 0):
+                        logger.info(f"站点 {site_name} 检测到魔力值信息: 魔力={bonus}, 永久邀请价格={permanent_invite_price}, 临时邀请价格={temporary_invite_price}")
                         
-                        # 跳过M-Team已展示的内容，避免重复显示
-                        if not (("m-team" in site_url or invite_status_for_check.get("is_mteam", False)) and 
-                               (user_role_name or user_bonus > 0)):
-                            site_card["content"].insert(2, {
+                        # 计算可购买邀请数量
+                        can_buy_permanent = 0
+                        can_buy_temporary = 0
+                        
+                        if permanent_invite_price > 0:
+                            can_buy_permanent = int(bonus / permanent_invite_price)
+                        
+                        if temporary_invite_price > 0:
+                            can_buy_temporary = int(bonus / temporary_invite_price)
+                        
+                        # 计算购买邀请后剩余魔力
+                        remaining_bonus = bonus
+                        if can_buy_permanent > 0 and permanent_invite_price > 0:
+                            remaining_bonus = bonus % permanent_invite_price
+                        elif can_buy_temporary > 0 and temporary_invite_price > 0:
+                            remaining_bonus = bonus % temporary_invite_price
+                        
+                        # 添加魔力值信息卡片
+                        site_card["content"].append({
+                            "component": "VCardText",
+                            "props": {
+                                "class": "py-0"
+                            },
+                            "content": [
+                                {
+                                    "component": "VRow",
+                                    "props": {
+                                        "dense": True
+                                    },
+                                    "content": [
+                                        # 魔力值
+                                        {
+                                            "component": "VCol",
+                                            "props": {"cols": 3},
+                                            "content": [{
+                                                "component": "div",
+                                                "props": {
+                                                    "class": "d-flex align-center py-2"
+                                                },
+                                                "content": [
+                                                    {
+                                                        "component": "VIcon",
+                                                        "props": {
+                                                            "color": "orange",
+                                                            "size": "small",
+                                                            "class": "mr-2"
+                                                        },
+                                                        "text": "mdi-diamond"
+                                                    },
+                                                    {
+                                                        "component": "div",
+                                                        "content": [
+                                                            {
+                                                                "component": "div",
+                                                                "props": {"class": "text-subtitle-2 font-weight-medium"},
+                                                                "text": str(bonus)
+                                                            },
+                                                            {
+                                                                "component": "div",
+                                                                "props": {"class": "text-caption"},
+                                                                "text": "魔力值"
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            }]
+                                        },
+                                        # 可购买永久邀请
+                                        {
+                                            "component": "VCol",
+                                            "props": {"cols": {
+                                                "cols": 4,
+                                                "md": 3
+                                            }},
+                                            "content": [] if permanent_invite_price <= 0 else [{
+                                                "component": "div",
+                                                "props": {
+                                                    "class": "d-flex align-center py-2"
+                                                },
+                                                "content": [
+                                                    {
+                                                        "component": "VIcon",
+                                                        "props": {
+                                                            "color": "purple",
+                                                            "size": "small",
+                                                            "class": "mr-2"
+                                                        },
+                                                        "text": "mdi-ticket-confirmation"
+                                                    },
+                                                    {
+                                                        "component": "div",
+                                                        "content": [
+                                                            {
+                                                                "component": "div",
+                                                                "props": {"class": "text-subtitle-2 font-weight-medium"},
+                                                                "text": f"{can_buy_permanent}个 ({permanent_invite_price}魔力/个)" if can_buy_permanent > 0 else f"0个 (需{permanent_invite_price}魔力)"
+                                                            },
+                                                            {
+                                                                "component": "div",
+                                                                "props": {"class": "text-caption"},
+                                                                "text": "可购买永久邀请"
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            }]
+                                        },
+                                        # 可购买临时邀请
+                                        {
+                                            "component": "VCol",
+                                            "props": {"cols": {
+                                                "cols": 4,
+                                                "md": 3
+                                            }},
+                                            "content": [] if temporary_invite_price <= 0 else [{
+                                                "component": "div",
+                                                "props": {
+                                                    "class": "d-flex align-center py-2"
+                                                },
+                                                "content": [
+                                                    {
+                                                        "component": "VIcon",
+                                                        "props": {
+                                                            "color": "pink",
+                                                            "size": "small",
+                                                            "class": "mr-2"
+                                                        },
+                                                        "text": "mdi-ticket"
+                                                    },
+                                                    {
+                                                        "component": "div",
+                                                        "content": [
+                                                            {
+                                                                "component": "div",
+                                                                "props": {"class": "text-subtitle-2 font-weight-medium"},
+                                                                "text": f"{can_buy_temporary}个 ({temporary_invite_price}魔力/个)" if can_buy_temporary > 0 else f"0个 (需{temporary_invite_price}魔力)"
+                                                            },
+                                                            {
+                                                                "component": "div",
+                                                                "props": {"class": "text-caption"},
+                                                                "text": "可购买临时邀请"
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            }]
+                                        },
+                                        # 按钮占位
+                                        {
+                                            "component": "VCol",
+                                            "props": {"cols": 3},
+                                            "content": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        })
+                        
+                        # 添加提示信息和购买按钮
+                        if permanent_invite_price > 0 or temporary_invite_price > 0:
+                            # 构造价格文本，确保类型转换
+                            price_text = "站点商店邀请价格: "
+                            parts = []
+                            
+                            if permanent_invite_price > 0:
+                                parts.append(f"永久邀请 {permanent_invite_price} 魔力")
+                            
+                            if temporary_invite_price > 0:
+                                parts.append(f"临时邀请 {temporary_invite_price} 魔力")
+                            
+                            price_text += "，".join(parts)
+                            
+                            site_card["content"].append({
                                 "component": "VCardText",
                                 "props": {
                                     "class": "py-1"
@@ -1633,56 +2173,90 @@ class nexusinvitee(_PluginBase):
                                     {
                                         "component": "VAlert",
                                         "props": {
-                                            "type": "warning",
+                                            "type": "info",
                                             "variant": "tonal",
                                             "density": "compact",
-                                            "class": "my-1"
+                                            "class": "my-1 d-flex align-center"
                                         },
-                                        "text": display_reason
+                                        "content": [
+                                            {
+                                                "component": "VIcon",
+                                                "props": {
+                                                    "start": True,
+                                                    "size": "small"
+                                                },
+                                                "text": "mdi-information"
+                                            },
+                                            {
+                                                "component": "span",
+                                                "props": {"class": "flex-grow-1"},
+                                                "text": price_text
+                                            },
+                                            {
+                                                "component": "VBtn",
+                                                "props": {
+                                                    "variant": "text",
+                                                    "density": "compact",
+                                                    "color": "primary",
+                                                    "href": site_url_lower + "/mybonus.php",
+                                                    "target": "_blank",
+                                                    "size": "small"
+                                                },
+                                                "content": [
+                                                    {
+                                                        "component": "VIcon",
+                                                        "props": {
+                                                            "start": True,
+                                                            "size": "small"
+                                                        },
+                                                        "text": "mdi-store"
+                                                    },
+                                                    {
+                                                        "component": "span",
+                                                        "text": "前往商店购买"
+                                                    }
+                                                ]
+                                            }
+                                        ]
                                     }
                                 ]
                             })
+                        
 
                     # 只有在有邀请列表时才添加表格
                     if invitees:
                         table_rows = []
                         for invitee in invitees:
                             # 判断用户是否被ban或分享率较低
-                            is_banned = invitee.get(
-                                'enabled', '').lower() == 'no'
-                            is_low_ratio = False
+                            is_banned = invitee.get('enabled', '').lower() == 'no'
+                            
+                            # 使用ratio_health和ratio_label字段
+                            ratio_health = invitee.get('ratio_health', '')
+                            ratio_label = invitee.get('ratio_label', ['', ''])
 
-                            # 处理分享率
-                            ratio_str = invitee.get('ratio', '')
-                            if ratio_str != '∞' and ratio_str.lower() != 'inf.' and ratio_str.lower() != 'inf':
-                                try:
-                                    # 标准化字符串，替换逗号为点
-                                    ratio_str = ratio_str.replace(',', '.')
-                                    # 尝试转换为浮点数
-                                    ratio_val = float(
-                                        ratio_str) if ratio_str else 0
-                                    is_low_ratio = ratio_val < 1
-                                except (ValueError, TypeError):
-                                    # 转换失败不做特殊处理
-                                    logger.warning(f"分享率转换失败: {ratio_str}")
-                                    pass
-
+                            # 根据ratio_health设置行样式
                             row_class = ""
                             if is_banned:
-                                row_class = "bg-error-lighten-4"
-                            elif is_low_ratio:
-                                row_class = "bg-warning-lighten-4"
+                                row_class = "error"  # 被ban用户使用红色背景
+                            elif ratio_health == "neutral":
+                                row_class = "grey-lighten-3"  # 无数据使用灰色背景
+                            elif ratio_health == "warning":
+                                row_class = "warning-lighten-4"  # 警告使用橙色背景
+                            elif ratio_health == "danger":
+                                row_class = "error-lighten-4"  # 危险使用红色背景
 
-                            # 判断分享率样式
+                            # 设置分享率样式
                             ratio_class = ""
-                            if ratio_str == '∞' or ratio_str.lower() == 'inf.' or ratio_str.lower() == 'inf':
+                            if ratio_health == "excellent":
+                                ratio_class = "text-success font-weight-bold"
+                            elif ratio_health == "good":
                                 ratio_class = "text-success"
-                            else:
-                                try:
-                                    ratio_val = float(ratio_str.replace(',', '.')) if ratio_str else 0
-                                    ratio_class = "text-success" if ratio_val >= 1 else "text-error font-weight-bold"
-                                except (ValueError, TypeError):
-                                    ratio_class = ""
+                            elif ratio_health == "warning":
+                                ratio_class = "text-warning font-weight-bold"
+                            elif ratio_health == "danger":
+                                ratio_class = "text-error font-weight-bold"
+                            elif ratio_health == "neutral":
+                                ratio_class = "text-grey"
 
                             # 创建行
                             table_rows.append({
@@ -1741,7 +2315,7 @@ class nexusinvitee(_PluginBase):
                         site_card["content"].append({
                             "component": "VCardText",
                             "props": {
-                                "class": "pt-0"
+                                "class": "pt-0 px-2"
                             },
                             "content": [{
                                 "component": "VTable",
@@ -1749,7 +2323,7 @@ class nexusinvitee(_PluginBase):
                                     "hover": True,
                                     "density": "compact",
                                     "fixed-header": False,
-                                    "class": "site-invitees-table",
+                                    "class": "site-invitees-table text-caption",
                                 },
                                 "content": [{
                                     "component": "thead",
@@ -1761,18 +2335,18 @@ class nexusinvitee(_PluginBase):
                                         "content": [
                                             {
                                                 "component": "th", 
-                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
                                                 "content": [
                                                     {
                                                         "component": "div",
                                                         "props": {
-                                                            "class": "d-flex align-center justify-center"
+                                                            "class": "d-flex align-center"
                                                         },
                                                         "content": [
                                                             {
                                                                 "component": "VIcon",
                                                                 "props": {
-                                                                    "size": "small",
+                                                                    "size": "14",
                                                                     "class": "mr-1",
                                                                     "color": "#2196F3"
                                                                 },
@@ -1788,20 +2362,20 @@ class nexusinvitee(_PluginBase):
                                             },
                                             {
                                                 "component": "th", 
-                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
                                                 "content": [
                                                     {
                                                         "component": "div",
                                                         "props": {
-                                                            "class": "d-flex align-center justify-center"
+                                                            "class": "d-flex align-center"
                                                         },
                                                         "content": [
                                                             {
                                                                 "component": "VIcon",
                                                                 "props": {
-                                                                    "size": "small",
+                                                                    "size": "14",
                                                                     "class": "mr-1",
-                                                                    "color": "#2196F3"
+                                                                    "color": "#4CAF50"
                                                                 },
                                                                 "text": "mdi-email"
                                                             },
@@ -1815,20 +2389,20 @@ class nexusinvitee(_PluginBase):
                                             },
                                             {
                                                 "component": "th", 
-                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
                                                 "content": [
                                                     {
                                                         "component": "div",
                                                         "props": {
-                                                            "class": "d-flex align-center justify-center"
+                                                            "class": "d-flex align-center"
                                                         },
                                                         "content": [
                                                             {
                                                                 "component": "VIcon",
                                                                 "props": {
-                                                                    "size": "small",
+                                                                    "size": "14",
                                                                     "class": "mr-1",
-                                                                    "color": "#4CAF50"
+                                                                    "color": "#F44336"
                                                                 },
                                                                 "text": "mdi-arrow-up-thick"
                                                             },
@@ -1842,20 +2416,20 @@ class nexusinvitee(_PluginBase):
                                             },
                                             {
                                                 "component": "th", 
-                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
                                                 "content": [
                                                     {
                                                         "component": "div",
                                                         "props": {
-                                                            "class": "d-flex align-center justify-center"
+                                                            "class": "d-flex align-center"
                                                         },
                                                         "content": [
                                                             {
                                                                 "component": "VIcon",
                                                                 "props": {
-                                                                    "size": "small",
+                                                                    "size": "14",
                                                                     "class": "mr-1",
-                                                                    "color": "#F44336"
+                                                                    "color": "#FF9800"
                                                                 },
                                                                 "text": "mdi-arrow-down-thick"
                                                             },
@@ -1869,20 +2443,20 @@ class nexusinvitee(_PluginBase):
                                             },
                                             {
                                                 "component": "th", 
-                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
                                                 "content": [
                                                     {
                                                         "component": "div",
                                                         "props": {
-                                                            "class": "d-flex align-center justify-center"
+                                                            "class": "d-flex align-center"
                                                         },
                                                         "content": [
                                                             {
                                                                 "component": "VIcon",
                                                                 "props": {
-                                                                    "size": "small",
+                                                                    "size": "14",
                                                                     "class": "mr-1",
-                                                                    "color": "#FF9800"
+                                                                    "color": "#2196F3"
                                                                 },
                                                                 "text": "mdi-poll"
                                                             },
@@ -1896,18 +2470,18 @@ class nexusinvitee(_PluginBase):
                                             },
                                             {
                                                 "component": "th", 
-                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
                                                 "content": [
                                                     {
                                                         "component": "div",
                                                         "props": {
-                                                            "class": "d-flex align-center justify-center"
+                                                            "class": "d-flex align-center"
                                                         },
                                                         "content": [
                                                             {
                                                                 "component": "VIcon",
                                                                 "props": {
-                                                                    "size": "small",
+                                                                    "size": "14",
                                                                     "class": "mr-1",
                                                                     "color": "#2196F3"
                                                                 },
@@ -1923,18 +2497,18 @@ class nexusinvitee(_PluginBase):
                                             },
                                             {
                                                 "component": "th", 
-                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
                                                 "content": [
                                                     {
                                                         "component": "div",
                                                         "props": {
-                                                            "class": "d-flex align-center justify-center"
+                                                            "class": "d-flex align-center"
                                                         },
                                                         "content": [
                                                             {
                                                                 "component": "VIcon",
                                                                 "props": {
-                                                                    "size": "small",
+                                                                    "size": "14",
                                                                     "class": "mr-1",
                                                                     "color": "#1976D2"
                                                                 },
@@ -1950,18 +2524,18 @@ class nexusinvitee(_PluginBase):
                                             },
                                             {
                                                 "component": "th", 
-                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
                                                 "content": [
                                                     {
                                                         "component": "div",
                                                         "props": {
-                                                            "class": "d-flex align-center justify-center"
+                                                            "class": "d-flex align-center"
                                                         },
                                                         "content": [
                                                             {
                                                                 "component": "VIcon",
                                                                 "props": {
-                                                                    "size": "small",
+                                                                    "size": "14",
                                                                     "class": "mr-1",
                                                                     "color": "#3F51B5"
                                                                 },
@@ -1977,18 +2551,18 @@ class nexusinvitee(_PluginBase):
                                             },
                                             {
                                                 "component": "th", 
-                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
                                                 "content": [
                                                     {
                                                         "component": "div",
                                                         "props": {
-                                                            "class": "d-flex align-center justify-center"
+                                                            "class": "d-flex align-center"
                                                         },
                                                         "content": [
                                                             {
                                                                 "component": "VIcon",
                                                                 "props": {
-                                                                    "size": "small",
+                                                                    "size": "14",
                                                                     "class": "mr-1",
                                                                     "color": "#9C27B0"
                                                                 },
@@ -2004,18 +2578,18 @@ class nexusinvitee(_PluginBase):
                                             },
                                             {
                                                 "component": "th", 
-                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
                                                 "content": [
                                                     {
                                                         "component": "div",
                                                         "props": {
-                                                            "class": "d-flex align-center justify-center"
+                                                            "class": "d-flex align-center"
                                                         },
                                                         "content": [
                                                             {
                                                                 "component": "VIcon",
                                                                 "props": {
-                                                                    "size": "small",
+                                                                    "size": "14",
                                                                     "class": "mr-1",
                                                                     "color": "#00BCD4"
                                                                 },
@@ -2031,18 +2605,18 @@ class nexusinvitee(_PluginBase):
                                             },
                                             {
                                                 "component": "th", 
-                                                "props": {"class": "text-subtitle-2", "style": "white-space: nowrap;"},
+                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
                                                 "content": [
                                                     {
                                                         "component": "div",
                                                         "props": {
-                                                            "class": "d-flex align-center justify-center"
+                                                            "class": "d-flex align-center"
                                                         },
                                                         "content": [
                                                             {
                                                                 "component": "VIcon",
                                                                 "props": {
-                                                                    "size": "small",
+                                                                    "size": "14",
                                                                     "class": "mr-1",
                                                                     "color": "#00BCD4"
                                                                 },
@@ -2138,7 +2712,14 @@ class nexusinvitee(_PluginBase):
             site_id = site_info.get("id", "")
             
             # 检查是否是M-Team站点
-            is_mteam = "m-team" in site_url.lower()
+            is_mteam = False
+            site_url_lower = site_url.lower()
+            mteam_features = ["m-team", "api.m-team.cc", "api.m-team.io"]
+            for feature in mteam_features:
+                if feature in site_url_lower:
+                    is_mteam = True
+                    logger.info(f"站点 {site_name} 匹配到M-Team特征: {feature}")
+                    break
             
             # 如果是M-Team站点，检查API认证信息
             if is_mteam:
@@ -2583,63 +3164,57 @@ class nexusinvitee(_PluginBase):
         发送刷新结果通知
         """
         try:
+            # 从data_manager获取站点数据
+            cached_data = {}
+            site_data = self.data_manager.get_site_data()
+            for site_name, site_info in site_data.items():
+                cached_data[site_name] = site_info
+                
+            # 计算所有站点统计信息
             total_invitees = 0
-            low_ratio_count = 0
-            banned_count = 0
-            
-            # 统计所有站点数据
-            all_site_data = self.data_manager.get_site_data()
-            for site_name, site_data in all_site_data.items():
-                # 检查数据结构，确保正确处理
-                logger.debug(f"通知统计：站点 {site_name} 数据结构: {site_data}")
+            total_low_ratio = 0
+            total_banned = 0
+            total_no_data = 0
+
+            for site_name, cache in cached_data.items():
+                site_cache_data = cache.get("data", {})
+                invitees = []
                 
-                # 处理可能的多级嵌套
-                site_invitees = []
+                # 尝试不同的数据结构路径获取邀请列表
+                possible_paths = [
+                    ["invitees"],
+                    ["data", "invitees"],
+                    ["data", "data", "invitees"]
+                ]
                 
-                if "data" in site_data:
-                    site_content = site_data.get("data", {})
-                    
-                    # 尝试获取邀请用户列表
-                    if "invitees" in site_content:
-                        site_invitees = site_content.get("invitees", [])
-                    elif "data" in site_content and "invitees" in site_content.get("data", {}):
-                        site_invitees = site_content.get("data", {}).get("invitees", [])
-                
-                total_invitees += len(site_invitees)
-                
-                # 统计分享率低的用户和已禁用用户
-                for invitee in site_invitees:
-                    # 处理分享率
-                    ratio_str = invitee.get('ratio', '')
-                    ratio_value = 0
-                    
-                    if isinstance(ratio_str, (int, float)):
-                        ratio_value = float(ratio_str)
-                    elif ratio_str and ratio_str != '∞' and ratio_str.lower() != 'inf.' and ratio_str.lower() != 'inf':
-                        try:
-                            # 标准化字符串，替换逗号为点
-                            ratio_str = ratio_str.replace(',', '.')
-                            ratio_value = float(ratio_str)
-                        except (ValueError, TypeError):
-                            # 转换错误时记录警告
-                            logger.warning(f"分享率转换失败: {ratio_str}")
-                    
-                    # 分享率阈值从0.5改为1.0
-                    if ratio_value < 1.0:
-                        low_ratio_count += 1
-                    
-                    # 检查用户是否被禁用
-                    enabled = invitee.get("enabled", "Yes")
-                    if isinstance(enabled, str) and enabled.lower() == "no":
-                        banned_count += 1
+                for path in possible_paths:
+                    result = get_nested_value(site_cache_data, path, [])
+                    if result:
+                        invitees = result
+                        break
+
+                # 统计各项数据
+                total_invitees += len(invitees)
+
+                # 统计用户状态 - 使用ratio_health字段
+                banned_count = sum(1 for i in invitees if i.get('enabled', '').lower() == 'no')
+                low_ratio_count = sum(1 for i in invitees if i.get('ratio_health') in ['warning', 'danger'])
+                no_data_count = sum(1 for i in invitees if i.get('ratio_health') == 'neutral')
+
+                # 累加到总数
+                total_banned += banned_count
+                total_low_ratio += low_ratio_count
+                total_no_data += no_data_count
+
+                logger.info(f"站点 {site_name} 统计结果: 总人数={len(invitees)}, 低分享率={low_ratio_count}, 已禁用={banned_count}, 无数据={no_data_count}")
             
             title = "后宫管理系统 - 刷新结果"
             if success_count > 0 or error_count > 0:
                 text = f"刷新完成: 成功 {success_count} 个站点，失败 {error_count} 个站点\n\n"
                 text += f"👨‍👩‍👧‍👦 总邀请人数: {total_invitees}人\n"
-                # 更新提示文本
-                text += f"⚠️ 分享率低于1.0: {low_ratio_count}人\n"
-                text += f"🚫 已禁用用户: {banned_count}人\n\n"
+                text += f"⚠️ 分享率低于1.0: {total_low_ratio}人\n"
+                text += f"🚫 已禁用用户: {total_banned}人\n"
+                text += f"🔄 无数据用户: {total_no_data}人\n\n"
                 
                 # 添加刷新时间
                 text += f"🕙 {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
@@ -2650,7 +3225,7 @@ class nexusinvitee(_PluginBase):
                     title=title,
                     text=text
                 )
-                logger.info(f"发送通知: {title} - 刷新完成: 成功 {success_count} 个站点，失败 {error_count} 个站点")
+                logger.info(f"发送通知: {title} - {text}")
         except Exception as e:
             logger.error(f"发送通知失败: {str(e)}")
             
@@ -2774,6 +3349,20 @@ class nexusinvitee(_PluginBase):
         except Exception as e:
             logger.error(f"更新配置失败: {str(e)}")
             return {"code": 1, "msg": f"更新配置失败: {str(e)}"}
+
+    def _calculate_statistics(self, invitees):
+        """
+        计算用户统计数据
+        """
+        banned_count = sum(1 for i in invitees if i.get('enabled', '').lower() == 'no')
+        low_ratio_count = sum(1 for i in invitees if i.get('ratio_health') in ['warning', 'danger'])
+        no_data_count = sum(1 for i in invitees if i.get('ratio_health') == 'neutral')
+
+        return {
+            'banned': banned_count,
+            'low_ratio': low_ratio_count,
+            'no_data': no_data_count
+        }
 
 
 # 插件类导出

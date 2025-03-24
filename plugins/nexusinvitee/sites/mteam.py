@@ -28,7 +28,9 @@ class MTeamHandler(_ISiteHandler):
             "m-team",
             "pt.m-team",
             "kp.m-team",
-            "zp.m-team"
+            "zp.m-team",
+            "api.m-team.cc",
+            "api.m-team.io"
         ]
         
         site_url_lower = site_url.lower()
@@ -151,25 +153,23 @@ class MTeamHandler(_ISiteHandler):
             result["invite_status"].update({
                 "permanent_count": permanent_invites,
                 "temporary_count": temporary_invites,
-                "can_invite": has_invite_permission and (permanent_invites > 0 or temporary_invites > 0 or buyable_invites > 0),
-                "user_role": user_role,
-                "user_role_name": user_role_name,
-                "user_bonus": user_bonus,
-                "buyable_invites": buyable_invites,
-                "is_mteam": True
+                "can_invite": has_invite_permission and (permanent_invites > 0 or temporary_invites > 0 or buyable_invites > 0)
             })
             
             if not has_invite_permission:
-                result["invite_status"]["reason"] = f"当前用户等级({user_role_name})不足，需要Elite User(3)及以上才能发送邀请"
+                reason = f"当前用户等级不足，需要Elite User及以上才能发送邀请"
             elif permanent_invites > 0 or temporary_invites > 0:
                 if buyable_invites > 0:
-                    result["invite_status"]["reason"] = f"可用邀请数: 永久={permanent_invites}, 临时={temporary_invites}, 魔力值可购买={buyable_invites}个"
+                    reason = f"用户等级({user_role_name})魔力值({user_bonus})可购买{buyable_invites}个临时邀请"
                 else:
-                    result["invite_status"]["reason"] = f"可用邀请数: 永久={permanent_invites}, 临时={temporary_invites}"
+                    reason = f"用户等级({user_role_name})魔力值({user_bonus})"
             elif buyable_invites > 0:
-                result["invite_status"]["reason"] = f"无可用邀请名额，但当前魔力值({user_bonus})可购买{buyable_invites}个临时邀请"
+                reason = f"无可用邀请名额，用户等级({user_role_name})魔力值({user_bonus})可购买{buyable_invites}个临时邀请"
             else:
-                result["invite_status"]["reason"] = "没有可用的邀请名额，魔力值不足购买临时邀请(需80000魔力/个)"
+                reason = f"没有可用的邀请名额，用户等级({user_role_name})魔力值({user_bonus})不足购买临时邀请(需80000魔力/个)"
+            
+            result["invite_status"]["reason"] = reason
+            logger.info(f"站点 {site_name} 不可邀请原因: {reason}")
             
             # 步骤2: 获取被邀请人列表
             if user_id:
@@ -177,8 +177,8 @@ class MTeamHandler(_ISiteHandler):
                 if invitees:
                     result["invitees"] = self._process_invitees(invitees)
                     logger.info(f"站点 {site_name} 获取到 {len(result['invitees'])} 个被邀请人")
-                
-                # 更新最后访问时间
+            
+            # 更新最后访问时间
             self._update_last_browse(api_base_url, session, site_name)
             
             return result
@@ -201,17 +201,27 @@ class MTeamHandler(_ISiteHandler):
         domain = url.lower()
         domain = domain.replace("https://", "").replace("http://", "").split("/")[0]
         
+        # 直接使用API域名
+        if domain in ["api.m-team.cc", "api.m-team.io"]:
+            # 截取m-team.cc或m-team.io部分
+            return domain.replace("api.", "")
+            
         # 特殊处理m-team子域名
         if domain.startswith("www."):
             domain = domain[4:]
         elif any(domain.startswith(prefix) for prefix in ["pt.", "kp.", "zp."]):
             domain = domain[3:]
             
-        # 如果域名包含m-team，直接返回
-        if "m-team" in domain:
-            return domain
+        # 如果域名包含m-team，提取主域名
+        if "m-team.io" in domain:
+            logger.info(f"使用m-team.io作为API域名")
+            return "m-team.io"
+        if "m-team.cc" in domain:
+            logger.info(f"使用m-team.cc作为API域名")
+            return "m-team.cc"
             
         # 默认返回m-team.cc
+        logger.info(f"无法识别域名 {domain}，使用默认m-team.cc作为API域名")
         return "m-team.cc"
     
     def _get_user_profile(self, api_base_url: str, session: requests.Session, site_name: str) -> Dict[str, Any]:
@@ -302,22 +312,22 @@ class MTeamHandler(_ISiteHandler):
                 status = "已确认"
             elif status == "PENDING":
                 status = "待确认"
-            
-            # 创建用户记录
+                    
+                    # 创建用户记录
             user = {
                 "username": invitee.get("username", ""),
                 "email": invitee.get("email", ""),
                 "uploaded": self._format_size(uploaded),
                 "downloaded": self._format_size(downloaded),
-                "ratio": ratio,
-                "status": status,
+                        "ratio": ratio,
+                        "status": status,
                 "enabled": "Yes" if status == "已确认" else "No",
                 "uid": invitee.get("uid", ""),
                 # 由于API返回数据中没有这些字段，设置为默认值
-                "seed_bonus": "0",
-                "seeding": "0",
-                "seeding_size": "0 B",
-                "seed_magic": "0",
+                        "seed_bonus": "0",
+                        "seeding": "0",
+                        "seeding_size": "0 B",
+                        "seed_magic": "0",
                 "last_seen": ""
             }
             result.append(user)
@@ -360,3 +370,44 @@ class MTeamHandler(_ISiteHandler):
         except Exception as e:
             logger.warning(f"格式化大小失败: {str(e)}")
             return "0 B"
+    
+    def _calculate_ratio_health(self, ratio_str, uploaded, downloaded):
+        """
+        计算分享率健康度
+        """
+        try:
+            # 处理无限分享率情况
+            if ratio_str == '∞' or ratio_str.lower() == 'inf.' or ratio_str.lower() == 'inf':
+                return "excellent", ["分享率无限", "text-success"]
+
+            # 检查是否是无数据情况（上传下载都是0）
+            is_no_data = False
+            if isinstance(uploaded, str) and isinstance(downloaded, str):
+                uploaded_zero = uploaded == '0' or uploaded == '' or uploaded == '0.0' or uploaded.lower() == '0b'
+                downloaded_zero = downloaded == '0' or downloaded == '' or downloaded == '0.0' or downloaded.lower() == '0b'
+                is_no_data = uploaded_zero and downloaded_zero
+            elif isinstance(uploaded, (int, float)) and isinstance(downloaded, (int, float)):
+                is_no_data = uploaded == 0 and downloaded == 0
+
+            if is_no_data:
+                return "neutral", ["无数据", "text-grey"]
+
+            # 标准化分享率字符串
+            ratio_str = ratio_str.replace(',', '.')
+            ratio = float(ratio_str) if ratio_str else 0
+
+            # 分享率健康度判断
+            if ratio >= 4.0:
+                return "excellent", ["极好", "text-success"]
+            elif ratio >= 2.0:
+                return "good", ["良好", "text-success"]
+            elif ratio >= 1.0:
+                return "good", ["正常", "text-success"]
+            elif ratio > 0:
+                return "warning" if ratio >= 0.4 else "danger", ["较低", "text-warning"] if ratio >= 0.4 else ["危险", "text-error"]
+            else:
+                return "neutral", ["无数据", "text-grey"]
+
+        except (ValueError, TypeError) as e:
+            logger.error(f"分享率计算错误: {str(e)}")
+            return "neutral", ["无效", "text-grey"]

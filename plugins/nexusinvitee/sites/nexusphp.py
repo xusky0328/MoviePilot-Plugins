@@ -85,7 +85,10 @@ class NexusPhpHandler(_ISiteHandler):
                 "can_invite": False,
                 "reason": "",
                 "permanent_count": 0,
-                "temporary_count": 0
+                "temporary_count": 0,
+                "bonus": 0,  # 添加魔力值
+                "permanent_invite_price": 0,  # 添加永久邀请价格
+                "temporary_invite_price": 0   # 添加临时邀请价格
             },
             "invitees": []
         }
@@ -106,6 +109,66 @@ class NexusPhpHandler(_ISiteHandler):
             # 解析邀请页面
             invite_result = self._parse_nexusphp_invite_page(site_name, response.text)
             
+            # 获取魔力值商店页面，尝试解析邀请价格
+            try:
+                bonus_url = urljoin(site_url, "mybonus.php")
+                bonus_response = session.get(bonus_url, timeout=(10, 30))
+                if bonus_response.status_code == 200:
+                    # 解析魔力值和邀请价格
+                    bonus_data = self._parse_bonus_shop(site_name, bonus_response.text)
+                    # 更新邀请状态
+                    invite_result["invite_status"]["bonus"] = bonus_data["bonus"]
+                    invite_result["invite_status"]["permanent_invite_price"] = bonus_data["permanent_invite_price"]
+                    invite_result["invite_status"]["temporary_invite_price"] = bonus_data["temporary_invite_price"]
+                    
+                    # 判断是否可以购买邀请
+                    if bonus_data["bonus"] > 0:
+                        # 计算可购买的邀请数量
+                        can_buy_permanent = 0
+                        can_buy_temporary = 0
+                        
+                        if bonus_data["permanent_invite_price"] > 0:
+                            can_buy_permanent = int(bonus_data["bonus"] / bonus_data["permanent_invite_price"])
+                        
+                        if bonus_data["temporary_invite_price"] > 0:
+                            can_buy_temporary = int(bonus_data["bonus"] / bonus_data["temporary_invite_price"])
+                            
+                        # 更新邀请状态的原因字段
+                        if invite_result["invite_status"]["reason"] and not invite_result["invite_status"]["can_invite"]:
+                            # 如果有原因且不能邀请
+                            if can_buy_temporary > 0 or can_buy_permanent > 0:
+                                invite_method = ""
+                                if can_buy_temporary > 0 and bonus_data["temporary_invite_price"] > 0:
+                                    invite_method += f"临时邀请({can_buy_temporary}个,{bonus_data['temporary_invite_price']}魔力/个)"
+                                
+                                if can_buy_permanent > 0 and bonus_data["permanent_invite_price"] > 0:
+                                    if invite_method:
+                                        invite_method += ","
+                                    invite_method += f"永久邀请({can_buy_permanent}个,{bonus_data['permanent_invite_price']}魔力/个)"
+                                
+                                if invite_method:
+                                    invite_result["invite_status"]["reason"] += f"，但您的魔力值({bonus_data['bonus']})可购买{invite_method}"
+                                    # 如果可以购买且没有现成邀请，也视为可邀请
+                                    if invite_result["invite_status"]["permanent_count"] == 0 and invite_result["invite_status"]["temporary_count"] == 0:
+                                        invite_result["invite_status"]["can_invite"] = True
+                        else:
+                            # 如果没有原因或者已经可以邀请
+                            if can_buy_temporary > 0 or can_buy_permanent > 0:
+                                invite_method = ""
+                                if can_buy_temporary > 0 and bonus_data["temporary_invite_price"] > 0:
+                                    invite_method += f"临时邀请({can_buy_temporary}个,{bonus_data['temporary_invite_price']}魔力/个)"
+                                
+                                if can_buy_permanent > 0 and bonus_data["permanent_invite_price"] > 0:
+                                    if invite_method:
+                                        invite_method += ","
+                                    invite_method += f"永久邀请({can_buy_permanent}个,{bonus_data['permanent_invite_price']}魔力/个)"
+                                
+                                if invite_method and invite_result["invite_status"]["reason"]:
+                                    invite_result["invite_status"]["reason"] += f"，魔力值({bonus_data['bonus']})可购买{invite_method}"
+                    
+            except Exception as e:
+                logger.warning(f"站点 {site_name} 解析魔力值商店失败: {str(e)}")
+            
             # 访问发送邀请页面，这是判断权限的关键
             send_invite_url = urljoin(site_url, f"invite.php?id={user_id}&type=new")
             try:
@@ -120,7 +183,8 @@ class NexusPhpHandler(_ISiteHandler):
                 if invite_form:
                     # 确认有表单，权限正常
                     invite_result["invite_status"]["can_invite"] = True
-                    invite_result["invite_status"]["reason"] = "可以发送邀请"
+                    if not invite_result["invite_status"]["reason"]:
+                        invite_result["invite_status"]["reason"] = "可以发送邀请"
                     logger.info(f"站点 {site_name} 可以发送邀请，确认有takeinvite表单")
                 else:
                     # 没有表单，检查是否有错误消息
@@ -471,9 +535,29 @@ class NexusPhpHandler(_ISiteHandler):
                 if "status" not in invitee:
                     invitee["status"] = "已禁用" if is_banned else "已确认"
                 
+                # 检查是否为无数据用户（上传和下载都为0）
+                is_no_data = False
+                if "uploaded" in invitee and "downloaded" in invitee:
+                    # 字符串判断
+                    if isinstance(invitee["uploaded"], str) and isinstance(invitee["downloaded"], str):
+                        is_no_data = (invitee["uploaded"] == '0' or invitee["uploaded"] == '0.00 KB' or 
+                                    invitee["uploaded"].lower() == '0b') and \
+                                    (invitee["downloaded"] == '0' or invitee["downloaded"] == '0.00 KB' or 
+                                    invitee["downloaded"].lower() == '0b')
+                    # 数值判断
+                    elif isinstance(invitee["uploaded"], (int, float)) and isinstance(invitee["downloaded"], (int, float)):
+                        is_no_data = invitee["uploaded"] == 0 and invitee["downloaded"] == 0
+
+                # 添加数据状态标记
+                if is_no_data:
+                    invitee["data_status"] = "无数据"
+                
                 # 计算分享率健康状态
                 if "ratio_value" in invitee:
-                    if invitee["ratio_value"] >= 1e20:
+                    if is_no_data:
+                        invitee["ratio_health"] = "neutral"
+                        invitee["ratio_label"] = ["无数据", "grey"]
+                    elif invitee["ratio_value"] >= 1e20:
                         invitee["ratio_health"] = "excellent"
                     elif invitee["ratio_value"] >= 1.0:
                         invitee["ratio_health"] = "good"
@@ -481,14 +565,31 @@ class NexusPhpHandler(_ISiteHandler):
                         invitee["ratio_health"] = "warning"
                     else:
                         invitee["ratio_health"] = "danger"
+                else:
+                    # 处理没有ratio_value的情况
+                    if is_no_data:
+                        invitee["ratio_health"] = "neutral" 
+                        invitee["ratio_label"] = ["无数据", "grey"]
+                    elif "ratio" in invitee and invitee["ratio"] == "∞":
+                        invitee["ratio_health"] = "excellent"
+                    else:
+                        invitee["ratio_health"] = "unknown"
                 
                 # 设置分享率标签
-                if invitee["ratio_value"] < 0:
-                    invitee["ratio_label"] = ["危险", "red"]
-                elif invitee["ratio_value"] < 1.0:
-                    invitee["ratio_label"] = ["较低", "orange"]
-                elif invitee["ratio_value"] >= 1.0:
-                    invitee["ratio_label"] = ["良好", "green"]
+                if "ratio_label" not in invitee:
+                    if "ratio_health" in invitee:
+                        if invitee["ratio_health"] == "excellent":
+                            invitee["ratio_label"] = ["无限", "green"]
+                        elif invitee["ratio_health"] == "good":
+                            invitee["ratio_label"] = ["良好", "green"]
+                        elif invitee["ratio_health"] == "warning":
+                            invitee["ratio_label"] = ["较低", "orange"]
+                        elif invitee["ratio_health"] == "danger":
+                            invitee["ratio_label"] = ["危险", "red"]
+                        elif invitee["ratio_health"] == "neutral":
+                            invitee["ratio_label"] = ["无数据", "grey"]
+                        else:
+                            invitee["ratio_label"] = ["未知", "grey"]
                 
                 # 将解析到的用户添加到列表中
                 if invitee.get("username"):
@@ -500,3 +601,220 @@ class NexusPhpHandler(_ISiteHandler):
                 break
         
         return result 
+
+    def _parse_bonus_shop(self, site_name: str, html_content: str) -> Dict[str, Any]:
+        """
+        解析魔力值商店页面
+        :param site_name: 站点名称
+        :param html_content: HTML内容
+        :return: 魔力值和邀请价格信息
+        """
+        result = {
+            "bonus": 0,                  # 用户当前魔力值
+            "permanent_invite_price": 0, # 永久邀请价格
+            "temporary_invite_price": 0  # 临时邀请价格
+        }
+        
+        try:
+            # 初始化BeautifulSoup对象
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # 1. 查找当前魔力值
+            # 先尝试从特定HTML元素中提取魔力值
+            bonus_found = False
+            
+            # 尝试从常见的显示位置提取魔力值
+            bonus_elements = [
+                # 类似于"用你的魔力值（当前141,725.2）换东东！"的文本
+                soup.select_one('td.text[align="center"]'),
+                # 表格中包含魔力值的单元格
+                soup.select_one('table td:contains("魔力值"), table td:contains("工分"), table td:contains("积分")'),
+                # 页面顶部通常显示用户信息的区域
+                soup.select_one('#info_block, .info, #userinfo')
+            ]
+            
+            for element in bonus_elements:
+                if element:
+                    element_text = element.get_text()
+                    bonus_patterns = [
+                        r'魔力值[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'工分[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'用你的魔力值[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'用你的工分[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'当前([\d,\.]+)[^)]*魔力',
+                        r'当前([\d,\.]+)[^)]*工分'
+                    ]
+                    
+                    for pattern in bonus_patterns:
+                        bonus_match = re.search(pattern, element_text, re.IGNORECASE)
+                        if bonus_match:
+                            bonus_str = bonus_match.group(1).replace(',', '')
+                            try:
+                                result["bonus"] = float(bonus_str)
+                                logger.info(f"站点 {site_name} 从元素中提取到魔力值/工分: {result['bonus']}")
+                                bonus_found = True
+                                break
+                            except ValueError:
+                                continue
+                
+                if bonus_found:
+                    break
+            
+            # 如果从元素中没找到魔力值，则从整个页面文本中提取
+            if not bonus_found:
+                # 查找包含魔力值的文本，添加更多可能的格式匹配模式
+                bonus_patterns = [
+                    # 常规魔力值格式
+                    r'魔力值\s*[:：]\s*([\d,\.]+)',
+                    r'当前魔力值[^(]*\(当前([\d,\.]+)\)',
+                    r'当前([\d,\.]+)[^)]*魔力值',
+                    r'魔力值[^(]*\(当前([\d,\.]+)\)',
+                    r'用你的魔力值[^(]*\(当前([\d,\.]+)[^)]*\)',
+                    
+                    # 工分格式
+                    r'工分\s*[:：]\s*([\d,\.]+)',
+                    r'当前工分[^(]*\(当前([\d,\.]+)\)',
+                    r'当前([\d,\.]+)[^)]*工分',
+                    r'工分[^(]*\(当前([\d,\.]+)\)',
+                    r'用你的工分[^(]*\(当前([\d,\.]+)[^)]*\)',
+                    
+                    # 积分/欢乐值等其他变体
+                    r'积分\s*[:：]\s*([\d,\.]+)',
+                    r'欢乐值\s*[:：]\s*([\d,\.]+)',
+                    r'當前\s*[:：]?\s*([\d,\.]+)',
+                    r'目前\s*[:：]?\s*([\d,\.]+)',
+                    r'bonus\s*[:：]?\s*([\d,\.]+)',
+                    r'([\d,\.]+)\s*个魔力值',
+                    r'([\d,\.]+)\s*个工分'
+                ]
+                
+                # 页面文本
+                page_text = soup.get_text()
+                
+                # 尝试不同的正则表达式查找魔力值
+                for pattern in bonus_patterns:
+                    bonus_match = re.search(pattern, page_text, re.IGNORECASE)
+                    if bonus_match:
+                        bonus_str = bonus_match.group(1).replace(',', '')
+                        try:
+                            result["bonus"] = float(bonus_str)
+                            logger.info(f"站点 {site_name} 从页面文本中提取到魔力值/工分: {result['bonus']}")
+                            break
+                        except ValueError:
+                            continue
+            
+            # 2. 查找邀请价格
+            # 查找表格
+            tables = soup.select('table')
+            for table in tables:
+                # 检查表头是否包含交换/价格等关键词
+                headers = table.select('td.colhead, th.colhead, td, th')
+                header_text = ' '.join([h.get_text().lower() for h in headers])
+                
+                if '魔力值' in header_text or '积分' in header_text or 'bonus' in header_text or '工分' in header_text:
+                    # 遍历表格行
+                    rows = table.select('tr')
+                    for row in rows:
+                        cells = row.select('td')
+                        if len(cells) < 3:
+                            continue
+                            
+                        # 获取行文本
+                        row_text = row.get_text().lower()
+                        
+                        # 检查是否包含邀请关键词 - 增加更多可能的称呼
+                        invite_keywords = [
+                            '邀请名额', '邀請名額', '邀请', 'invite', 
+                            '探视权', '探視權', '查看权', '查看權', 
+                            '临时邀请', '臨時邀請', '临时探视'
+                        ]
+                        
+                        is_invite_row = any(keyword in row_text for keyword in invite_keywords)
+                        if is_invite_row:
+                            # 判断是永久邀请还是临时邀请
+                            is_temporary = '临时' in row_text or '臨時' in row_text or 'temporary' in row_text
+                            
+                            # 查找价格列(通常是第3列)
+                            price_cell = None
+                            
+                            # 检查单元格数量
+                            if len(cells) >= 3:
+                                for i, cell in enumerate(cells):
+                                    cell_text = cell.get_text().lower()
+                                    if '价格' in cell_text or '魔力值' in cell_text or '积分' in cell_text or '售价' in cell_text or '工分' in cell_text:
+                                        # 找到了价格列标题，下一列可能是价格
+                                        if i+1 < len(cells):
+                                            price_cell = cells[i+1]
+                                            break
+                                    elif any(price_word in cell_text for price_word in ['price', '价格', '售价']):
+                                        price_cell = cell
+                                        break
+                            
+                            # 如果没找到明确的价格列，就默认第3列
+                            if not price_cell and len(cells) >= 3:
+                                price_cell = cells[2]
+                            
+                            # 提取价格
+                            if price_cell:
+                                price_text = price_cell.get_text().strip()
+                                try:
+                                    # 尝试提取数字
+                                    price_match = re.search(r'([\d,\.]+)', price_text)
+                                    if price_match:
+                                        price = float(price_match.group(1).replace(',', ''))
+                                        
+                                        if is_temporary:
+                                            result["temporary_invite_price"] = price
+                                            logger.info(f"站点 {site_name} 临时邀请价格: {price}")
+                                        else:
+                                            result["permanent_invite_price"] = price
+                                            logger.info(f"站点 {site_name} 永久邀请价格: {price}")
+                                except ValueError:
+                                    continue
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"解析站点 {site_name} 魔力值商店失败: {str(e)}")
+            return result 
+
+    def _calculate_ratio_health(self, ratio_str, uploaded, downloaded):
+        """
+        计算分享率健康度
+        """
+        try:
+            # 处理无限分享率情况
+            if ratio_str == '∞' or ratio_str.lower() == 'inf.' or ratio_str.lower() == 'inf':
+                return "excellent", ["分享率无限", "text-success"]
+
+            # 检查是否是无数据情况（上传下载都是0）
+            is_no_data = False
+            if isinstance(uploaded, str) and isinstance(downloaded, str):
+                uploaded_zero = uploaded == '0' or uploaded == '' or uploaded == '0.0' or uploaded.lower() == '0b'
+                downloaded_zero = downloaded == '0' or downloaded == '' or downloaded == '0.0' or downloaded.lower() == '0b'
+                is_no_data = uploaded_zero and downloaded_zero
+            elif isinstance(uploaded, (int, float)) and isinstance(downloaded, (int, float)):
+                is_no_data = uploaded == 0 and downloaded == 0
+
+            if is_no_data:
+                return "neutral", ["无数据", "text-grey"]
+
+            # 标准化分享率字符串
+            ratio_str = ratio_str.replace(',', '.')
+            ratio = float(ratio_str) if ratio_str else 0
+
+            # 分享率健康度判断
+            if ratio >= 4.0:
+                return "excellent", ["极好", "text-success"]
+            elif ratio >= 2.0:
+                return "good", ["良好", "text-success"]
+            elif ratio >= 1.0:
+                return "good", ["正常", "text-success"]
+            elif ratio > 0:
+                return "warning" if ratio >= 0.4 else "danger", ["较低", "text-warning"] if ratio >= 0.4 else ["危险", "text-error"]
+            else:
+                return "neutral", ["无数据", "text-grey"]
+
+        except (ValueError, TypeError) as e:
+            logger.error(f"分享率计算错误: {str(e)}")
+            return "neutral", ["无效", "text-grey"] 
