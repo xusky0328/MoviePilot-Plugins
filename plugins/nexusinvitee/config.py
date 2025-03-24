@@ -47,8 +47,14 @@ class ConfigManager:
             # 确保目录存在
             os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
             
+            # 格式化保存为JSON
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(config, f, ensure_ascii=False, indent=2)
+                
+            # 保存成功后更新内存配置
+            self._config = config.copy()
+            
+            logger.debug(f"配置文件已保存: {self.config_file}")
             return True
         except Exception as e:
             logger.error(f"保存配置到文件失败: {str(e)}")
@@ -59,6 +65,14 @@ class ConfigManager:
         获取当前配置
         :return: 配置字典
         """
+        # 先重新从文件加载配置，确保返回最新的
+        try:
+            loaded_config = self._load_config()
+            if loaded_config:
+                self._config = loaded_config
+        except Exception as e:
+            logger.warning(f"重新加载配置文件失败: {str(e)}")
+            
         return self._config
     
     def update_config(self, config: Dict[str, Any]) -> bool:
@@ -67,8 +81,30 @@ class ConfigManager:
         :param config: 新的配置字典
         :return: 是否成功
         """
+        # 更新内存配置
+        original_config = self._config.copy()
         self._config.update(config)
-        return self.save_config(self._config)
+        
+        # 保存到文件
+        save_result = self.save_config(self._config)
+        
+        # 验证是否保存成功
+        if save_result:
+            # 重新加载配置以验证
+            try:
+                loaded_config = self._load_config()
+                if loaded_config and ("onlyonce" in config and loaded_config.get("onlyonce") != config.get("onlyonce")):
+                    logger.warning(f"配置保存不一致: 预期onlyonce={config.get('onlyonce')}, 实际={loaded_config.get('onlyonce')}")
+                    # 强制再次保存
+                    with open(self.config_file, 'w', encoding='utf-8') as f:
+                        json.dump(self._config, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                logger.warning(f"验证配置保存失败: {str(e)}")
+        else:
+            # 保存失败，恢复原始配置
+            self._config = original_config
+            
+        return save_result
     
     def get_value(self, key: str, default: Any = None) -> Any:
         """

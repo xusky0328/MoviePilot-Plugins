@@ -1,17 +1,20 @@
 """
 NexusPHP站点邀请系统管理插件
 """
+import pytz
 import os
 import re
 import json
 import time
 import threading
 from typing import Any, List, Dict, Tuple, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
+import traceback
 
 import requests
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.core.config import settings
@@ -36,7 +39,7 @@ class nexusinvitee(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png"
     # 插件版本
-    plugin_version = "1.0.8"
+    plugin_version = "1.0.9"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -73,7 +76,7 @@ class nexusinvitee(_PluginBase):
     def init_plugin(self, config=None):
         """
         插件初始化
-        """
+        """        
         self.sites = SitesHelper()
         self.siteoper = SiteOper()
         
@@ -101,10 +104,13 @@ class nexusinvitee(_PluginBase):
         self._site_handlers = ModuleLoader.load_site_handlers()
         logger.info(f"加载了 {len(self._site_handlers)} 个站点处理器")
         
-        # 从配置加载设置
+        # 从文件加载配置
         self._sync_from_file()
 
-        # 处理配置参数
+        # 停止现有服务
+        self.stop_service()
+
+        # 处理传入的配置参数
         if config:
             self._enabled = config.get("enabled", False)
             self._notify = config.get("notify", False)
@@ -125,49 +131,28 @@ class nexusinvitee(_PluginBase):
                 logger.warning("未选择任何站点，插件将无法正常工作")
             else:
                 logger.info(f"后宫管理系统初始化完成，已选择 {len(self._nexus_sites)} 个站点")
+    
+        # 立即运行一次
+        if self._onlyonce:
+            try:
+                # 定时服务
+                self._scheduler = BackgroundScheduler(timezone=settings.TZ)
+                logger.info("立即运行一次开关已开启，将在3秒后执行刷新")
+                self._scheduler.add_job(func=self.refresh_all_sites, trigger='date',
+                                      run_date=datetime.now(pytz.timezone(settings.TZ)) + timedelta(seconds=3),
+                                      name="后宫管理系统")
                 
-            # 处理立即运行一次开关
-            if self._onlyonce:
-                logger.info("立即运行一次开关已开启，3秒后开始刷新数据...")
-                # 关闭开关
+                # 关闭一次性开关
                 self._onlyonce = False
-                self._config['onlyonce'] = False
+                # 保存配置
                 self._sync_to_file()
-                # 延迟3秒执行，避免与初始化冲突
-                t = threading.Timer(3, self._async_refresh_sites)
-                t.daemon = True
-                t.start()
-
-    def _save_config(self):
-        """
-        保存配置
-        """
-        config = {
-            "enabled": self._enabled,
-            "notify": self._notify,
-            "cron": self._cron,
-            "onlyonce": self._onlyonce,
-            "site_ids": self._nexus_sites
-        }
-        return self.config_manager.update_config(config)
-    
-    def _async_refresh_sites(self):
-        """
-        异步刷新站点数据
-        """
-        # 创建新线程执行刷新
-        t = threading.Thread(target=self._background_refresh)
-        # 设置为守护线程，随主线程退出而退出
-        t.daemon = True
-        # 启动线程
-        t.start()
-    
-    def _background_refresh(self):
-        """
-        后台刷新处理函数
-        """
-        # 执行刷新，但不在这里发送通知（由refresh_all_sites负责发送）
-        self.refresh_all_sites()
+                
+                # 启动任务
+                if self._scheduler and self._scheduler.get_jobs():
+                    self._scheduler.print_jobs()
+                    self._scheduler.start()
+            except Exception as e:
+                logger.error(f"启动一次性任务失败: {str(e)}")
 
     def get_state(self) -> bool:
         """
@@ -1440,6 +1425,194 @@ class nexusinvitee(_PluginBase):
                     if not can_invite:
                         logger.debug(f"站点 {site_name} 不可邀请原因: {reason}")
 
+                    # 特别适配M-Team站点，添加用户等级和魔力值信息
+                    site_url = site_info.get("url", "").lower()
+                    if "m-team" in site_url or invite_status_for_check.get("is_mteam", False):
+                        # 直接从invite_status获取数据
+                        user_role_name = invite_status_for_check.get("user_role_name", "")
+                        user_role = invite_status_for_check.get("user_role", "")
+                        user_bonus = invite_status_for_check.get("user_bonus", 0)
+                        buyable_invites = invite_status_for_check.get("buyable_invites", 0)
+                        
+                        # 确保有用户等级或魔力值数据时才添加信息卡片
+                        if user_role or user_bonus:
+                            mteam_info_card = {
+                                "component": "VCardText",
+                                "props": {
+                                    "class": "py-1"
+                                },
+                                "content": [
+                                    {
+                                        "component": "VRow",
+                                        "props": {
+                                            "dense": True
+                                        },
+                                        "content": []
+                                    }
+                                ]
+                            }
+                            
+                            # 添加用户等级信息
+                            if user_role_name:
+                                user_role_display = f"{user_role_name}({user_role})" if user_role else user_role_name
+                                mteam_info_card["content"][0]["content"].append({
+                                    "component": "VCol",
+                                    "props": {"cols": 4},
+                                    "content": [{
+                                        "component": "div",
+                                        "props": {
+                                            "class": "d-flex align-center"
+                                        },
+                                        "content": [
+                                            {
+                                                "component": "VIcon",
+                                                "props": {
+                                                    "size": "24",
+                                                    "color": "#673AB7",
+                                                    "class": "mr-2"
+                                                },
+                                                "text": "mdi-badge-account"
+                                            },
+                                            {
+                                                "component": "div",
+                                                "content": [
+                                                    {
+                                                        "component": "div",
+                                                        "props": {"class": "text-body-1 font-weight-medium deep-purple--text"},
+                                                        "text": user_role_display
+                                                    },
+                                                    {
+                                                        "component": "div",
+                                                        "props": {"class": "text-caption"},
+                                                        "text": "用户等级"
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }]
+                                })
+                            
+                            # 添加魔力值信息
+                            if user_bonus:
+                                mteam_info_card["content"][0]["content"].append({
+                                    "component": "VCol",
+                                    "props": {"cols": 4},
+                                    "content": [{
+                                        "component": "div",
+                                        "props": {
+                                            "class": "d-flex align-center"
+                                        },
+                                        "content": [
+                                            {
+                                                "component": "VIcon",
+                                                "props": {
+                                                    "size": "24",
+                                                    "color": "#FF9800",
+                                                    "class": "mr-2"
+                                                },
+                                                "text": "mdi-star-circle"
+                                            },
+                                            {
+                                                "component": "div",
+                                                "content": [
+                                                    {
+                                                        "component": "div",
+                                                        "props": {"class": "text-body-1 font-weight-medium warning--text"},
+                                                        "text": str(user_bonus)
+                                                    },
+                                                    {
+                                                        "component": "div",
+                                                        "props": {"class": "text-caption"},
+                                                        "text": "魔力值"
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }]
+                                })
+                            
+                            # 添加可购买邀请数信息
+                            needed_bonus = 80000 - (user_bonus % 80000) if user_bonus < 80000 else 0
+                            mteam_info_card["content"][0]["content"].append({
+                                "component": "VCol",
+                                "props": {"cols": 4},
+                                "content": [{
+                                    "component": "div",
+                                    "props": {
+                                        "class": "d-flex align-center"
+                                    },
+                                    "content": [
+                                        {
+                                            "component": "VIcon",
+                                            "props": {
+                                                "size": "24",
+                                                "color": "#00BCD4",
+                                                "class": "mr-2"
+                                            },
+                                            "text": "mdi-cart"
+                                        },
+                                        {
+                                            "component": "div",
+                                            "content": [
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-body-1 font-weight-medium info--text"},
+                                                    "text": f"{buyable_invites}" + (f" (还需{needed_bonus:.1f}魔力)" if needed_bonus > 0 else "")
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-caption"},
+                                                    "text": "可购买邀请"
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }]
+                            })
+                            
+                            # 将M-Team特别信息卡插入到第三个位置(索引2)
+                            site_card["content"].insert(2, mteam_info_card)
+                            
+                            # 添加购买提示，附带购买链接
+                            mteam_buy_tip = {
+                                "component": "VCardText",
+                                "props": {
+                                    "class": "py-1"
+                                },
+                                "content": [
+                                    {
+                                        "component": "VAlert",
+                                        "props": {
+                                            "type": "info",
+                                            "variant": "tonal",
+                                            "density": "compact",
+                                            "class": "my-1"
+                                        },
+                                        "content": [
+                                            {
+                                                "component": "span",
+                                                "text": "M-Team每80000魔力可购买一个临时邀请，"
+                                            },
+                                            {
+                                                "component": "VBtn",
+                                                "props": {
+                                                    "variant": "text",
+                                                    "href": f"{site_url}/store.php",
+                                                    "target": "_blank",
+                                                    "color": "primary",
+                                                    "x-small": True,
+                                                    "class": "pa-1"
+                                                },
+                                                "text": "前往商店购买"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                            
+                            # 将购买提示卡插入到M-Team特别信息卡后面
+                            site_card["content"].insert(3, mteam_buy_tip)
+
                     # 只有当不可邀请或有错误信息时才显示
                     if (not can_invite and reason) or error_message:
                         display_reason = error_message or f"不可邀请原因: {reason}"
@@ -1448,24 +1621,27 @@ class nexusinvitee(_PluginBase):
                             # 设置默认原因
                             display_reason = "不可邀请，但未提供原因"
                         
-                        site_card["content"].insert(2, {
-                            "component": "VCardText",
-                            "props": {
-                                "class": "py-1"
-                            },
-                            "content": [
-                                {
-                                    "component": "VAlert",
-                                    "props": {
-                                        "type": "warning",
-                                        "variant": "tonal",
-                                        "density": "compact",
-                                        "class": "my-1"
-                                    },
-                                    "text": display_reason
-                                }
-                            ]
-                        })
+                        # 跳过M-Team已展示的内容，避免重复显示
+                        if not (("m-team" in site_url or invite_status_for_check.get("is_mteam", False)) and 
+                               (user_role_name or user_bonus > 0)):
+                            site_card["content"].insert(2, {
+                                "component": "VCardText",
+                                "props": {
+                                    "class": "py-1"
+                                },
+                                "content": [
+                                    {
+                                        "component": "VAlert",
+                                        "props": {
+                                            "type": "warning",
+                                            "variant": "tonal",
+                                            "density": "compact",
+                                            "class": "my-1"
+                                        },
+                                        "text": display_reason
+                                    }
+                                ]
+                            })
 
                     # 只有在有邀请列表时才添加表格
                     if invitees:
@@ -1920,62 +2096,17 @@ class nexusinvitee(_PluginBase):
 
     def stop_service(self):
         """
-        退出插件
+        停止插件服务
         """
         logger.info("后宫管理系统插件停止服务")
-
-    def get_config(self, apikey: str) -> Response:
-        """
-        获取配置
-        """
-        if apikey != settings.API_TOKEN:
-            return Response(success=False, message="API令牌错误!")
-        
         try:
-            config = self.config_manager.get_config()
-            return Response(success=True, message="获取成功", data=config)
+            if hasattr(self, '_scheduler') and self._scheduler:
+                # 停止定时任务
+                if self._scheduler.running:
+                    self._scheduler.shutdown()
+                self._scheduler = None
         except Exception as e:
-            logger.error(f"获取配置失败: {str(e)}")
-            return Response(success=False, message=f"获取配置失败: {str(e)}")
-
-    def update_config(self, request: dict) -> Response:
-        """
-        更新配置
-        """
-        try:
-            # 提取前端更新的配置项
-            if "enabled" in request:
-                self._enabled = request.get("enabled")
-            if "notify" in request:
-                self._notify = request.get("notify")
-            if "cron" in request:
-                self._cron = request.get("cron")
-            if "onlyonce" in request:
-                self._onlyonce = request.get("onlyonce")
-            if "site_ids" in request:
-                self._nexus_sites = request.get("site_ids")
-
-            # 更新内存中的配置
-            self.__update_config()
-            
-            # 同步到文件
-            if self._sync_to_file():
-                # 立即刷新数据开关
-                if self._onlyonce:
-                    # 关闭开关
-                    self._config['onlyonce'] = False
-                    self._onlyonce = False
-                    self._sync_to_file()
-                    # 立即刷新
-                    logger.info(f"手动触发刷新站点数据...")
-                    # 异步刷新数据，通知会在refresh_all_sites中发送，不需要这里发送
-                    self._async_refresh_sites()
-                return Response(success=True, message="更新成功")
-            else:
-                return Response(success=False, message="保存配置失败")
-        except Exception as e:
-            logger.error(f"更新配置失败: {str(e)}")
-            return Response(success=False, message=f"更新配置失败: {str(e)}")
+            logger.error(f"停止服务失败: {str(e)}")
 
     def _get_site_invite_data(self, site_name):
         """
@@ -2187,239 +2318,20 @@ class nexusinvitee(_PluginBase):
                 }
             }
 
-    @staticmethod
-    def get_api_handlers():
+    def get_config(self, apikey: str) -> Response:
         """
-        获取API接口
+        获取配置
         """
-        return {
-            "/get_invitees": {"func": nexusinvitee.get_invitees, "methods": ["GET"], "desc": "获取所有站点邀请数据"},
-            "/refresh": {"func": nexusinvitee.refresh_data, "methods": ["GET"], "desc": "强制刷新站点数据"}
-        }
+        if apikey != settings.API_TOKEN:
+            return Response(success=False, message="API令牌错误!")
+        
+        try:
+            config = self.config_manager.get_config()
+            return Response(success=True, message="获取成功", data=config)
+        except Exception as e:
+            logger.error(f"获取配置失败: {str(e)}")
+            return Response(success=False, message=f"获取配置失败: {str(e)}")
 
-    def get_service(self) -> List[Dict[str, Any]]:
-        """
-        注册插件公共服务
-        """
-        if self._enabled and self._cron:
-            try:
-                # 检查是否为5位cron表达式
-                if str(self._cron).strip().count(" ") == 4:
-                    return [{
-                        "id": "nexusinvitee",
-                        "name": "后宫管理系统",
-                        "trigger": CronTrigger.from_crontab(self._cron),
-                        "func": self.refresh_all_sites,
-                        "kwargs": {}
-                    }]
-                else:
-                    logger.error("cron表达式格式错误")
-                    return []
-            except Exception as err:
-                logger.error(f"定时任务配置错误：{str(err)}")
-                return []
-        return []
-
-    def _sync_from_file(self):
-        """
-        从文件同步配置
-        """
-        # 同步配置文件到内存配置
-        _config = self.config_manager.get_config()
-        if _config:
-            self._config = _config
-            self._enabled = _config.get("enabled", False)
-            self._notify = _config.get("notify", False)
-            self._cron = _config.get("cron", "0 9 * * *")
-            self._onlyonce = _config.get("onlyonce", False)
-            self._nexus_sites = _config.get("site_ids", [])
-            
-            # 迁移数据到独立文件
-            if "cached_data" in self._config:
-                cached_data = self._config.pop("cached_data", {})
-                # 将cached_data内容保存到数据文件
-                for site_name, site_data in cached_data.items():
-                    self.data_manager.update_site_data(site_name, site_data.get("data", {}))
-                # 保存清理后的配置
-                self._sync_to_file()
-                logger.info("已将数据从配置文件迁移到独立数据文件")
-                
-            return True
-        return False
-
-    def _sync_to_file(self):
-        """
-        同步配置到文件
-        """
-        # 更新内存配置到文件
-        config = {
-            "enabled": self._enabled,
-            "notify": self._notify,
-            "cron": self._cron,
-            "onlyonce": self._onlyonce,
-            "site_ids": self._nexus_sites
-        }
-        
-        return self.config_manager.update_config(config)
-
-    def __update_config(self):
-        """
-        更新内存配置
-        """
-        # 更新内存中的配置
-        self._config["enabled"] = self._enabled
-        self._config["notify"] = self._notify
-        self._config["cron"] = self._cron
-        self._config["onlyonce"] = self._onlyonce
-        self._config["site_ids"] = self._nexus_sites
-
-    def refresh_all_sites(self) -> Dict[str, int]:
-        """
-        刷新所有站点数据
-        """
-        if not self._nexus_sites:
-            logger.error("没有选择任何站点，请先在配置中选择站点")
-            return {"success": 0, "error": 0}
-
-        # 重新加载站点处理器以确保使用最新的处理逻辑
-        self._site_handlers = ModuleLoader.load_site_handlers()
-        logger.info(f"加载了 {len(self._site_handlers)} 个站点处理器")
-            
-        # 清空旧数据
-        self.data_manager.save_data({})
-        
-        # 获取所有站点配置
-        all_sites = self.sites.get_indexers()
-        
-        # 筛选已选择站点配置
-        selected_sites = []
-        for site in all_sites:
-            site_id = site.get("id")
-            if str(site_id) in [str(x) for x in self._nexus_sites]:
-                selected_sites.append(site)
-        
-        logger.info(f"将刷新 {len(selected_sites)} 个站点的数据: {', '.join([site.get('name', '') for site in selected_sites])}")
-        
-        if not selected_sites:
-            return {"success": 0, "error": 0, "message": "没有发现可供刷新的站点"}
-        
-        # 统计成功/失败站点数
-        success_count = 0
-        error_count = 0
-        
-        # 逐个刷新站点数据
-        for site in selected_sites:
-            site_name = site.get("name", "")
-            site_id = site.get("id", "")
-            
-            logger.info(f"开始获取站点 {site_name} 的后宫数据...")
-            
-            site_data = self._get_site_invite_data(site_name)
-            if "error" in site_data:
-                logger.error(f"站点 {site_name} 数据刷新失败: {site_data.get('error', '未知错误')}")
-                error_count += 1
-            else:
-                # 输出关键数据，帮助调试
-                invite_status = site_data.get("invite_status", {})
-                invitees = site_data.get("invitees", [])
-                perm_count = invite_status.get("permanent_count", 0)
-                temp_count = invite_status.get("temporary_count", 0)
-                logger.info(f"站点 {site_name} 数据刷新成功，已邀请 {len(invitees)} 人，永久邀请 {perm_count} 个，临时邀请 {temp_count} 个")
-                
-                # 保存站点数据
-                self.data_manager.update_site_data(site_name, site_data)
-                success_count += 1
-        
-        # 发送通知
-        if self._notify:
-            total_invitees = 0
-            low_ratio_count = 0
-            banned_count = 0
-            
-            # 统计所有站点数据
-            all_site_data = self.data_manager.get_site_data()
-            for site_name, site_data in all_site_data.items():
-                # 检查数据结构，确保正确处理
-                logger.debug(f"通知统计：站点 {site_name} 数据结构: {site_data}")
-                
-                # 处理可能的多级嵌套
-                site_invitees = []
-                site_invite_status = {}
-                
-                if "data" in site_data:
-                    site_content = site_data.get("data", {})
-                    
-                    # 尝试获取邀请用户列表
-                    if "invitees" in site_content:
-                        site_invitees = site_content.get("invitees", [])
-                    elif "data" in site_content and "invitees" in site_content.get("data", {}):
-                        site_invitees = site_content.get("data", {}).get("invitees", [])
-                    
-                    # 尝试获取邀请状态
-                    if "invite_status" in site_content:
-                        site_invite_status = site_content.get("invite_status", {})
-                    elif "data" in site_content and "invite_status" in site_content.get("data", {}):
-                        site_invite_status = site_content.get("data", {}).get("invite_status", {})
-                
-                total_invitees += len(site_invitees)
-                
-                # 统计分享率低的用户和已禁用用户
-                for invitee in site_invitees:
-                    # 处理分享率
-                    ratio_str = invitee.get('ratio', '')
-                    ratio_value = 0
-                    
-                    if isinstance(ratio_str, (int, float)):
-                        ratio_value = float(ratio_str)
-                    elif ratio_str and ratio_str != '∞' and ratio_str.lower() != 'inf.' and ratio_str.lower() != 'inf':
-                        try:
-                            # 标准化字符串，替换逗号为点
-                            ratio_str = ratio_str.replace(',', '.')
-                            ratio_value = float(ratio_str)
-                        except (ValueError, TypeError):
-                            # 转换错误时记录警告
-                            logger.warning(f"分享率转换失败: {ratio_str}")
-                    
-                    # 分享率阈值从0.5改为1.0
-                    if ratio_value < 1.0:
-                        low_ratio_count += 1
-                    
-                    # 检查用户是否被禁用
-                    enabled = invitee.get("enabled", "Yes")
-                    if isinstance(enabled, str) and enabled.lower() == "no":
-                        banned_count += 1
-            
-            title = "后宫管理系统 - 刷新结果"
-            if success_count > 0 or error_count > 0:
-                text = f"刷新完成: 成功 {success_count} 个站点，失败 {error_count} 个站点\n\n"
-                text += f"👨‍👩‍👧‍👦 总邀请人数: {total_invitees}人\n"
-                # 更新提示文本
-                text += f"⚠️ 分享率低于1.0: {low_ratio_count}人\n"
-                text += f"🚫 已禁用用户: {banned_count}人\n\n"
-                
-                # 添加刷新时间
-                text += f"🕙 {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
-                
-                # 只使用post_message发送一次通知，避免重复发送
-                self.post_message(
-                    mtype=NotificationType.SiteMessage,
-                    title=title,
-                    text=text
-                )
-                logger.info(f"发送通知: {title} - 刷新完成: 成功 {success_count} 个站点，失败 {error_count} 个站点")
-                
-                # 移除通知助手发送，避免重复
-                # self.notify_helper.send_notification(title, text, self._notify)
-        
-        logger.info(f"刷新完成: 成功 {success_count} 个站点, 失败 {error_count} 个站点")
-        
-        # 如果是立即运行一次，关闭开关并保存配置
-        if self._onlyonce:
-            self._onlyonce = False
-            self.__update_config()
-        
-        return {"success": success_count, "error": error_count}
-        
     def get_invitees(self, apikey: str = None, site_name: str = None) -> dict:
         """
         获取后宫成员API接口
@@ -2585,6 +2497,283 @@ class nexusinvitee(_PluginBase):
         except Exception as e:
             logger.error(f"获取用户ID失败: {str(e)}")
             return ""
+
+    def refresh_all_sites(self) -> Dict[str, int]:
+        """
+        刷新所有站点数据
+        """
+        try:
+            # 设置刷新标志防止重复刷新
+            if hasattr(self, '_refreshing') and self._refreshing:
+                logger.warning("后宫管理系统数据刷新已在进行中，跳过重复刷新")
+                return {"success": 0, "error": 0, "message": "刷新已在进行中"}
+            
+            self._refreshing = True
+            
+            # 记录刷新开始
+            logger.info("开始刷新站点数据")
+            
+            if not self._nexus_sites:
+                logger.error("没有选择任何站点，请先在配置中选择站点")
+                return {"success": 0, "error": 0}
+
+            # 重新加载站点处理器
+            self._site_handlers = ModuleLoader.load_site_handlers()
+            logger.info(f"加载了 {len(self._site_handlers)} 个站点处理器")
+                
+            # 清空旧数据
+            self.data_manager.save_data({})
+            
+            # 获取所有站点配置
+            all_sites = self.sites.get_indexers()
+            
+            # 筛选已选择站点配置
+            selected_sites = []
+            for site in all_sites:
+                site_id = site.get("id")
+                if str(site_id) in [str(x) for x in self._nexus_sites]:
+                    selected_sites.append(site)
+            
+            logger.info(f"将刷新 {len(selected_sites)} 个站点的数据: {', '.join([site.get('name', '') for site in selected_sites])}")
+            
+            if not selected_sites:
+                logger.warning("没有发现可供刷新的站点")
+                return {"success": 0, "error": 0, "message": "没有发现可供刷新的站点"}
+            
+            # 统计成功/失败站点数
+            success_count = 0
+            error_count = 0
+            
+            # 逐个刷新站点数据
+            for site in selected_sites:
+                site_name = site.get("name", "")
+                
+                logger.info(f"开始获取站点 {site_name} 的后宫数据...")
+                
+                site_data = self._get_site_invite_data(site_name)
+                if "error" in site_data:
+                    logger.error(f"站点 {site_name} 数据刷新失败: {site_data.get('error', '未知错误')}")
+                    error_count += 1
+                else:
+                    # 输出关键数据，帮助调试
+                    invite_status = site_data.get("invite_status", {})
+                    invitees = site_data.get("invitees", [])
+                    perm_count = invite_status.get("permanent_count", 0)
+                    temp_count = invite_status.get("temporary_count", 0)
+                    logger.info(f"站点 {site_name} 数据刷新成功，已邀请 {len(invitees)} 人，永久邀请 {perm_count} 个，临时邀请 {temp_count} 个")
+                    
+                    # 保存站点数据
+                    self.data_manager.update_site_data(site_name, site_data)
+                    success_count += 1
+            
+            # 发送通知
+            if self._notify:
+                self._send_refresh_notification(success_count, error_count)
+            
+            logger.info(f"刷新完成: 成功 {success_count} 个站点, 失败 {error_count} 个站点")
+            
+            return {"success": success_count, "error": error_count}
+            
+        finally:
+            # 清除刷新标志
+            self._refreshing = False
+    
+    def _send_refresh_notification(self, success_count, error_count):
+        """
+        发送刷新结果通知
+        """
+        try:
+            total_invitees = 0
+            low_ratio_count = 0
+            banned_count = 0
+            
+            # 统计所有站点数据
+            all_site_data = self.data_manager.get_site_data()
+            for site_name, site_data in all_site_data.items():
+                # 检查数据结构，确保正确处理
+                logger.debug(f"通知统计：站点 {site_name} 数据结构: {site_data}")
+                
+                # 处理可能的多级嵌套
+                site_invitees = []
+                
+                if "data" in site_data:
+                    site_content = site_data.get("data", {})
+                    
+                    # 尝试获取邀请用户列表
+                    if "invitees" in site_content:
+                        site_invitees = site_content.get("invitees", [])
+                    elif "data" in site_content and "invitees" in site_content.get("data", {}):
+                        site_invitees = site_content.get("data", {}).get("invitees", [])
+                
+                total_invitees += len(site_invitees)
+                
+                # 统计分享率低的用户和已禁用用户
+                for invitee in site_invitees:
+                    # 处理分享率
+                    ratio_str = invitee.get('ratio', '')
+                    ratio_value = 0
+                    
+                    if isinstance(ratio_str, (int, float)):
+                        ratio_value = float(ratio_str)
+                    elif ratio_str and ratio_str != '∞' and ratio_str.lower() != 'inf.' and ratio_str.lower() != 'inf':
+                        try:
+                            # 标准化字符串，替换逗号为点
+                            ratio_str = ratio_str.replace(',', '.')
+                            ratio_value = float(ratio_str)
+                        except (ValueError, TypeError):
+                            # 转换错误时记录警告
+                            logger.warning(f"分享率转换失败: {ratio_str}")
+                    
+                    # 分享率阈值从0.5改为1.0
+                    if ratio_value < 1.0:
+                        low_ratio_count += 1
+                    
+                    # 检查用户是否被禁用
+                    enabled = invitee.get("enabled", "Yes")
+                    if isinstance(enabled, str) and enabled.lower() == "no":
+                        banned_count += 1
+            
+            title = "后宫管理系统 - 刷新结果"
+            if success_count > 0 or error_count > 0:
+                text = f"刷新完成: 成功 {success_count} 个站点，失败 {error_count} 个站点\n\n"
+                text += f"👨‍👩‍👧‍👦 总邀请人数: {total_invitees}人\n"
+                # 更新提示文本
+                text += f"⚠️ 分享率低于1.0: {low_ratio_count}人\n"
+                text += f"🚫 已禁用用户: {banned_count}人\n\n"
+                
+                # 添加刷新时间
+                text += f"🕙 {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
+                
+                # 使用post_message发送通知
+                self.post_message(
+                    mtype=NotificationType.SiteMessage,
+                    title=title,
+                    text=text
+                )
+                logger.info(f"发送通知: {title} - 刷新完成: 成功 {success_count} 个站点，失败 {error_count} 个站点")
+        except Exception as e:
+            logger.error(f"发送通知失败: {str(e)}")
+            
+    def _sync_from_file(self):
+        """
+        从文件同步配置
+        """
+        try:
+            config = self.config_manager.get_config()
+            if config:
+                self._enabled = config.get("enabled", False)
+                self._notify = config.get("notify", False)
+                self._cron = config.get("cron", "0 9 * * *")
+                self._onlyonce = config.get("onlyonce", False)
+                self._nexus_sites = config.get("site_ids", [])
+                logger.debug(f"从文件加载配置: {config}")
+        except Exception as e:
+            logger.error(f"从文件加载配置失败: {str(e)}")
+
+    def _sync_to_file(self):
+        """
+        将配置同步到文件
+        """
+        config = {
+            "enabled": self._enabled,
+            "notify": self._notify,
+            "cron": self._cron,
+            "onlyonce": self._onlyonce,
+            "site_ids": self._nexus_sites
+        }
+        try:
+            self.config_manager.save_config(config)
+            logger.debug(f"保存配置到文件: {config}")
+            return True
+        except Exception as e:
+            logger.error(f"保存配置到文件失败: {str(e)}")
+            return False
+
+    def get_service(self) -> List[Dict[str, Any]]:
+        """
+        注册插件公共服务
+        """
+        if self._enabled and self._cron:
+            try:
+                # 检查是否为5位cron表达式
+                if str(self._cron).strip().count(" ") == 4:
+                    return [{
+                        "id": "nexusinvitee",
+                        "name": "后宫管理系统",
+                        "trigger": CronTrigger.from_crontab(self._cron),
+                        "func": self.refresh_all_sites,
+                        "kwargs": {}
+                    }]
+                else:
+                    logger.error("cron表达式格式错误")
+                    return []
+            except Exception as err:
+                logger.error(f"定时任务配置错误：{str(err)}")
+                return []
+        return []
+        
+    @staticmethod
+    def get_api_handlers():
+        """
+        获取API接口
+        """
+        return {
+            "/get_invitees": {"func": nexusinvitee.get_invitees, "methods": ["GET"], "desc": "获取所有站点邀请数据"},
+            "/refresh": {"func": nexusinvitee.refresh_data, "methods": ["GET"], "desc": "强制刷新站点数据"}
+        }
+
+    def update_config(self, request: dict) -> Response:
+        """
+        更新插件配置
+        """
+        try:
+            # 读取配置
+            self._enabled = request.get("enabled", False)
+            self._notify = request.get("notify", False)
+            self._cron = request.get("cron", "0 9 * * *")
+            self._onlyonce = request.get("onlyonce", False)
+            
+            # 获取选中站点列表
+            self._nexus_sites = []
+            for site_id in request.get("site_ids", []):
+                self._nexus_sites.append(int(site_id))
+            
+            # 保存配置
+            self._sync_to_file()
+            
+            # 如果开启了立即运行一次
+            if self._onlyonce:
+                try:
+                    # 定时服务
+                    if hasattr(self, '_scheduler') and self._scheduler:
+                        self.stop_service()  # 先停止已有服务
+                    
+                    self._scheduler = BackgroundScheduler(timezone=settings.TZ)
+                    logger.info("立即运行一次开关被打开，将在3秒后执行刷新")
+                    self._scheduler.add_job(func=self.refresh_all_sites, trigger='date',
+                                          run_date=datetime.now(pytz.timezone(settings.TZ)) + timedelta(seconds=3),
+                                          name="后宫管理系统")
+                    
+                    # 关闭一次性开关
+                    self._onlyonce = False
+                    # 保存配置
+                    self._sync_to_file()
+                    
+                    # 启动任务
+                    if self._scheduler and self._scheduler.get_jobs():
+                        self._scheduler.print_jobs()
+                        self._scheduler.start()
+                        
+                    return {"code": 0, "msg": "配置已更新，将在3秒后执行刷新"}
+                except Exception as e:
+                    logger.error(f"启动一次性任务失败: {str(e)}")
+                    return {"code": 1, "msg": f"配置已更新，但启动任务失败: {str(e)}"}
+                
+            return {"code": 0, "msg": "配置已更新"}
+            
+        except Exception as e:
+            logger.error(f"更新配置失败: {str(e)}")
+            return {"code": 1, "msg": f"更新配置失败: {str(e)}"}
 
 
 # 插件类导出
