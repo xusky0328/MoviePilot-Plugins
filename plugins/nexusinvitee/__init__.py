@@ -56,7 +56,7 @@ class nexusinvitee(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png"
     # 插件版本
-    plugin_version = "1.1.0"
+    plugin_version = "1.1.1"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -1071,6 +1071,18 @@ class nexusinvitee(_PluginBase):
                 .font-weight-bold {
                     font-weight: bold !important;
                 }
+                /* 折叠面板样式 */
+                .v-expansion-panel-title {
+                    min-height: 48px !important;
+                    padding: 0 16px !important;
+                }
+                .v-expansion-panel-text__wrapper {
+                    padding: 0 !important;
+                }
+                .v-expansion-panel {
+                    background-color: rgba(0, 0, 0, 0.02) !important;
+                    margin-bottom: 8px !important;
+                }
                 """
             })
 
@@ -1752,6 +1764,40 @@ class nexusinvitee(_PluginBase):
                     permanent_invite_price = invite_status.get("permanent_invite_price", 0)
                     temporary_invite_price = invite_status.get("temporary_invite_price", 0)
                     
+                    # 添加不可邀请原因的显示
+                    if not can_invite and reason and not is_mteam_site:  # 对于M-Team站点，我们会在后面特殊处理
+                        site_card["content"].append({
+                            "component": "VCardText",
+                            "props": {
+                                "class": "py-1"
+                            },
+                            "content": [
+                                {
+                                    "component": "VAlert",
+                                    "props": {
+                                        "type": "error",
+                                        "variant": "tonal",
+                                        "density": "compact",
+                                        "class": "my-1 d-flex align-center"
+                                    },
+                                    "content": [
+                                        {
+                                            "component": "VIcon",
+                                            "props": {
+                                                "start": True,
+                                                "size": "small"
+                                            },
+                                            "text": "mdi-alert-circle"
+                                        },
+                                        {
+                                            "component": "span",
+                                            "text": f"不可邀请原因: {reason}"
+                                        }
+                                    ]
+                                }
+                            ]
+                        })
+                    
                     # M-Team站点特殊处理
                     if is_mteam_site:
                         # 尝试从reason中提取用户等级和魔力值信息
@@ -2318,323 +2364,408 @@ class nexusinvitee(_PluginBase):
                                 "class": "pt-0 px-2"
                             },
                             "content": [{
-                                "component": "VTable",
+                                "component": "VExpansionPanels",
                                 "props": {
-                                    "hover": True,
-                                    "density": "compact",
-                                    "fixed-header": False,
-                                    "class": "site-invitees-table text-caption",
+                                    "variant": "accordion"
                                 },
                                 "content": [{
-                                    "component": "thead",
-                                    "content": [{
-                                        "component": "tr",
-                                        "props": {
-                                            "class": "bg-primary-lighten-5"
+                                    "component": "VExpansionPanel",
+                                    "content": [
+                                        {
+                                            "component": "VExpansionPanelTitle",
+                                            "content": [
+                                                {
+                                                    "component": "div",
+                                                    "props": {
+                                                        "class": "d-flex align-center"
+                                                    },
+                                                    "content": [
+                                                        {
+                                                            "component": "VIcon",
+                                                            "props": {
+                                                                "color": "primary",
+                                                                "size": "small",
+                                                                "class": "mr-2"
+                                                            },
+                                                            "text": "mdi-account-group"
+                                                        },
+                                                        {
+                                                            "component": "span",
+                                                            "text": f"后宫成员列表 ({len(invitees)}人)"
+                                                        },
+                                                        {
+                                                            "component": "VSpacer"
+                                                        },
+                                                        {
+                                                            "component": "VIcon",
+                                                            "props": {
+                                                                "size": "small",
+                                                                "color": "error",
+                                                                "class": "mr-1"
+                                                            },
+                                                            "text": "mdi-alert-circle" if low_ratio_count > 0 else ""
+                                                        },
+                                                        {
+                                                            "component": "span",
+                                                            "props": {"class": "text-caption mr-3"},
+                                                            "text": f"{low_ratio_count}人低分享" if low_ratio_count > 0 else ""
+                                                        },
+                                                        {
+                                                            "component": "VIcon",
+                                                            "props": {
+                                                                "size": "small",
+                                                                "color": "error",
+                                                                "class": "mr-1"
+                                                            },
+                                                            "text": "mdi-account-cancel" if banned_count > 0 else ""
+                                                        },
+                                                        {
+                                                            "component": "span",
+                                                            "props": {"class": "text-caption mr-3"},
+                                                            "text": f"{banned_count}人禁用" if banned_count > 0 else ""
+                                                        },
+                                                        {
+                                                            "component": "VIcon",
+                                                            "props": {
+                                                                "size": "small",
+                                                                "color": "#9E9E9E",
+                                                                "class": "mr-1"
+                                                            },
+                                                            "text": "mdi-database-off" if no_data_count > 0 else ""
+                                                        },
+                                                        {
+                                                            "component": "span",
+                                                            "props": {"class": "text-caption"},
+                                                            "text": f"{no_data_count}人无数据" if no_data_count > 0 else ""
+                                                        }
+                                                    ]
+                                                }
+                                            ]
                                         },
-                                        "content": [
-                                            {
-                                                "component": "th", 
-                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
-                                                "content": [
-                                                    {
-                                                        "component": "div",
+                                        {
+                                            "component": "VExpansionPanelText",
+                                            "content": [{
+                                                "component": "VTable",
+                                                "props": {
+                                                    "hover": True,
+                                                    "density": "compact",
+                                                    "fixed-header": False,
+                                                    "class": "site-invitees-table text-caption",
+                                                },
+                                                "content": [{
+                                                    "component": "thead",
+                                                    "content": [{
+                                                        "component": "tr",
                                                         "props": {
-                                                            "class": "d-flex align-center"
+                                                            "class": "bg-primary-lighten-5"
                                                         },
                                                         "content": [
                                                             {
-                                                                "component": "VIcon",
-                                                                "props": {
-                                                                    "size": "14",
-                                                                    "class": "mr-1",
-                                                                    "color": "#2196F3"
-                                                                },
-                                                                "text": "mdi-account"
+                                                                "component": "th", 
+                                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
+                                                                "content": [
+                                                                    {
+                                                                        "component": "div",
+                                                                        "props": {
+                                                                            "class": "d-flex align-center"
+                                                                        },
+                                                                        "content": [
+                                                                            {
+                                                                                "component": "VIcon",
+                                                                                "props": {
+                                                                                    "size": "14",
+                                                                                    "class": "mr-1",
+                                                                                    "color": "#2196F3"
+                                                                                },
+                                                                                "text": "mdi-account"
+                                                                            },
+                                                                            {
+                                                                                "component": "span",
+                                                                                "text": "用户名"
+                                                                            }
+                                                                        ]
+                                                                    }
+                                                                ]
                                                             },
                                                             {
-                                                                "component": "span",
-                                                                "text": "用户名"
-                                                            }
-                                                        ]
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                "component": "th", 
-                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
-                                                "content": [
-                                                    {
-                                                        "component": "div",
-                                                        "props": {
-                                                            "class": "d-flex align-center"
-                                                        },
-                                                        "content": [
-                                                            {
-                                                                "component": "VIcon",
-                                                                "props": {
-                                                                    "size": "14",
-                                                                    "class": "mr-1",
-                                                                    "color": "#4CAF50"
-                                                                },
-                                                                "text": "mdi-email"
+                                                                "component": "th", 
+                                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
+                                                                "content": [
+                                                                    {
+                                                                        "component": "div",
+                                                                        "props": {
+                                                                            "class": "d-flex align-center"
+                                                                        },
+                                                                        "content": [
+                                                                            {
+                                                                                "component": "VIcon",
+                                                                                "props": {
+                                                                                    "size": "14",
+                                                                                    "class": "mr-1",
+                                                                                    "color": "#4CAF50"
+                                                                                },
+                                                                                "text": "mdi-email"
+                                                                            },
+                                                                            {
+                                                                                "component": "span",
+                                                                                "text": "邮箱"
+                                                                            }
+                                                                        ]
+                                                                    }
+                                                                ]
                                                             },
                                                             {
-                                                                "component": "span",
-                                                                "text": "邮箱"
-                                                            }
-                                                        ]
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                "component": "th", 
-                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
-                                                "content": [
-                                                    {
-                                                        "component": "div",
-                                                        "props": {
-                                                            "class": "d-flex align-center"
-                                                        },
-                                                        "content": [
-                                                            {
-                                                                "component": "VIcon",
-                                                                "props": {
-                                                                    "size": "14",
-                                                                    "class": "mr-1",
-                                                                    "color": "#F44336"
-                                                                },
-                                                                "text": "mdi-arrow-up-thick"
+                                                                "component": "th", 
+                                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
+                                                                "content": [
+                                                                    {
+                                                                        "component": "div",
+                                                                        "props": {
+                                                                            "class": "d-flex align-center"
+                                                                        },
+                                                                        "content": [
+                                                                            {
+                                                                                "component": "VIcon",
+                                                                                "props": {
+                                                                                    "size": "14",
+                                                                                    "class": "mr-1",
+                                                                                    "color": "#F44336"
+                                                                                },
+                                                                                "text": "mdi-arrow-up-thick"
+                                                                            },
+                                                                            {
+                                                                                "component": "span",
+                                                                                "text": "上传量"
+                                                                            }
+                                                                        ]
+                                                                    }
+                                                                ]
                                                             },
                                                             {
-                                                                "component": "span",
-                                                                "text": "上传量"
-                                                            }
-                                                        ]
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                "component": "th", 
-                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
-                                                "content": [
-                                                    {
-                                                        "component": "div",
-                                                        "props": {
-                                                            "class": "d-flex align-center"
-                                                        },
-                                                        "content": [
-                                                            {
-                                                                "component": "VIcon",
-                                                                "props": {
-                                                                    "size": "14",
-                                                                    "class": "mr-1",
-                                                                    "color": "#FF9800"
-                                                                },
-                                                                "text": "mdi-arrow-down-thick"
+                                                                "component": "th", 
+                                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
+                                                                "content": [
+                                                                    {
+                                                                        "component": "div",
+                                                                        "props": {
+                                                                            "class": "d-flex align-center"
+                                                                        },
+                                                                        "content": [
+                                                                            {
+                                                                                "component": "VIcon",
+                                                                                "props": {
+                                                                                    "size": "14",
+                                                                                    "class": "mr-1",
+                                                                                    "color": "#FF9800"
+                                                                                },
+                                                                                "text": "mdi-arrow-down-thick"
+                                                                            },
+                                                                            {
+                                                                                "component": "span",
+                                                                                "text": "下载量"
+                                                                            }
+                                                                        ]
+                                                                    }
+                                                                ]
                                                             },
                                                             {
-                                                                "component": "span",
-                                                                "text": "下载量"
-                                                            }
-                                                        ]
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                "component": "th", 
-                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
-                                                "content": [
-                                                    {
-                                                        "component": "div",
-                                                        "props": {
-                                                            "class": "d-flex align-center"
-                                                        },
-                                                        "content": [
-                                                            {
-                                                                "component": "VIcon",
-                                                                "props": {
-                                                                    "size": "14",
-                                                                    "class": "mr-1",
-                                                                    "color": "#2196F3"
-                                                                },
-                                                                "text": "mdi-poll"
+                                                                "component": "th", 
+                                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
+                                                                "content": [
+                                                                    {
+                                                                        "component": "div",
+                                                                        "props": {
+                                                                            "class": "d-flex align-center"
+                                                                        },
+                                                                        "content": [
+                                                                            {
+                                                                                "component": "VIcon",
+                                                                                "props": {
+                                                                                    "size": "14",
+                                                                                    "class": "mr-1",
+                                                                                    "color": "#2196F3"
+                                                                                },
+                                                                                "text": "mdi-poll"
+                                                                            },
+                                                                            {
+                                                                                "component": "span",
+                                                                                "text": "分享率"
+                                                                            }
+                                                                        ]
+                                                                    }
+                                                                ]
                                                             },
                                                             {
-                                                                "component": "span",
-                                                                "text": "分享率"
-                                                            }
-                                                        ]
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                "component": "th", 
-                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
-                                                "content": [
-                                                    {
-                                                        "component": "div",
-                                                        "props": {
-                                                            "class": "d-flex align-center"
-                                                        },
-                                                        "content": [
-                                                            {
-                                                                "component": "VIcon",
-                                                                "props": {
-                                                                    "size": "14",
-                                                                    "class": "mr-1",
-                                                                    "color": "#2196F3"
-                                                                },
-                                                                "text": "mdi-database"
+                                                                "component": "th", 
+                                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
+                                                                "content": [
+                                                                    {
+                                                                        "component": "div",
+                                                                        "props": {
+                                                                            "class": "d-flex align-center"
+                                                                        },
+                                                                        "content": [
+                                                                            {
+                                                                                "component": "VIcon",
+                                                                                "props": {
+                                                                                    "size": "14",
+                                                                                    "class": "mr-1",
+                                                                                    "color": "#2196F3"
+                                                                                },
+                                                                                "text": "mdi-database"
+                                                                            },
+                                                                            {
+                                                                                "component": "span",
+                                                                                "text": "做种数"
+                                                                            }
+                                                                        ]
+                                                                    }
+                                                                ]
                                                             },
                                                             {
-                                                                "component": "span",
-                                                                "text": "做种数"
-                                                            }
-                                                        ]
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                "component": "th", 
-                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
-                                                "content": [
-                                                    {
-                                                        "component": "div",
-                                                        "props": {
-                                                            "class": "d-flex align-center"
-                                                        },
-                                                        "content": [
-                                                            {
-                                                                "component": "VIcon",
-                                                                "props": {
-                                                                    "size": "14",
-                                                                    "class": "mr-1",
-                                                                    "color": "#1976D2"
-                                                                },
-                                                                "text": "mdi-harddisk"
+                                                                "component": "th", 
+                                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
+                                                                "content": [
+                                                                    {
+                                                                        "component": "div",
+                                                                        "props": {
+                                                                            "class": "d-flex align-center"
+                                                                        },
+                                                                        "content": [
+                                                                            {
+                                                                                "component": "VIcon",
+                                                                                "props": {
+                                                                                    "size": "14",
+                                                                                    "class": "mr-1",
+                                                                                    "color": "#1976D2"
+                                                                                },
+                                                                                "text": "mdi-harddisk"
+                                                                            },
+                                                                            {
+                                                                                "component": "span",
+                                                                                "text": "做种体积"
+                                                                            }
+                                                                        ]
+                                                                    }
+                                                                ]
                                                             },
                                                             {
-                                                                "component": "span",
-                                                                "text": "做种体积"
-                                                            }
-                                                        ]
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                "component": "th", 
-                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
-                                                "content": [
-                                                    {
-                                                        "component": "div",
-                                                        "props": {
-                                                            "class": "d-flex align-center"
-                                                        },
-                                                        "content": [
-                                                            {
-                                                                "component": "VIcon",
-                                                                "props": {
-                                                                    "size": "14",
-                                                                    "class": "mr-1",
-                                                                    "color": "#3F51B5"
-                                                                },
-                                                                "text": "mdi-clock-outline"
+                                                                "component": "th", 
+                                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
+                                                                "content": [
+                                                                    {
+                                                                        "component": "div",
+                                                                        "props": {
+                                                                            "class": "d-flex align-center"
+                                                                        },
+                                                                        "content": [
+                                                                            {
+                                                                                "component": "VIcon",
+                                                                                "props": {
+                                                                                    "size": "14",
+                                                                                    "class": "mr-1",
+                                                                                    "color": "#673AB7"
+                                                                                },
+                                                                                "text": "mdi-magic"
+                                                                            },
+                                                                            {
+                                                                                "component": "span",
+                                                                                "text": "魔力值"
+                                                                            }
+                                                                        ]
+                                                                    }
+                                                                ]
                                                             },
                                                             {
-                                                                "component": "span",
-                                                                "text": "做种时魔"
-                                                            }
-                                                        ]
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                "component": "th", 
-                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
-                                                "content": [
-                                                    {
-                                                        "component": "div",
-                                                        "props": {
-                                                            "class": "d-flex align-center"
-                                                        },
-                                                        "content": [
-                                                            {
-                                                                "component": "VIcon",
-                                                                "props": {
-                                                                    "size": "14",
-                                                                    "class": "mr-1",
-                                                                    "color": "#9C27B0"
-                                                                },
-                                                                "text": "mdi-crown"
+                                                                "component": "th", 
+                                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
+                                                                "content": [
+                                                                    {
+                                                                        "component": "div",
+                                                                        "props": {
+                                                                            "class": "d-flex align-center"
+                                                                        },
+                                                                        "content": [
+                                                                            {
+                                                                                "component": "VIcon",
+                                                                                "props": {
+                                                                                    "size": "14",
+                                                                                    "class": "mr-1",
+                                                                                    "color": "#009688"
+                                                                                },
+                                                                                "text": "mdi-star"
+                                                                            },
+                                                                            {
+                                                                                "component": "span",
+                                                                                "text": "加成"
+                                                                            }
+                                                                        ]
+                                                                    }
+                                                                ]
                                                             },
                                                             {
-                                                                "component": "span",
-                                                                "text": "后宫加成"
-                                                            }
-                                                        ]
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                "component": "th", 
-                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
-                                                "content": [
-                                                    {
-                                                        "component": "div",
-                                                        "props": {
-                                                            "class": "d-flex align-center"
-                                                        },
-                                                        "content": [
-                                                            {
-                                                                "component": "VIcon",
-                                                                "props": {
-                                                                    "size": "14",
-                                                                    "class": "mr-1",
-                                                                    "color": "#00BCD4"
-                                                                },
-                                                                "text": "mdi-calendar-clock"
+                                                                "component": "th", 
+                                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
+                                                                "content": [
+                                                                    {
+                                                                        "component": "div",
+                                                                        "props": {
+                                                                            "class": "d-flex align-center"
+                                                                        },
+                                                                        "content": [
+                                                                            {
+                                                                                "component": "VIcon",
+                                                                                "props": {
+                                                                                    "size": "14",
+                                                                                    "class": "mr-1",
+                                                                                    "color": "#607D8B"
+                                                                                },
+                                                                                "text": "mdi-clock"
+                                                                            },
+                                                                            {
+                                                                                "component": "span",
+                                                                                "text": "最后报告"
+                                                                            }
+                                                                        ]
+                                                                    }
+                                                                ]
                                                             },
                                                             {
-                                                                "component": "span",
-                                                                "text": "最后做种报告"
+                                                                "component": "th", 
+                                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
+                                                                "content": [
+                                                                    {
+                                                                        "component": "div",
+                                                                        "props": {
+                                                                            "class": "d-flex align-center"
+                                                                        },
+                                                                        "content": [
+                                                                            {
+                                                                                "component": "VIcon",
+                                                                                "props": {
+                                                                                    "size": "14",
+                                                                                    "class": "mr-1",
+                                                                                    "color": "#00BCD4"
+                                                                                },
+                                                                                "text": "mdi-information"
+                                                                            },
+                                                                            {
+                                                                                "component": "span",
+                                                                                "text": "状态"
+                                                                            }
+                                                                        ]
+                                                                    }
+                                                                ]
                                                             }
                                                         ]
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                "component": "th", 
-                                                "props": {"class": "text-caption", "style": "white-space: nowrap; padding: 4px 8px;"},
-                                                "content": [
-                                                    {
-                                                        "component": "div",
-                                                        "props": {
-                                                            "class": "d-flex align-center"
-                                                        },
-                                                        "content": [
-                                                            {
-                                                                "component": "VIcon",
-                                                                "props": {
-                                                                    "size": "14",
-                                                                    "class": "mr-1",
-                                                                    "color": "#00BCD4"
-                                                                },
-                                                                "text": "mdi-information"
-                                                            },
-                                                            {
-                                                                "component": "span",
-                                                                "text": "状态"
-                                                            }
-                                                        ]
-                                                    }
-                                                ]
-                                            }
-                                        ]
-                                    }]
-                                }, {
-                                    "component": "tbody",
-                                    "content": table_rows
+                                                    }]
+                                                }, {
+                                                    "component": "tbody",
+                                                    "content": table_rows
+                                                }]
+                                            }]
+                                        }
+                                    ]
                                 }]
                             }]
                         })

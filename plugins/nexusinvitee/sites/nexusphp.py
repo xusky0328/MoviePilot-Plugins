@@ -501,7 +501,10 @@ class NexusPhpHandler(_ISiteHandler):
                         invitee["seed_time"] = cell_text
                     
                     # 做种时魔/当前纯做种时魔 - 这是我们需要特别解析的字段
-                    elif any(keyword in header for keyword in ['做种时魔', '纯做种时魔', '当前纯做种时魔', '做种积分', 'seed bonus', 'seed magic']):
+                    elif any(keyword in header for keyword in ['做种时魔', '纯做种时魔', '当前纯做种时魔', '做种积分', 'seed bonus', 'seed magic', 
+                                                              '单种魔力', '单种杏仁', '单种UCoin', '单种麦粒', '单种银元', '单种电力值', '单种憨豆', 
+                                                              '单种茉莉', '单种蟹币值', '单种鲸币', '单种蝌蚪', '单种灵石', '单种爆米花', '单种冰晶', 
+                                                              '单种积分', '单种魅力值', '单种猫粮', '单种星焱']):
                         invitee["seed_magic"] = cell_text
                     
                     # 后宫加成 - 新增字段
@@ -514,9 +517,14 @@ class NexusPhpHandler(_ISiteHandler):
                         invitee["last_seed_report"] = cell_text
                     
                     # 做种魔力/积分/加成
-                    elif any(keyword in header for keyword in ['魔力', 'magic', '积分', 'bonus', '加成', 'leeched']):
+                    elif any(keyword in header for keyword in ['魔力', 'magic', '积分', 'bonus', '加成', 'leeched', '杏仁', 'ucoin', '麦粒', '银元',
+                                                              '电力值', '憨豆', '茉莉', '蟹币值', '鲸币', '蝌蚪', '灵石', '爆米花', '冰晶', '魅力值', 
+                                                              '猫粮', '星焱']):
                         header_lower = header.lower()
-                        if '魔力' in header_lower or 'magic' in header_lower:
+                        # 所有魔力值类型名称都统一存储到magic字段
+                        if any(keyword in header_lower for keyword in ['魔力', 'magic', '杏仁', 'ucoin', '麦粒', '银元', '电力值', '憨豆', 
+                                                                      '茉莉', '蟹币值', '蟹币值', '鲸币', '蝌蚪', '灵石', '爆米花', '冰晶', '魅力值', 
+                                                                      '猫粮', '星焱']):
                             invitee["magic"] = cell_text
                         elif '加成' in header_lower or 'bonus' in header_lower:
                             invitee["bonus"] = cell_text
@@ -628,7 +636,13 @@ class NexusPhpHandler(_ISiteHandler):
                 # 类似于"用你的魔力值（当前141,725.2）换东东！"的文本
                 soup.select_one('td.text[align="center"]'),
                 # 表格中包含魔力值的单元格
-                soup.select_one('table td:contains("魔力值"), table td:contains("工分"), table td:contains("积分")'),
+                soup.select_one('table td:contains("魔力值"), table td:contains("工分"), table td:contains("积分"), ' + 
+                              'table td:contains("杏仁值"), table td:contains("UCoin"), table td:contains("麦粒"), ' + 
+                              'table td:contains("银元"), table td:contains("电力值"), table td:contains("憨豆"), ' + 
+                              'table td:contains("茉莉"), table td:contains("蟹币值"), table td:contains("蟹币值"), table td:contains("鲸币"), ' + 
+                              'table td:contains("蝌蚪"), table td:contains("灵石"), table td:contains("爆米花"), ' + 
+                              'table td:contains("冰晶"), table td:contains("魅力值"), table td:contains("猫粮"), ' + 
+                              'table td:contains("星焱"), table td:contains("音浪"), table td:contains("金元宝")'),
                 # 页面顶部通常显示用户信息的区域
                 soup.select_one('#info_block, .info, #userinfo')
             ]
@@ -637,12 +651,92 @@ class NexusPhpHandler(_ISiteHandler):
                 if element:
                     element_text = element.get_text()
                     bonus_patterns = [
+                        # 标准魔力值格式
                         r'魔力值[^(]*\(当前([\d,\.]+)[^)]*\)',
                         r'工分[^(]*\(当前([\d,\.]+)[^)]*\)',
                         r'用你的魔力值[^(]*\(当前([\d,\.]+)[^)]*\)',
                         r'用你的工分[^(]*\(当前([\d,\.]+)[^)]*\)',
                         r'当前([\d,\.]+)[^)]*魔力',
-                        r'当前([\d,\.]+)[^)]*工分'
+                        r'当前([\d,\.]+)[^)]*工分',
+                        
+                        # 特殊站点魔力值格式
+                        r'杏仁值[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'UCoin[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'麦粒[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'银元[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'电力值[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'憨豆[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'茉莉[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'蟹币值*[^(]*\(当前([\d,\.]+)[^)]*\)',  # 修改：同时支持蟹币和蟹币值
+                        r'鲸币[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'蝌蚪[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'灵石[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'爆米花[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'冰晶[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'积分[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'魅力值[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'猫粮[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'星焱[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'音浪[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'金元宝[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        
+                        r'当前([\d,\.]+)[^)]*杏仁值',
+                        r'当前([\d,\.]+)[^)]*UCoin',
+                        r'当前([\d,\.]+)[^)]*麦粒',
+                        r'当前([\d,\.]+)[^)]*银元',
+                        r'当前([\d,\.]+)[^)]*电力值',
+                        r'当前([\d,\.]+)[^)]*憨豆',
+                        r'当前([\d,\.]+)[^)]*茉莉',
+                        r'当前([\d,\.]+)[^)]*蟹币值',
+                        r'当前([\d,\.]+)[^)]*鲸币',
+                        r'当前([\d,\.]+)[^)]*蝌蚪',
+                        r'当前([\d,\.]+)[^)]*灵石',
+                        r'当前([\d,\.]+)[^)]*爆米花',
+                        r'当前([\d,\.]+)[^)]*冰晶',
+                        r'当前([\d,\.]+)[^)]*积分',
+                        r'当前([\d,\.]+)[^)]*魅力值',
+                        r'当前([\d,\.]+)[^)]*猫粮',
+                        r'当前([\d,\.]+)[^)]*星焱',
+                        r'当前([\d,\.]+)[^)]*音浪',
+                        r'当前([\d,\.]+)[^)]*金元宝',
+                        
+                        r'当前([\d,\.]+)[^)]*杏仁值',
+                        r'当前([\d,\.]+)[^)]*UCoin',
+                        r'当前([\d,\.]+)[^)]*麦粒', 
+                        r'当前([\d,\.]+)[^)]*银元',
+                        r'当前([\d,\.]+)[^)]*电力值',
+                        r'当前([\d,\.]+)[^)]*憨豆',
+                        r'当前([\d,\.]+)[^)]*茉莉',
+                        r'当前([\d,\.]+)[^)]*蟹币值',
+                        r'当前([\d,\.]+)[^)]*鲸币',
+                        r'当前([\d,\.]+)[^)]*蝌蚪',
+                        r'当前([\d,\.]+)[^)]*灵石',
+                        r'当前([\d,\.]+)[^)]*爆米花',
+                        r'当前([\d,\.]+)[^)]*冰晶',
+                        r'当前([\d,\.]+)[^)]*魅力值',
+                        r'当前([\d,\.]+)[^)]*猫粮',
+                        r'当前([\d,\.]+)[^)]*星焱',
+                        r'当前([\d,\.]+)[^)]*音浪',
+                        r'当前([\d,\.]+)[^)]*金元宝',
+                        
+                        r'([\d,\.]+)\s*个杏仁值',
+                        r'([\d,\.]+)\s*个UCoin',
+                        r'([\d,\.]+)\s*个麦粒',
+                        r'([\d,\.]+)\s*个银元',
+                        r'([\d,\.]+)\s*个电力值',
+                        r'([\d,\.]+)\s*个憨豆',
+                        r'([\d,\.]+)\s*个茉莉',
+                        r'([\d,\.]+)\s*个蟹币值',
+                        r'([\d,\.]+)\s*个鲸币',
+                        r'([\d,\.]+)\s*个蝌蚪',
+                        r'([\d,\.]+)\s*个灵石',
+                        r'([\d,\.]+)\s*个爆米花',
+                        r'([\d,\.]+)\s*个冰晶',
+                        r'([\d,\.]+)\s*个魅力值',
+                        r'([\d,\.]+)\s*个猫粮',
+                        r'([\d,\.]+)\s*个星焱',
+                        r'([\d,\.]+)\s*个音浪',
+                        r'([\d,\.]+)\s*个金元宝'
                     ]
                     
                     for pattern in bonus_patterns:
@@ -651,7 +745,15 @@ class NexusPhpHandler(_ISiteHandler):
                             bonus_str = bonus_match.group(1).replace(',', '')
                             try:
                                 result["bonus"] = float(bonus_str)
-                                logger.info(f"站点 {site_name} 从元素中提取到魔力值/工分: {result['bonus']}")
+                                logger.info(f"站点 {site_name} 从元素中提取到魔力值/特殊积分: {result['bonus']}")
+                                
+                                # 检查魔力值是否可能是时魔信息
+                                if result["bonus"] < 100 and '时魔' in element_text or '每小时' in element_text:
+                                    logger.warning(f"站点 {site_name} 提取的可能是时魔信息而非魔力值: {result['bonus']}")
+                                    result["bonus"] = 0
+                                    bonus_found = False
+                                    continue
+                                
                                 bonus_found = True
                                 break
                             except ValueError:
@@ -685,7 +787,80 @@ class NexusPhpHandler(_ISiteHandler):
                     r'目前\s*[:：]?\s*([\d,\.]+)',
                     r'bonus\s*[:：]?\s*([\d,\.]+)',
                     r'([\d,\.]+)\s*个魔力值',
-                    r'([\d,\.]+)\s*个工分'
+                    r'([\d,\.]+)\s*个工分',
+                    
+                    # 特殊站点魔力值格式
+                    r'杏仁值\s*[:：]\s*([\d,\.]+)',
+                    r'UCoin\s*[:：]\s*([\d,\.]+)',
+                    r'麦粒\s*[:：]\s*([\d,\.]+)',
+                    r'银元\s*[:：]\s*([\d,\.]+)',
+                    r'电力值\s*[:：]\s*([\d,\.]+)',
+                    r'憨豆\s*[:：]\s*([\d,\.]+)',
+                    r'茉莉\s*[:：]\s*([\d,\.]+)',
+                    r'蟹币值*\s*[:：]\s*([\d,\.]+)',  # 修改：同时支持蟹币和蟹币值
+                    r'鲸币\s*[:：]\s*([\d,\.]+)',
+                    r'蝌蚪\s*[:：]\s*([\d,\.]+)',
+                    r'灵石\s*[:：]\s*([\d,\.]+)',
+                    r'爆米花\s*[:：]\s*([\d,\.]+)',
+                    r'冰晶\s*[:：]\s*([\d,\.]+)',
+                    r'魅力值\s*[:：]\s*([\d,\.]+)',
+                    r'猫粮\s*[:：]\s*([\d,\.]+)',
+                    r'星焱\s*[:：]\s*([\d,\.]+)',
+                    
+                    r'当前杏仁值[^(]*\(当前([\d,\.]+)\)',
+                    r'当前UCoin[^(]*\(当前([\d,\.]+)\)',
+                    r'当前麦粒[^(]*\(当前([\d,\.]+)\)',
+                    r'当前银元[^(]*\(当前([\d,\.]+)\)',
+                    r'当前电力值[^(]*\(当前([\d,\.]+)\)',
+                    r'当前憨豆[^(]*\(当前([\d,\.]+)\)',
+                    r'当前茉莉[^(]*\(当前([\d,\.]+)\)',
+                    r'当前蟹币值[^(]*\(当前([\d,\.]+)\)',
+                    r'当前鲸币[^(]*\(当前([\d,\.]+)\)',
+                    r'当前蝌蚪[^(]*\(当前([\d,\.]+)\)',
+                    r'当前灵石[^(]*\(当前([\d,\.]+)\)',
+                    r'当前爆米花[^(]*\(当前([\d,\.]+)\)',
+                    r'当前冰晶[^(]*\(当前([\d,\.]+)\)',
+                    r'当前魅力值[^(]*\(当前([\d,\.]+)\)',
+                    r'当前猫粮[^(]*\(当前([\d,\.]+)\)',
+                    r'当前星焱[^(]*\(当前([\d,\.]+)\)',
+                    
+                    r'当前([\d,\.]+)[^)]*杏仁值',
+                    r'当前([\d,\.]+)[^)]*UCoin',
+                    r'当前([\d,\.]+)[^)]*麦粒', 
+                    r'当前([\d,\.]+)[^)]*银元',
+                    r'当前([\d,\.]+)[^)]*电力值',
+                    r'当前([\d,\.]+)[^)]*憨豆',
+                    r'当前([\d,\.]+)[^)]*茉莉',
+                    r'当前([\d,\.]+)[^)]*蟹币值',
+                    r'当前([\d,\.]+)[^)]*鲸币',
+                    r'当前([\d,\.]+)[^)]*蝌蚪',
+                    r'当前([\d,\.]+)[^)]*灵石',
+                    r'当前([\d,\.]+)[^)]*爆米花',
+                    r'当前([\d,\.]+)[^)]*冰晶',
+                    r'当前([\d,\.]+)[^)]*魅力值',
+                    r'当前([\d,\.]+)[^)]*猫粮',
+                    r'当前([\d,\.]+)[^)]*星焱',
+                    r'当前([\d,\.]+)[^)]*音浪',
+                    r'当前([\d,\.]+)[^)]*金元宝',
+                    
+                    r'([\d,\.]+)\s*个杏仁值',
+                    r'([\d,\.]+)\s*个UCoin',
+                    r'([\d,\.]+)\s*个麦粒',
+                    r'([\d,\.]+)\s*个银元',
+                    r'([\d,\.]+)\s*个电力值',
+                    r'([\d,\.]+)\s*个憨豆',
+                    r'([\d,\.]+)\s*个茉莉',
+                    r'([\d,\.]+)\s*个蟹币值',
+                    r'([\d,\.]+)\s*个鲸币',
+                    r'([\d,\.]+)\s*个蝌蚪',
+                    r'([\d,\.]+)\s*个灵石',
+                    r'([\d,\.]+)\s*个爆米花',
+                    r'([\d,\.]+)\s*个冰晶',
+                    r'([\d,\.]+)\s*个魅力值',
+                    r'([\d,\.]+)\s*个猫粮',
+                    r'([\d,\.]+)\s*个星焱',
+                    r'([\d,\.]+)\s*个音浪',
+                    r'([\d,\.]+)\s*个金元宝'
                 ]
                 
                 # 页面文本
@@ -698,7 +873,14 @@ class NexusPhpHandler(_ISiteHandler):
                         bonus_str = bonus_match.group(1).replace(',', '')
                         try:
                             result["bonus"] = float(bonus_str)
-                            logger.info(f"站点 {site_name} 从页面文本中提取到魔力值/工分: {result['bonus']}")
+                            logger.info(f"站点 {site_name} 从页面文本中提取到魔力值/特殊积分: {result['bonus']}")
+                            
+                            # 检查是否在时魔相关上下文中
+                            context_text = page_text[max(0, page_text.find(bonus_str) - 50):page_text.find(bonus_str) + 50]
+                            if result["bonus"] < 100 and ('时魔' in context_text or '每小时' in context_text):
+                                logger.warning(f"站点 {site_name} 页面文本中提取的可能是时魔信息而非魔力值: {result['bonus']}")
+                                continue
+                            
                             break
                         except ValueError:
                             continue
@@ -711,7 +893,11 @@ class NexusPhpHandler(_ISiteHandler):
                 headers = table.select('td.colhead, th.colhead, td, th')
                 header_text = ' '.join([h.get_text().lower() for h in headers])
                 
-                if '魔力值' in header_text or '积分' in header_text or 'bonus' in header_text or '工分' in header_text:
+                bonus_keywords = ['魔力值', '积分', 'bonus', '工分', '杏仁值', 'ucoin', '麦粒', '银元', 
+                                 '电力值', '憨豆', '茉莉', '蟹币', '蟹币值', '鲸币', '蝌蚪', '灵石', '爆米花', 
+                                 '冰晶', '魅力值', '猫粮', '星焱', '音浪', '金元宝']
+                
+                if any(keyword in header_text for keyword in bonus_keywords):
                     # 遍历表格行
                     rows = table.select('tr')
                     for row in rows:
@@ -724,12 +910,16 @@ class NexusPhpHandler(_ISiteHandler):
                         
                         # 检查是否包含邀请关键词 - 增加更多可能的称呼
                         invite_keywords = [
-                            '邀请名额', '邀請名額', '邀请', 'invite', 
+                            '邀请名额', '邀請名額', '邀请名额', 'invite', 
                             '探视权', '探視權', '查看权', '查看權', 
-                            '临时邀请', '臨時邀請', '临时探视'
+                            '临时邀请名额', '臨時邀請名額', '临时探视'
                         ]
                         
-                        is_invite_row = any(keyword in row_text for keyword in invite_keywords)
+                        # 避免误识别 - 排除包含特定关键词的行
+                        exclude_keywords = ['魔力每小时', '每小时能获取', '当前每小时', '时魔', '纯做种', '做种时魔', '做种积分', '单种魔力']
+                        should_exclude = any(keyword in row_text for keyword in exclude_keywords)
+                        
+                        is_invite_row = any(keyword in row_text for keyword in invite_keywords) and not should_exclude
                         if is_invite_row:
                             # 判断是永久邀请还是临时邀请
                             is_temporary = '临时' in row_text or '臨時' in row_text or 'temporary' in row_text
@@ -741,7 +931,8 @@ class NexusPhpHandler(_ISiteHandler):
                             if len(cells) >= 3:
                                 for i, cell in enumerate(cells):
                                     cell_text = cell.get_text().lower()
-                                    if '价格' in cell_text or '魔力值' in cell_text or '积分' in cell_text or '售价' in cell_text or '工分' in cell_text:
+                                    price_keywords = ['价格', '售价', 'price'] + bonus_keywords
+                                    if any(keyword in cell_text for keyword in price_keywords):
                                         # 找到了价格列标题，下一列可能是价格
                                         if i+1 < len(cells):
                                             price_cell = cells[i+1]
@@ -763,12 +954,20 @@ class NexusPhpHandler(_ISiteHandler):
                                     if price_match:
                                         price = float(price_match.group(1).replace(',', ''))
                                         
-                                        if is_temporary:
-                                            result["temporary_invite_price"] = price
-                                            logger.info(f"站点 {site_name} 临时邀请价格: {price}")
-                                        else:
-                                            result["permanent_invite_price"] = price
-                                            logger.info(f"站点 {site_name} 永久邀请价格: {price}")
+                                        # 过滤不合理的邀请价格 - 通常邀请价格在数万到百万范围
+                                        # 排除可能是时魔/做种魔力信息的小数值
+                                        if price > 0:
+                                            # 邀请价格通常较大，小于100的可能是时魔信息
+                                            if price < 100:
+                                                logger.info(f"站点 {site_name} 忽略可能的时魔信息: {price}")
+                                                continue
+                                                
+                                            if is_temporary:
+                                                result["temporary_invite_price"] = price
+                                                logger.info(f"站点 {site_name} 临时邀请价格: {price}")
+                                            else:
+                                                result["permanent_invite_price"] = price
+                                                logger.info(f"站点 {site_name} 永久邀请价格: {price}")
                                 except ValueError:
                                     continue
             
