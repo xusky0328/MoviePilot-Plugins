@@ -3,13 +3,13 @@
     "name": "两步验证助手",
     "description": "懒人板2FA，配合浏览器扩展使用，支持自动弹出验证码一键复制",
     "labels": "TOTP,验证码,扩展",
-    "version": "1.2.5",
+    "version": "1.2.6",
     "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/2fa.png",
     "author": "madrays",
     "level": 1,
     "v2": true,
     "history": {
-      "v1.2.5": "基本调试稳定，请更新浏览器插件配合使用"
+      "v1.2.6": "满屏面板"
     }
   },
   "fnossign": {

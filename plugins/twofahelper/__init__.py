@@ -25,7 +25,7 @@ class twofahelper(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/2fa.png"
     # 插件版本
-    plugin_version = "1.2.5"
+    plugin_version = "1.2.6"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -214,13 +214,8 @@ class twofahelper(_PluginBase):
         # 获取验证码
         codes = self.get_all_codes()
         
-        # 列配置 - 优化布局，每行显示4个卡片，整体宽度限制为50%
-        col_config = {
-            "cols": 16,  # 增加总列数
-            "md": 4,     # 每行4个
-            "sm": 8,     # 小屏幕每行2个
-
-        }
+        # 列配置 - 移除所有宽度限制，完全铺满屏幕
+        col_config = {}  # 空字典表示不使用特定的列配置限制
         
         # 全局配置
         global_config = {
@@ -228,11 +223,49 @@ class twofahelper(_PluginBase):
             "title": "两步验证码",
             "subtitle": f"共 {len(codes)} 个站点",
             "border": True,
-            "style": "max-width: 850px; margin: 0 auto;" # 限制最大宽度并居中
+            "fullscreen": True,  # 使用全屏模式
+            "style": "width: 100vw !important; max-width: 100% !important; padding: 0 !important; margin: 0 !important;"  # 确保容器充满屏幕宽度
         }
         
         # 页面元素
         elements = []
+        
+        # 首先添加强制样式覆盖所有容器限制
+        elements.append({
+            "component": "style",
+            "text": """
+            /* 覆盖所有容器宽度限制 */
+            .dashboard-container,
+            .dashboard-container > .container,
+            .dashboard-container > .container > .row,
+            .dashboard-container > .container > .row > div,
+            .dashboard-card-container,
+            .v-card,
+            .v-container,
+            .v-container > .row,
+            .v-container > .row > div,
+            .v-main > .v-container,
+            .v-main > .v-container > .row,
+            .dashboard-container > .v-container,
+            .dashboard-container > .v-container > .row {
+                max-width: 100% !important;
+                width: 100% !important;
+                padding-left: 8px !important;
+                padding-right: 8px !important;
+                margin-left: 0 !important;
+                margin-right: 0 !important;
+            }
+            
+            .v-main__wrap {
+                max-width: 100% !important;
+            }
+            
+            /* 防止卡片过度拉伸 */
+            .v-card {
+                width: auto !important;
+            }
+            """
+        })
         
         if not codes:
             # 无验证码时显示提示信息
@@ -270,15 +303,16 @@ class twofahelper(_PluginBase):
             site_data = self._sites.get(site, {})
             favicon_info = self._get_favicon_url(urls, site, site_data)
             
-            # 为每个站点创建一个卡片，保证内容完整显示
+            # 为每个站点创建一个卡片
             card = {
                 "component": "VCol",
                 "props": {
-                    "cols": 16,  # 匹配总列数
-                    "sm": 8,     # 小屏幕每行2个
-                    "md": 4,     # 每行4个
-                    "lg": 4,     # 大屏幕每行4个
-                    "class": "pa-1"  # 减小内边距
+                    "cols": 12,  # 移动设备上单列
+                    "sm": 6,     # 小屏幕每行2个
+                    "md": 2,     # 中等屏幕每行3个
+                    "lg": 2,     # 大屏幕每行4个
+                    "xl": 2,     # 超大屏幕每行6个
+                    "class": "pa-1"  # 减小内边距使卡片更紧凑
                 },
                 "content": [
                     {
@@ -286,7 +320,7 @@ class twofahelper(_PluginBase):
                     "props": {
                             "class": "mx-auto",
                             "elevation": 1,
-                            "height": "160px",  # 增加高度确保显示完整
+                            "height": "160px",  # 固定高度确保显示完整
                         "variant": "outlined"
                         },
                         "content": [
@@ -492,7 +526,7 @@ class twofahelper(_PluginBase):
         elements.append({
             "component": "VRow",
             "props": {
-                "class": "pa-1",  # 减小内边距
+                "class": "ma-0",  # 移除外边距
                 "dense": True     # 使行更密集
             },
             "content": row_content
@@ -1279,11 +1313,12 @@ class twofahelper(_PluginBase):
                 cards.append({
                     'component': 'VCol',
                     'props': {
-                        'cols': 12,     # 移动设备上每行1个
+                        'cols': 12,     # 移动设备上单列
                         'sm': 6,        # 小屏幕每行2个
                         'md': 4,        # 中等屏幕每行3个
                         'lg': 3,        # 大屏幕每行4个
-                        'class': 'pa-2'  # 增加内边距使卡片间距更均匀
+                        'xl': 2,        # 超大屏幕每行6个
+                        'class': 'pa-1'  # 减小内边距使卡片更紧凑
                     },
                     'content': [{
                         'component': 'VCard',
@@ -1390,7 +1425,7 @@ class twofahelper(_PluginBase):
                                         'props': {
                                             'href': site_url,
                                             'target': '_blank',
-                                            'class': 'text-decoration-none text-body-2 text-truncate flex-grow-1',  # 使用一致的字体大小
+                                            'class': 'text-decoration-none text-body-2 text-truncate flex-grow-1',  # 使用更小的文字
                                             'style': 'max-width: 100%; color: inherit;',
                                             'title': f'访问 {site}'
                                         },
