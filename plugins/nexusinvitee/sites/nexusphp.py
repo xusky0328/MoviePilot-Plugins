@@ -109,54 +109,6 @@ class NexusPhpHandler(_ISiteHandler):
             # 解析邀请页面
             invite_result = self._parse_nexusphp_invite_page(site_name, response.text)
             
-            # 检查第一页后宫成员数量，如果少于50人，则不再翻页
-            if len(invite_result["invitees"]) < 50:
-                logger.info(f"站点 {site_name} 首页后宫成员数量少于50人({len(invite_result['invitees'])}人)，不再查找后续页面")
-                # 如果成功解析到后宫成员，记录总数
-                if invite_result["invitees"]:
-                    logger.info(f"站点 {site_name} 共解析到 {len(invite_result['invitees'])} 个后宫成员")
-                return invite_result
-            
-            # 尝试获取更多页面的后宫成员
-            next_page = 1  # 从第二页开始，因为第一页已经解析过了
-            max_pages = 100  # 防止无限循环
-            
-            # 继续获取后续页面，直到没有更多数据或达到最大页数
-            while next_page < max_pages:
-                next_page_url = urljoin(site_url, f"invite.php?id={user_id}&menu=invitee&page={next_page}")
-                logger.info(f"站点 {site_name} 正在获取第 {next_page+1} 页后宫成员数据: {next_page_url}")
-                
-                try:
-                    next_response = session.get(next_page_url, timeout=(10, 30))
-                    next_response.raise_for_status()
-                    
-                    # 解析下一页数据
-                    next_page_result = self._parse_nexusphp_invite_page(site_name, next_response.text, is_next_page=True)
-                    
-                    # 如果没有找到任何后宫成员，说明已到达最后一页
-                    if not next_page_result["invitees"]:
-                        logger.info(f"站点 {site_name} 第 {next_page+1} 页没有后宫成员数据，停止获取")
-                        break
-                    
-                    # 如果当前页面后宫成员少于50人，默认认为没有下一页，避免错误进入下一页
-                    if len(next_page_result["invitees"]) < 50:
-                        logger.info(f"站点 {site_name} 第 {next_page+1} 页后宫成员数量少于50人({len(next_page_result['invitees'])}人)，默认没有下一页")
-                        # 将当前页数据合并到结果中后退出循环
-                        invite_result["invitees"].extend(next_page_result["invitees"])
-                        logger.info(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
-                        break
-                    
-                    # 将下一页的后宫成员添加到结果中
-                    invite_result["invitees"].extend(next_page_result["invitees"])
-                    logger.info(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
-                    
-                    # 继续下一页
-                    next_page += 1
-                    
-                except Exception as e:
-                    logger.warning(f"站点 {site_name} 获取第 {next_page+1} 页数据失败: {str(e)}")
-                    break
-            
             # 获取魔力值商店页面，尝试解析邀请价格
             try:
                 bonus_url = urljoin(site_url, "mybonus.php")
@@ -216,6 +168,54 @@ class NexusPhpHandler(_ISiteHandler):
                     
             except Exception as e:
                 logger.warning(f"站点 {site_name} 解析魔力值商店失败: {str(e)}")
+            
+            # 检查第一页后宫成员数量，如果少于50人，则不再翻页
+            if len(invite_result["invitees"]) < 50:
+                logger.info(f"站点 {site_name} 首页后宫成员数量少于50人({len(invite_result['invitees'])}人)，不再查找后续页面")
+                # 如果成功解析到后宫成员，记录总数
+                if invite_result["invitees"]:
+                    logger.info(f"站点 {site_name} 共解析到 {len(invite_result['invitees'])} 个后宫成员")
+                return invite_result
+            
+            # 尝试获取更多页面的后宫成员
+            next_page = 1  # 从第二页开始，因为第一页已经解析过了
+            max_pages = 100  # 防止无限循环
+            
+            # 继续获取后续页面，直到没有更多数据或达到最大页数
+            while next_page < max_pages:
+                next_page_url = urljoin(site_url, f"invite.php?id={user_id}&menu=invitee&page={next_page}")
+                logger.info(f"站点 {site_name} 正在获取第 {next_page+1} 页后宫成员数据: {next_page_url}")
+                
+                try:
+                    next_response = session.get(next_page_url, timeout=(10, 30))
+                    next_response.raise_for_status()
+                    
+                    # 解析下一页数据
+                    next_page_result = self._parse_nexusphp_invite_page(site_name, next_response.text, is_next_page=True)
+                    
+                    # 如果没有找到任何后宫成员，说明已到达最后一页
+                    if not next_page_result["invitees"]:
+                        logger.info(f"站点 {site_name} 第 {next_page+1} 页没有后宫成员数据，停止获取")
+                        break
+                    
+                    # 如果当前页面后宫成员少于50人，默认认为没有下一页，避免错误进入下一页
+                    if len(next_page_result["invitees"]) < 50:
+                        logger.info(f"站点 {site_name} 第 {next_page+1} 页后宫成员数量少于50人({len(next_page_result['invitees'])}人)，默认没有下一页")
+                        # 将当前页数据合并到结果中后退出循环
+                        invite_result["invitees"].extend(next_page_result["invitees"])
+                        logger.info(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
+                        break
+                    
+                    # 将下一页的后宫成员添加到结果中
+                    invite_result["invitees"].extend(next_page_result["invitees"])
+                    logger.info(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
+                    
+                    # 继续下一页
+                    next_page += 1
+                    
+                except Exception as e:
+                    logger.warning(f"站点 {site_name} 获取第 {next_page+1} 页数据失败: {str(e)}")
+                    break
             
             # 访问发送邀请页面，这是判断权限的关键
             send_invite_url = urljoin(site_url, f"invite.php?id={user_id}&type=new")

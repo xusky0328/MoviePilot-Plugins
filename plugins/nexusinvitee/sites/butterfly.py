@@ -80,6 +80,66 @@ class ButterflyHandler(_ISiteHandler):
             # 解析邀请页面
             invite_result = self._parse_butterfly_invite_page(site_name, site_url, response.text)
             
+            # 获取魔力值商店页面，尝试解析邀请价格
+            try:
+                bonus_url = urljoin(site_url, "mybonus.php")
+                bonus_response = session.get(bonus_url, timeout=(10, 30))
+                if bonus_response.status_code == 200:
+                    # 解析魔力值和邀请价格
+                    bonus_data = self._parse_bonus_shop(site_name, bonus_response.text)
+                    # 更新邀请状态
+                    invite_result["invite_status"]["bonus"] = bonus_data["bonus"]
+                    invite_result["invite_status"]["permanent_invite_price"] = bonus_data["permanent_invite_price"]
+                    invite_result["invite_status"]["temporary_invite_price"] = bonus_data["temporary_invite_price"]
+                    
+                    # 判断是否可以购买邀请
+                    if bonus_data["bonus"] > 0:
+                        # 计算可购买的邀请数量
+                        can_buy_permanent = 0
+                        can_buy_temporary = 0
+                        
+                        if bonus_data["permanent_invite_price"] > 0:
+                            can_buy_permanent = int(bonus_data["bonus"] / bonus_data["permanent_invite_price"])
+                        
+                        if bonus_data["temporary_invite_price"] > 0:
+                            can_buy_temporary = int(bonus_data["bonus"] / bonus_data["temporary_invite_price"])
+                            
+                        # 更新邀请状态的原因字段
+                        if invite_result["invite_status"]["reason"] and not invite_result["invite_status"]["can_invite"]:
+                            # 如果有原因且不能邀请
+                            if can_buy_temporary > 0 or can_buy_permanent > 0:
+                                invite_method = ""
+                                if can_buy_temporary > 0 and bonus_data["temporary_invite_price"] > 0:
+                                    invite_method += f"临时邀请({can_buy_temporary}个,{bonus_data['temporary_invite_price']}魔力/个)"
+                                
+                                if can_buy_permanent > 0 and bonus_data["permanent_invite_price"] > 0:
+                                    if invite_method:
+                                        invite_method += ","
+                                    invite_method += f"永久邀请({can_buy_permanent}个,{bonus_data['permanent_invite_price']}魔力/个)"
+                                
+                                if invite_method:
+                                    invite_result["invite_status"]["reason"] += f"，但您的魔力值({bonus_data['bonus']})可购买{invite_method}"
+                                    # 如果可以购买且没有现成邀请，也视为可邀请
+                                    if invite_result["invite_status"]["permanent_count"] == 0 and invite_result["invite_status"]["temporary_count"] == 0:
+                                        invite_result["invite_status"]["can_invite"] = True
+                        else:
+                            # 如果没有原因或者已经可以邀请
+                            if can_buy_temporary > 0 or can_buy_permanent > 0:
+                                invite_method = ""
+                                if can_buy_temporary > 0 and bonus_data["temporary_invite_price"] > 0:
+                                    invite_method += f"临时邀请({can_buy_temporary}个,{bonus_data['temporary_invite_price']}魔力/个)"
+                                
+                                if can_buy_permanent > 0 and bonus_data["permanent_invite_price"] > 0:
+                                    if invite_method:
+                                        invite_method += ","
+                                    invite_method += f"永久邀请({can_buy_permanent}个,{bonus_data['permanent_invite_price']}魔力/个)"
+                                
+                                if invite_method and invite_result["invite_status"]["reason"]:
+                                    invite_result["invite_status"]["reason"] += f"，魔力值({bonus_data['bonus']})可购买{invite_method}"
+                    
+            except Exception as e:
+                logger.warning(f"站点 {site_name} 解析魔力值商店失败: {str(e)}")
+            
             # 检查第一页后宫成员数量，如果少于50人，则不再翻页
             if len(invite_result["invitees"]) < 50:
                 logger.info(f"站点 {site_name} 首页后宫成员数量少于50人({len(invite_result['invitees'])}人)，不再查找后续页面")
@@ -149,66 +209,6 @@ class ButterflyHandler(_ISiteHandler):
                 except Exception as e:
                     logger.warning(f"站点 {site_name} 获取第 {current_page+2} 页数据失败: {str(e)}")
                     break
-            
-            # 获取魔力值商店页面，尝试解析邀请价格
-            try:
-                bonus_url = urljoin(site_url, "mybonus.php")
-                bonus_response = session.get(bonus_url, timeout=(10, 30))
-                if bonus_response.status_code == 200:
-                    # 解析魔力值和邀请价格
-                    bonus_data = self._parse_bonus_shop(site_name, bonus_response.text)
-                    # 更新邀请状态
-                    invite_result["invite_status"]["bonus"] = bonus_data["bonus"]
-                    invite_result["invite_status"]["permanent_invite_price"] = bonus_data["permanent_invite_price"]
-                    invite_result["invite_status"]["temporary_invite_price"] = bonus_data["temporary_invite_price"]
-                    
-                    # 判断是否可以购买邀请
-                    if bonus_data["bonus"] > 0:
-                        # 计算可购买的邀请数量
-                        can_buy_permanent = 0
-                        can_buy_temporary = 0
-                        
-                        if bonus_data["permanent_invite_price"] > 0:
-                            can_buy_permanent = int(bonus_data["bonus"] / bonus_data["permanent_invite_price"])
-                        
-                        if bonus_data["temporary_invite_price"] > 0:
-                            can_buy_temporary = int(bonus_data["bonus"] / bonus_data["temporary_invite_price"])
-                            
-                        # 更新邀请状态的原因字段
-                        if invite_result["invite_status"]["reason"] and not invite_result["invite_status"]["can_invite"]:
-                            # 如果有原因且不能邀请
-                            if can_buy_temporary > 0 or can_buy_permanent > 0:
-                                invite_method = ""
-                                if can_buy_temporary > 0 and bonus_data["temporary_invite_price"] > 0:
-                                    invite_method += f"临时邀请({can_buy_temporary}个,{bonus_data['temporary_invite_price']}魔力/个)"
-                                
-                                if can_buy_permanent > 0 and bonus_data["permanent_invite_price"] > 0:
-                                    if invite_method:
-                                        invite_method += ","
-                                    invite_method += f"永久邀请({can_buy_permanent}个,{bonus_data['permanent_invite_price']}魔力/个)"
-                                
-                                if invite_method:
-                                    invite_result["invite_status"]["reason"] += f"，但您的魔力值({bonus_data['bonus']})可购买{invite_method}"
-                                    # 如果可以购买且没有现成邀请，也视为可邀请
-                                    if invite_result["invite_status"]["permanent_count"] == 0 and invite_result["invite_status"]["temporary_count"] == 0:
-                                        invite_result["invite_status"]["can_invite"] = True
-                        else:
-                            # 如果没有原因或者已经可以邀请
-                            if can_buy_temporary > 0 or can_buy_permanent > 0:
-                                invite_method = ""
-                                if can_buy_temporary > 0 and bonus_data["temporary_invite_price"] > 0:
-                                    invite_method += f"临时邀请({can_buy_temporary}个,{bonus_data['temporary_invite_price']}魔力/个)"
-                                
-                                if can_buy_permanent > 0 and bonus_data["permanent_invite_price"] > 0:
-                                    if invite_method:
-                                        invite_method += ","
-                                    invite_method += f"永久邀请({can_buy_permanent}个,{bonus_data['permanent_invite_price']}魔力/个)"
-                                
-                                if invite_method and invite_result["invite_status"]["reason"]:
-                                    invite_result["invite_status"]["reason"] += f"，魔力值({bonus_data['bonus']})可购买{invite_method}"
-                    
-            except Exception as e:
-                logger.warning(f"站点 {site_name} 解析魔力值商店失败: {str(e)}")
             
             # 如果成功解析到后宫成员，记录总数
             if invite_result["invitees"]:

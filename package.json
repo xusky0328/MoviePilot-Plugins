@@ -45,13 +45,13 @@
     "name": "后宫管理系统",
     "description": "管理添加到MP站点的邀请系统，包括邀请名额、已邀请用户状态等",
     "labels": "PT,后宫,邀请",
-    "version": "1.1.4",
+    "version": "1.1.5",
     "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png",
     "author": "madrays",
     "level": 2,
     "v2": true,
     "history": {
-      "v1.1.4": "修复分享率计算错误，增加翻页支持，感谢Wahson大佬鼎力支持"
+      "v1.1.5": "修复分享率计算错误，增加翻页支持，感谢Wahson大佬鼎力支持"
     }
   }
 } 
