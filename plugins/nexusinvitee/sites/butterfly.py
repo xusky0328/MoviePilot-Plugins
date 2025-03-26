@@ -146,69 +146,95 @@ class ButterflyHandler(_ISiteHandler):
                 # 如果成功解析到后宫成员，记录总数
                 if invite_result["invitees"]:
                     logger.info(f"站点 {site_name} 共解析到 {len(invite_result['invitees'])} 个后宫成员")
-                return invite_result
-            
-            # 尝试获取更多页面的后宫成员
-            current_page = 0  # 已获取了第一页，从第二页开始查找
-            max_pages = 100  # 防止无限循环
-            
-            # 从首页中查找下一页链接
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # 继续获取后续页面，直到没有更多数据或达到最大页数
-            while current_page < max_pages:
-                # 查找下一页链接 - 蝶粉站点特有的繁体翻页标识："下一頁"
-                next_page_link = None
-                pagination_links = soup.select('a')
+                # 不要在这里返回结果，继续执行后面的发送邀请页面访问代码
+            else:
+                # 尝试获取更多页面的后宫成员
+                current_page = 0  # 已获取了第一页，从第二页开始查找
+                max_pages = 100  # 防止无限循环
                 
-                for link in pagination_links:
-                    link_text = link.get_text().strip()
-                    if "下一頁" in link_text or "下一页" in link_text:
-                        next_page_link = link.get('href')
-                        break
+                # 从首页中查找下一页链接
+                soup = BeautifulSoup(response.text, 'html.parser')
                 
-                # 如果找不到下一页链接，结束翻页
-                if not next_page_link:
-                    logger.info(f"站点 {site_name} 没有找到下一页链接，停止获取")
-                    break
-                
-                # 构建下一页URL并请求
-                next_page_url = urljoin(site_url, next_page_link)
-                logger.info(f"站点 {site_name} 正在获取第 {current_page+2} 页后宫成员数据: {next_page_url}")
-                
-                try:
-                    next_response = session.get(next_page_url, timeout=(10, 30))
-                    next_response.raise_for_status()
+                # 继续获取后续页面，直到没有更多数据或达到最大页数
+                while current_page < max_pages:
+                    # 查找下一页链接 - 蝶粉站点特有的繁体翻页标识："下一頁"
+                    next_page_link = None
+                    pagination_links = soup.select('a')
                     
-                    # 更新soup以便下次查找翻页链接
-                    soup = BeautifulSoup(next_response.text, 'html.parser')
+                    for link in pagination_links:
+                        link_text = link.get_text().strip()
+                        if "下一頁" in link_text or "下一页" in link_text:
+                            next_page_link = link.get('href')
+                            break
                     
-                    # 解析下一页数据
-                    next_page_result = self._parse_butterfly_invite_page(site_name, site_url, next_response.text, is_next_page=True)
-                    
-                    # 如果没有找到任何后宫成员，说明已到达最后一页
-                    if not next_page_result["invitees"]:
-                        logger.info(f"站点 {site_name} 第 {current_page+2} 页没有后宫成员数据，停止获取")
+                    # 如果找不到下一页链接，结束翻页
+                    if not next_page_link:
+                        logger.info(f"站点 {site_name} 没有找到下一页链接，停止获取")
                         break
                     
-                    # 如果当前页面后宫成员少于50人，默认认为没有下一页，避免错误进入下一页
-                    if len(next_page_result["invitees"]) < 50:
-                        logger.info(f"站点 {site_name} 第 {current_page+2} 页后宫成员数量少于50人({len(next_page_result['invitees'])}人)，默认没有下一页")
-                        # 将当前页数据合并到结果中后退出循环
+                    # 构建下一页URL并请求
+                    next_page_url = urljoin(site_url, next_page_link)
+                    logger.info(f"站点 {site_name} 正在获取第 {current_page+2} 页后宫成员数据: {next_page_url}")
+                    
+                    try:
+                        next_response = session.get(next_page_url, timeout=(10, 30))
+                        next_response.raise_for_status()
+                        
+                        # 更新soup以便下次查找翻页链接
+                        soup = BeautifulSoup(next_response.text, 'html.parser')
+                        
+                        # 解析下一页数据
+                        next_page_result = self._parse_butterfly_invite_page(site_name, site_url, next_response.text, is_next_page=True)
+                        
+                        # 如果没有找到任何后宫成员，说明已到达最后一页
+                        if not next_page_result["invitees"]:
+                            logger.info(f"站点 {site_name} 第 {current_page+2} 页没有后宫成员数据，停止获取")
+                            break
+                        
+                        # 如果当前页面后宫成员少于50人，默认认为没有下一页，避免错误进入下一页
+                        if len(next_page_result["invitees"]) < 50:
+                            logger.info(f"站点 {site_name} 第 {current_page+2} 页后宫成员数量少于50人({len(next_page_result['invitees'])}人)，默认没有下一页")
+                            # 将当前页数据合并到结果中后退出循环
+                            invite_result["invitees"].extend(next_page_result["invitees"])
+                            logger.info(f"站点 {site_name} 第 {current_page+2} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
+                            break
+                        
+                        # 将下一页的后宫成员添加到结果中
                         invite_result["invitees"].extend(next_page_result["invitees"])
                         logger.info(f"站点 {site_name} 第 {current_page+2} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
+                        
+                        # 继续下一页
+                        current_page += 1
+                        
+                    except Exception as e:
+                        logger.warning(f"站点 {site_name} 获取第 {current_page+2} 页数据失败: {str(e)}")
                         break
+            
+            # 访问发送邀请页面，这是判断权限的关键
+            send_invite_url = urljoin(site_url, f"invite.php?id={user_id}&type=new")
+            try:
+                send_response = session.get(send_invite_url, timeout=(10, 30))
+                send_response.raise_for_status()
+                
+                # 解析发送邀请页面
+                send_page_result = self._parse_butterfly_invite_page(site_name, site_url, send_response.text, is_send_page=True)
+                
+                # 如果发送页面发现了权限问题，更新邀请状态
+                if send_page_result["invite_status"]["reason"]:
+                    # 特殊处理邀请数量不足的情况
+                    if "邀請數量不足" in send_page_result["invite_status"]["reason"]:
+                        invite_result["invite_status"]["can_invite"] = True
+                        # 保留原始错误消息
+                        invite_result["invite_status"]["reason"] = send_page_result["invite_status"]["reason"]
+                    else:
+                        # 其他限制情况，更新状态
+                        invite_result["invite_status"]["can_invite"] = send_page_result["invite_status"]["can_invite"]
+                        invite_result["invite_status"]["reason"] = send_page_result["invite_status"]["reason"]
                     
-                    # 将下一页的后宫成员添加到结果中
-                    invite_result["invitees"].extend(next_page_result["invitees"])
-                    logger.info(f"站点 {site_name} 第 {current_page+2} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
-                    
-                    # 继续下一页
-                    current_page += 1
-                    
-                except Exception as e:
-                    logger.warning(f"站点 {site_name} 获取第 {current_page+2} 页数据失败: {str(e)}")
-                    break
+                    logger.info(f"站点 {site_name} 从发送页面更新了邀请状态: {invite_result['invite_status']['reason']}")
+                
+            except Exception as e:
+                logger.warning(f"站点 {site_name} 访问发送邀请页面失败: {str(e)}")
             
             # 如果成功解析到后宫成员，记录总数
             if invite_result["invitees"]:
@@ -221,13 +247,14 @@ class ButterflyHandler(_ISiteHandler):
             result["invite_status"]["reason"] = f"解析邀请页面失败: {str(e)}"
             return result
     
-    def _parse_butterfly_invite_page(self, site_name: str, site_url: str, html_content: str, is_next_page: bool = False) -> Dict[str, Any]:
+    def _parse_butterfly_invite_page(self, site_name: str, site_url: str, html_content: str, is_next_page: bool = False, is_send_page: bool = False) -> Dict[str, Any]:
         """
         解析蝶粉站点邀请页面HTML内容
         :param site_name: 站点名称
         :param site_url: 站点URL
         :param html_content: HTML内容
         :param is_next_page: 是否是翻页内容，如果是则只提取后宫成员数据
+        :param is_send_page: 是否是发送邀请页面
         :return: 解析结果
         """
         result = {
@@ -253,7 +280,7 @@ class ButterflyHandler(_ISiteHandler):
                 special_title = True
         
         # 如果不是翻页内容，解析邀请状态
-        if not is_next_page:
+        if not is_next_page and not is_send_page:
             # 先检查info_block中的邀请信息
             info_block = soup.select_one('#info_block')
             if info_block:
@@ -327,6 +354,97 @@ class ButterflyHandler(_ISiteHandler):
                 result["invite_status"]["can_invite"] = False
                 result["invite_status"]["reason"] = disabled_text
                 logger.info(f"站点 {site_name} 邀请按钮被禁用: {disabled_text}")
+            
+            # 检查"对不起"消息 - 处理"邀请数量不足"等情况
+            sorry_title = soup.find('h2', text=lambda t: t and ('對不起' in t or '对不起' in t or 'Sorry' in t))
+            if sorry_title:
+                # 查找包含具体原因的表格单元格
+                text_td = None
+                for parent in sorry_title.parents:
+                    if parent.name == 'table':
+                        text_td = parent.select_one('td.text')
+                        if not text_td:
+                            text_td = parent.select_one('td')
+                        break
+                
+                if text_td:
+                    error_text = text_td.get_text(strip=True)
+                    logger.info(f"站点 {site_name} 发现对不起消息: {error_text}")
+                    
+                    # 特殊处理：邀请数量不足 - 使用繁体字匹配
+                    if '邀請數量不足' in error_text:
+                        result["invite_status"]["can_invite"] = True
+                        # 保留原始错误消息文本，不要翻译
+                        result["invite_status"]["reason"] = error_text
+                        logger.info(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足")
+                    else:
+                        # 其他限制情况
+                        result["invite_status"]["can_invite"] = False
+                        result["invite_status"]["reason"] = error_text
+                        logger.info(f"站点 {site_name} 不可发送邀请，原因: {error_text}")
+                    
+            # 检查是否是发送邀请页面 - 如果能找到takeinvite.php表单，说明可以发送邀请
+            invite_form = soup.select_one('form[action*="takeinvite.php"]')
+            if invite_form and not result["invite_status"]["reason"]:
+                # 检查表单中是否有未禁用的提交按钮
+                submit_btn = invite_form.select_one('input[type="submit"]:not([disabled])')
+                if submit_btn:
+                    result["invite_status"]["can_invite"] = True
+                    if not result["invite_status"]["reason"]:
+                        result["invite_status"]["reason"] = "可以发送邀请"
+                    logger.info(f"站点 {site_name} 可以发送邀请，确认有takeinvite表单")
+        
+        # 特殊处理发送邀请页面
+        if is_send_page:
+            # 直接检查是否有"对不起"消息
+            sorry_blocks = []
+            
+            # 查找"对不起"标题 - 使用繁体字
+            h2_sorry = soup.find('h2', text=lambda t: t and ('對不起' in t or 'Sorry' in t))
+            if h2_sorry:
+                sorry_blocks.append(h2_sorry)
+            
+            # 处理找到的对不起区块
+            for block in sorry_blocks:
+                # 查找相关联的表格单元格
+                text_cell = None
+                for parent in block.parents:
+                    if parent.name == 'table':
+                        text_cell = parent.select_one('td.text')
+                        if not text_cell:
+                            text_cell = parent.select_one('td')
+                        break
+                
+                if text_cell:
+                    error_msg = text_cell.get_text(strip=True)
+                    logger.info(f"站点 {site_name} 发送页面发现对不起消息: {error_msg}")
+                    
+                    # 特殊处理：邀请数量不足情况 - 使用繁体字匹配
+                    if '邀請數量不足' in error_msg:
+                        result["invite_status"]["can_invite"] = True
+                        # 保留原始错误消息
+                        result["invite_status"]["reason"] = error_msg
+                        logger.info(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足")
+                    else:
+                        # 其他限制情况
+                        result["invite_status"]["can_invite"] = False
+                        result["invite_status"]["reason"] = error_msg
+                        logger.info(f"站点 {site_name} 不可发送邀请，原因: {error_msg}")
+                    break
+            
+            # 如果没有对不起消息，检查是否有表单
+            if not result["invite_status"]["reason"]:
+                invite_form = soup.select_one('form[action*="takeinvite.php"]')
+                if invite_form:
+                    result["invite_status"]["can_invite"] = True
+                    result["invite_status"]["reason"] = "可以发送邀请"
+                    logger.info(f"站点 {site_name} 发送页面可以发送邀请")
+                else:
+                    # 如果既没有对不起消息也没有表单，可能是其他限制
+                    if not result["invite_status"]["reason"]:
+                        result["invite_status"]["can_invite"] = False
+                        result["invite_status"]["reason"] = "无法发送邀请，请查看页面了解原因"
+                        logger.info(f"站点 {site_name} 发送页面无法找到表单或错误消息")
         
         # 蝶粉站点特殊处理
         # 直接查找border="1"的表格，这通常是用户列表表格

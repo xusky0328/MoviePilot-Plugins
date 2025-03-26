@@ -25,7 +25,6 @@ from app.schemas.types import NotificationType, EventType
 from app.db.site_oper import SiteOper
 from app.helper.sites import SitesHelper
 
-from plugins.nexusinvitee.config import ConfigManager
 from plugins.nexusinvitee.data import DataManager
 from plugins.nexusinvitee.utils import NotificationHelper, SiteHelper
 from plugins.nexusinvitee.module_loader import ModuleLoader
@@ -56,7 +55,7 @@ class nexusinvitee(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png"
     # 插件版本
-    plugin_version = "1.1.5"
+    plugin_version = "1.1.6"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -69,7 +68,6 @@ class nexusinvitee(_PluginBase):
     auth_level = 2
 
     # 私有属性
-    _config = {}  # 配置字典
     _enabled = False
     _notify = False
     _cron = "0 9 * * *"  # 默认每天早上9点检查一次
@@ -81,7 +79,6 @@ class nexusinvitee(_PluginBase):
     siteoper: SiteOper = None
     
     # 配置和数据管理器
-    config_manager: ConfigManager = None
     data_manager: DataManager = None
     
     # 通知助手
@@ -89,6 +86,9 @@ class nexusinvitee(_PluginBase):
     
     # 站点处理器列表
     _site_handlers = []
+
+    # 定时器
+    _scheduler: Optional[BackgroundScheduler] = None
 
     def init_plugin(self, config=None):
         """
@@ -107,11 +107,7 @@ class nexusinvitee(_PluginBase):
             except Exception as e:
                 logger.error(f"创建数据目录失败: {str(e)}")
         
-        # 获取配置文件路径
-        self.config_file = os.path.join(data_path, "config.json")
-        
-        # 初始化配置和数据管理器
-        self.config_manager = ConfigManager(data_path)
+        # 初始化数据管理器（仅保留数据存储，移除配置存储）
         self.data_manager = DataManager(data_path)
         
         # 初始化通知助手
@@ -120,9 +116,6 @@ class nexusinvitee(_PluginBase):
         # 加载站点处理器
         self._site_handlers = ModuleLoader.load_site_handlers()
         logger.info(f"加载了 {len(self._site_handlers)} 个站点处理器")
-        
-        # 从文件加载配置
-        self._sync_from_file()
 
         # 停止现有服务
         self.stop_service()
@@ -134,21 +127,32 @@ class nexusinvitee(_PluginBase):
             self._cron = config.get("cron", "0 9 * * *")
             self._onlyonce = config.get("onlyonce", False)
             
-            # 如果配置中有站点ID
-            if config.get("site_ids"):
-                self._nexus_sites = config.get("site_ids", [])
+            # 处理站点ID
+            self._nexus_sites = []
+            if "site_ids" in config:
+                for site_id in config.get("site_ids", []):
+                    # 确保site_id为整数
+                    try:
+                        if isinstance(site_id, str) and site_id.isdigit():
+                            self._nexus_sites.append(int(site_id))
+                        elif isinstance(site_id, int):
+                            self._nexus_sites.append(site_id)
+                    except:
+                        pass
             
-            # 更新配置
-            self._sync_to_file()
+            logger.info(f"从配置加载的站点ID: {self._nexus_sites}")
+            
+            # 保存配置
+            self.__update_config()
         
         # 如果启用了插件
         if self._enabled:
             # 检查是否配置了站点
             if not self._nexus_sites:
-                logger.warning("未选择任何站点，插件将无法正常工作")
+                logger.info("未选择任何站点，将使用所有站点")
             else:
                 logger.info(f"后宫管理系统初始化完成，已选择 {len(self._nexus_sites)} 个站点")
-    
+
         # 立即运行一次
         if self._onlyonce:
             try:
@@ -162,7 +166,7 @@ class nexusinvitee(_PluginBase):
                 # 关闭一次性开关
                 self._onlyonce = False
                 # 保存配置
-                self._sync_to_file()
+                self.__update_config()
                 
                 # 启动任务
                 if self._scheduler and self._scheduler.get_jobs():
@@ -170,6 +174,22 @@ class nexusinvitee(_PluginBase):
                     self._scheduler.start()
             except Exception as e:
                 logger.error(f"启动一次性任务失败: {str(e)}")
+
+    def __update_config(self):
+        """
+        更新配置到MoviePilot系统
+        """
+        # 保存配置到MP
+        config = {
+            "enabled": self._enabled,
+            "notify": self._notify,
+            "cron": self._cron,
+            "onlyonce": self._onlyonce,
+            "site_ids": self._nexus_sites
+        }
+        # 使用父类的update_config方法而不是自己的方法，避免递归
+        super().update_config(config)
+        logger.debug(f"配置已更新: {config}")
 
     def get_state(self) -> bool:
         """
@@ -677,29 +697,6 @@ class nexusinvitee(_PluginBase):
                                 },
                                 'content': [
                                     {
-                                        'component': 'VAlert',
-                                        'props': {
-                                            'type': 'warning',
-                                            'variant': 'tonal',
-                                            'density': 'compact',
-                                            'text': '注意！"立即运行一次"开关：由于数据存储特殊性，使用后需手动关闭，请在数据刷新后再次关闭此开关并保存',
-                                            'class': 'mt-2 mb-4'
-                                        }
-                                    }
-                                ]
-                            }
-                        ]
-                    },
-                    {
-                        'component': 'VRow',
-                        'content': [
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12
-                                },
-                                'content': [
-                                    {
                                         'component': 'VSelect',
                                         'props': {
                                             'model': 'site_ids',
@@ -709,7 +706,7 @@ class nexusinvitee(_PluginBase):
                                             'chips': True,
                                             'clearable': True,
                                             'persistent-hint': True,
-                                            'hint': '选择要管理的站点，支持多选'
+                                            'hint': '选择刷新的站点，支持多选，不选择则默认所有站点，刷新方式为增量刷新（不清空旧数据）'
                                         }
                                     }
                                 ]
@@ -750,7 +747,7 @@ class nexusinvitee(_PluginBase):
                                         'props': {
                                             'type': 'info',
                                             'variant': 'tonal',
-                                            'text': '【使用说明】\n本插件适配各站点中，不排除bug，目前尚未适配mt、ptt、ttg等，以及我没有的站点，欢迎大佬们报错时提交错误站点的邀请页和发邀页html结构\n1. 选择要管理的站点（支持多选）\n2. 设置执行周期，建议每天早上9点执行一次\n3. 可选择开启通知，在状态变更时收到通知\n4. 【特别说明】"立即运行一次"开关：由于配置特殊性，使用后需手动关闭，请在数据刷新后再次关闭此开关并保存\n5. 本插件不会自动刷新数据，打开详情页也不会自动刷新数据，需手动刷新'
+                                            'text': '【使用说明】\n本插件适配各站点中，不排除bug，目前尚未适配ptt、ttg等，以及我没有的站点，欢迎大佬们报错时提交错误站点的邀请页和发邀页html结构\n1. 选择要管理的站点（支持多选，不选择则默认管理所有站点）\n2. 设置执行周期，建议每天早上9点执行一次\n3. 可选择开启通知，在状态变更时收到通知\n4. 本插件不会自动刷新数据，打开详情页也不会自动刷新数据，需手动刷新'
                                         }
                                     }
                                 ]
@@ -1021,7 +1018,7 @@ class nexusinvitee(_PluginBase):
                 "component": "VAlert",
                 "props": {
                     "type": "warning",
-                    "text": "如需刷新数据，请在配置页面打开\"立即运行一次\"开关并保存，使用后记得关闭该开关并再次保存",
+                    "text": "如需刷新数据，请在配置页面打开\"立即运行一次\"开关并保存立即刷新数据",
                     "variant": "tonal",
                     "class": "mb-4"
                 }
@@ -2820,17 +2817,17 @@ class nexusinvitee(_PluginBase):
 
     def stop_service(self):
         """
-        停止插件服务
+        停止现有服务
         """
-        logger.info("后宫管理系统插件停止服务")
         try:
             if hasattr(self, '_scheduler') and self._scheduler:
-                # 停止定时任务
+                self._scheduler.remove_all_jobs()
                 if self._scheduler.running:
                     self._scheduler.shutdown()
                 self._scheduler = None
+                logger.info("后宫管理系统服务已停止")
         except Exception as e:
-            logger.error(f"停止服务失败: {str(e)}")
+            logger.error(f"停止后宫管理系统服务失败: {str(e)}")
 
     def _get_site_invite_data(self, site_name):
         """
@@ -2921,7 +2918,7 @@ class nexusinvitee(_PluginBase):
                 }
 
             # 先验证此站点是否在用户选择的站点列表中
-            if str(site_id) not in [str(x) for x in self._nexus_sites]:
+            if self._nexus_sites and str(site_id) not in [str(x) for x in self._nexus_sites]:
                 logger.warning(f"站点 {site_name} 不在用户选择的站点列表中，跳过处理")
                 return {
                     "error": "站点未被选择",
@@ -3049,20 +3046,6 @@ class nexusinvitee(_PluginBase):
                 }
             }
 
-    def get_config(self, apikey: str) -> Response:
-        """
-        获取配置
-        """
-        if apikey != settings.API_TOKEN:
-            return Response(success=False, message="API令牌错误!")
-        
-        try:
-            config = self.config_manager.get_config()
-            return Response(success=True, message="获取成功", data=config)
-        except Exception as e:
-            logger.error(f"获取配置失败: {str(e)}")
-            return Response(success=False, message=f"获取配置失败: {str(e)}")
-
     def get_invitees(self, apikey: str = None, site_name: str = None) -> dict:
         """
         获取后宫成员API接口
@@ -3117,12 +3100,12 @@ class nexusinvitee(_PluginBase):
 
                 return {
                     "code": 0,
-                        "message": f"数据刷新成功: {result.get('success')}个站点, 失败: {result.get('error')}个站点",
-                        "data": {
-                            "last_update": last_update,
+                    "message": f"增量数据刷新成功: {result.get('success')}个站点, 失败: {result.get('error')}个站点",
+                    "data": {
+                        "last_update": last_update,
                         "site_count": len(site_data),
-                            "success": result.get("success", 0),
-                            "error": result.get("error", 0)
+                        "success": result.get("success", 0),
+                        "error": result.get("error", 0)
                     }
                 }
             else:
@@ -3241,39 +3224,52 @@ class nexusinvitee(_PluginBase):
             
             self._refreshing = True
             
-            # 记录刷新开始
-            logger.info("开始刷新站点数据")
+            # 记录刷新开始 - 说明是增量更新模式
+            logger.info("开始增量刷新站点数据，只更新选择的站点，失败时保留旧数据")
             
-            if not self._nexus_sites:
-                logger.error("没有选择任何站点，请先在配置中选择站点")
-                return {"success": 0, "error": 0}
-
+            # 调试记录当前已选择的站点ID
+            logger.info(f"当前选择的站点ID: {self._nexus_sites}")
+            
             # 重新加载站点处理器
             self._site_handlers = ModuleLoader.load_site_handlers()
             logger.info(f"加载了 {len(self._site_handlers)} 个站点处理器")
-                
-            # 清空旧数据
-            self.data_manager.save_data({})
             
             # 获取所有站点配置
             all_sites = self.sites.get_indexers()
             
-            # 筛选已选择站点配置
+            # 筛选站点配置 - 如果_nexus_sites为空，则选择所有站点
             selected_sites = []
-            for site in all_sites:
-                site_id = site.get("id")
-                if str(site_id) in [str(x) for x in self._nexus_sites]:
-                    selected_sites.append(site)
+            if not self._nexus_sites:
+                logger.info("未选择任何站点，将使用所有站点")
+                selected_sites = all_sites
+            else:
+                for site in all_sites:
+                    site_id = site.get("id")
+                    # 转换为字符串进行比较
+                    site_id_str = str(site_id)
+                    nexus_sites_str = [str(x) for x in self._nexus_sites]
+                    
+                    # 调试输出当前站点ID
+                    logger.debug(f"检查站点ID: {site_id}，类型: {type(site_id)}")
+                    
+                    if site_id_str in nexus_sites_str:
+                        selected_sites.append(site)
+                        logger.debug(f"匹配到站点: {site.get('name')} (ID: {site_id})")
             
-            logger.info(f"将刷新 {len(selected_sites)} 个站点的数据: {', '.join([site.get('name', '') for site in selected_sites])}")
-            
-            if not selected_sites:
-                logger.warning("没有发现可供刷新的站点")
+            if selected_sites:
+                logger.info(f"将刷新 {len(selected_sites)} 个站点的数据: {', '.join([site.get('name', '') for site in selected_sites])}")
+            else:
+                logger.warning("没有发现可供刷新的站点，请检查站点选择配置")
+                logger.debug(f"所有站点ID: {[site.get('id') for site in all_sites]}")
+                logger.debug(f"选择的站点ID: {self._nexus_sites}")
                 return {"success": 0, "error": 0, "message": "没有发现可供刷新的站点"}
             
             # 统计成功/失败站点数
             success_count = 0
             error_count = 0
+            
+            # 获取现有数据
+            existing_data = self.data_manager.get_site_data()
             
             # 逐个刷新站点数据
             for site in selected_sites:
@@ -3283,8 +3279,20 @@ class nexusinvitee(_PluginBase):
                 
                 site_data = self._get_site_invite_data(site_name)
                 if "error" in site_data:
-                    logger.error(f"站点 {site_name} 数据刷新失败: {site_data.get('error', '未知错误')}")
+                    error_msg = site_data.get('error', '未知错误')
+                    logger.error(f"站点 {site_name} 数据刷新失败: {error_msg}")
                     error_count += 1
+                    
+                    # 检查是否有旧数据
+                    old_data = existing_data.get(site_name, {}).get("data", {})
+                    if old_data:
+                        old_invitees = old_data.get("invitees", [])
+                        old_status = old_data.get("invite_status", {})
+                        logger.info(f"站点 {site_name} 保留旧数据: {len(old_invitees)}人, "
+                                   f"永久邀请:{old_status.get('permanent_count', 0)}个, "
+                                   f"临时邀请:{old_status.get('temporary_count', 0)}个")
+                    else:
+                        logger.info(f"站点 {site_name} 无旧数据可保留")
                 else:
                     # 输出关键数据，帮助调试
                     invite_status = site_data.get("invite_status", {})
@@ -3301,7 +3309,7 @@ class nexusinvitee(_PluginBase):
             if self._notify:
                 self._send_refresh_notification(success_count, error_count)
             
-            logger.info(f"刷新完成: 成功 {success_count} 个站点, 失败 {error_count} 个站点")
+            logger.info(f"增量刷新完成: 成功 {success_count} 个站点, 失败 {error_count} 个站点")
             
             return {"success": success_count, "error": error_count}
             
@@ -3358,9 +3366,9 @@ class nexusinvitee(_PluginBase):
 
                 logger.info(f"站点 {site_name} 统计结果: 总人数={len(invitees)}, 低分享率={low_ratio_count}, 已禁用={banned_count}, 无数据={no_data_count}")
             
-            title = "后宫管理系统 - 刷新结果"
+            title = "后宫管理系统 - 增量刷新结果"
             if success_count > 0 or error_count > 0:
-                text = f"刷新完成: 成功 {success_count} 个站点，失败 {error_count} 个站点\n\n"
+                text = f"增量刷新完成: 成功 {success_count} 个站点，失败 {error_count} 个站点\n\n"
                 text += f"👨‍👩‍👧‍👦 总邀请人数: {total_invitees}人\n"
                 text += f"⚠️ 分享率低于1.0: {total_low_ratio}人\n"
                 text += f"🚫 已禁用用户: {total_banned}人\n"
@@ -3379,41 +3387,6 @@ class nexusinvitee(_PluginBase):
         except Exception as e:
             logger.error(f"发送通知失败: {str(e)}")
             
-    def _sync_from_file(self):
-        """
-        从文件同步配置
-        """
-        try:
-            config = self.config_manager.get_config()
-            if config:
-                self._enabled = config.get("enabled", False)
-                self._notify = config.get("notify", False)
-                self._cron = config.get("cron", "0 9 * * *")
-                self._onlyonce = config.get("onlyonce", False)
-                self._nexus_sites = config.get("site_ids", [])
-                logger.debug(f"从文件加载配置: {config}")
-        except Exception as e:
-            logger.error(f"从文件加载配置失败: {str(e)}")
-
-    def _sync_to_file(self):
-        """
-        将配置同步到文件
-        """
-        config = {
-            "enabled": self._enabled,
-            "notify": self._notify,
-            "cron": self._cron,
-            "onlyonce": self._onlyonce,
-            "site_ids": self._nexus_sites
-        }
-        try:
-            self.config_manager.save_config(config)
-            logger.debug(f"保存配置到文件: {config}")
-            return True
-        except Exception as e:
-            logger.error(f"保存配置到文件失败: {str(e)}")
-            return False
-
     def get_service(self) -> List[Dict[str, Any]]:
         """
         注册插件公共服务
@@ -3460,11 +3433,22 @@ class nexusinvitee(_PluginBase):
             
             # 获取选中站点列表
             self._nexus_sites = []
-            for site_id in request.get("site_ids", []):
-                self._nexus_sites.append(int(site_id))
+            if "site_ids" in request:
+                for site_id in request.get("site_ids", []):
+                    # 确保site_id为整数
+                    try:
+                        if isinstance(site_id, str) and site_id.isdigit():
+                            self._nexus_sites.append(int(site_id))
+                        elif isinstance(site_id, int):
+                            self._nexus_sites.append(site_id)
+                    except:
+                        pass
+            
+            # 记录站点ID，用于调试
+            logger.info(f"已选择站点ID: {self._nexus_sites}")
             
             # 保存配置
-            self._sync_to_file()
+            self.__update_config()
             
             # 如果开启了立即运行一次
             if self._onlyonce:
@@ -3482,7 +3466,7 @@ class nexusinvitee(_PluginBase):
                     # 关闭一次性开关
                     self._onlyonce = False
                     # 保存配置
-                    self._sync_to_file()
+                    self.__update_config()
                     
                     # 启动任务
                     if self._scheduler and self._scheduler.get_jobs():
@@ -3513,6 +3497,27 @@ class nexusinvitee(_PluginBase):
             'low_ratio': low_ratio_count,
             'no_data': no_data_count
         }
+
+    def get_config(self, apikey: str) -> Response:
+        """
+        获取配置
+        """
+        if apikey != settings.API_TOKEN:
+            return Response(success=False, message="API令牌错误!")
+        
+        try:
+            # 直接返回当前配置，不再从文件读取
+            config = {
+                "enabled": self._enabled,
+                "notify": self._notify,
+                "cron": self._cron,
+                "onlyonce": self._onlyonce,
+                "site_ids": self._nexus_sites
+            }
+            return Response(success=True, message="获取成功", data=config)
+        except Exception as e:
+            logger.error(f"获取配置失败: {str(e)}")
+            return Response(success=False, message=f"获取配置失败: {str(e)}")
 
 
 # 插件类导出

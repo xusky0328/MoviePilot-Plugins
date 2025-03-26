@@ -175,47 +175,46 @@ class NexusPhpHandler(_ISiteHandler):
                 # 如果成功解析到后宫成员，记录总数
                 if invite_result["invitees"]:
                     logger.info(f"站点 {site_name} 共解析到 {len(invite_result['invitees'])} 个后宫成员")
-                return invite_result
-            
-            # 尝试获取更多页面的后宫成员
-            next_page = 1  # 从第二页开始，因为第一页已经解析过了
-            max_pages = 100  # 防止无限循环
-            
-            # 继续获取后续页面，直到没有更多数据或达到最大页数
-            while next_page < max_pages:
-                next_page_url = urljoin(site_url, f"invite.php?id={user_id}&menu=invitee&page={next_page}")
-                logger.info(f"站点 {site_name} 正在获取第 {next_page+1} 页后宫成员数据: {next_page_url}")
+            else:
+                # 尝试获取更多页面的后宫成员
+                next_page = 1  # 从第二页开始，因为第一页已经解析过了
+                max_pages = 100  # 防止无限循环
                 
-                try:
-                    next_response = session.get(next_page_url, timeout=(10, 30))
-                    next_response.raise_for_status()
+                # 继续获取后续页面，直到没有更多数据或达到最大页数
+                while next_page < max_pages:
+                    next_page_url = urljoin(site_url, f"invite.php?id={user_id}&menu=invitee&page={next_page}")
+                    logger.info(f"站点 {site_name} 正在获取第 {next_page+1} 页后宫成员数据: {next_page_url}")
                     
-                    # 解析下一页数据
-                    next_page_result = self._parse_nexusphp_invite_page(site_name, next_response.text, is_next_page=True)
-                    
-                    # 如果没有找到任何后宫成员，说明已到达最后一页
-                    if not next_page_result["invitees"]:
-                        logger.info(f"站点 {site_name} 第 {next_page+1} 页没有后宫成员数据，停止获取")
-                        break
-                    
-                    # 如果当前页面后宫成员少于50人，默认认为没有下一页，避免错误进入下一页
-                    if len(next_page_result["invitees"]) < 50:
-                        logger.info(f"站点 {site_name} 第 {next_page+1} 页后宫成员数量少于50人({len(next_page_result['invitees'])}人)，默认没有下一页")
-                        # 将当前页数据合并到结果中后退出循环
+                    try:
+                        next_response = session.get(next_page_url, timeout=(10, 30))
+                        next_response.raise_for_status()
+                        
+                        # 解析下一页数据
+                        next_page_result = self._parse_nexusphp_invite_page(site_name, next_response.text, is_next_page=True)
+                        
+                        # 如果没有找到任何后宫成员，说明已到达最后一页
+                        if not next_page_result["invitees"]:
+                            logger.info(f"站点 {site_name} 第 {next_page+1} 页没有后宫成员数据，停止获取")
+                            break
+                        
+                        # 如果当前页面后宫成员少于50人，默认认为没有下一页，避免错误进入下一页
+                        if len(next_page_result["invitees"]) < 50:
+                            logger.info(f"站点 {site_name} 第 {next_page+1} 页后宫成员数量少于50人({len(next_page_result['invitees'])}人)，默认没有下一页")
+                            # 将当前页数据合并到结果中后退出循环
+                            invite_result["invitees"].extend(next_page_result["invitees"])
+                            logger.info(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
+                            break
+                        
+                        # 将下一页的后宫成员添加到结果中
                         invite_result["invitees"].extend(next_page_result["invitees"])
                         logger.info(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
+                        
+                        # 继续下一页
+                        next_page += 1
+                        
+                    except Exception as e:
+                        logger.warning(f"站点 {site_name} 获取第 {next_page+1} 页数据失败: {str(e)}")
                         break
-                    
-                    # 将下一页的后宫成员添加到结果中
-                    invite_result["invitees"].extend(next_page_result["invitees"])
-                    logger.info(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
-                    
-                    # 继续下一页
-                    next_page += 1
-                    
-                except Exception as e:
-                    logger.warning(f"站点 {site_name} 获取第 {next_page+1} 页数据失败: {str(e)}")
-                    break
             
             # 访问发送邀请页面，这是判断权限的关键
             send_invite_url = urljoin(site_url, f"invite.php?id={user_id}&type=new")
@@ -226,38 +225,122 @@ class NexusPhpHandler(_ISiteHandler):
                 # 解析发送邀请页面
                 send_soup = BeautifulSoup(send_response.text, 'html.parser')
                 
-                # 检查是否有takeinvite.php表单 - 最直接的权限判断
-                invite_form = send_soup.select('form[action*="takeinvite.php"]')
-                if invite_form:
-                    # 确认有表单，权限正常
+                # 临时变量保存发送页面可能的限制原因
+                send_page_reason = ""
+                can_send_invite = False
+                
+                # 1. 先检查是否有对不起消息 - 这是优先级最高的限制标志
+                sorry_elements = send_soup.find_all(text=lambda t: t and ('对不起' in t or 'Sorry' in t))
+                if sorry_elements:
+                    # 提取完整错误消息
+                    for sorry_elem in sorry_elements:
+                        parent = sorry_elem.parent
+                        # 查找包含完整错误信息的表格或其他容器
+                        error_container = None
+                        for p in parent.parents:
+                            if p.name == 'table':
+                                td_text = p.select_one('td.text, td')
+                                if td_text:
+                                    error_container = td_text
+                                    break
+                        
+                        if error_container:
+                            error_text = error_container.get_text(strip=True)
+                            # 提取"对不起"之后的具体原因
+                            if "账户上限" in error_text or "上限数已到" in error_text:
+                                send_page_reason = "当前账户上限数已到"
+                                # 如果找到更完整的原因，提取它
+                                account_limit_pattern = re.search(r"当前账户上限数已到.*?(?:\s*这里|$)", error_text)
+                                if account_limit_pattern:
+                                    complete_reason = account_limit_pattern.group(0)
+                                    # 清理原因文本
+                                    complete_reason = re.sub(r'\s*这里.*返回。?', '', complete_reason)
+                                    complete_reason = re.sub(r'\s*<a.*?这里</a>.*?返回。?', '', complete_reason)
+                                    if complete_reason and len(complete_reason) > 10:
+                                        send_page_reason = complete_reason
+                                can_send_invite = False
+                                logger.info(f"站点 {site_name} 发现不可用邀请原因: {send_page_reason}")
+                                break
+                            elif "数量不足" in error_text or "名额不足" in error_text:
+                                send_page_reason = "可以发送邀请，但当前邀请数量不足"
+                                can_send_invite = True
+                                logger.info(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足")
+                                break
+                            else:
+                                # 其他限制原因
+                                send_page_reason = error_text.replace("对不起", "").strip()
+                                # 移除"这里返回"及相关内容
+                                send_page_reason = re.sub(r'\s*这里.*返回。?', '', send_page_reason)
+                                send_page_reason = re.sub(r'\s*<a.*?这里</a>.*?返回。?', '', send_page_reason)
+                                can_send_invite = False
+                                logger.info(f"站点 {site_name} 发现不可用邀请原因: {send_page_reason}")
+                                break
+                
+                # 2. 如果没有找到"对不起"消息，检查是否有takeinvite.php表单
+                if not send_page_reason:
+                    invite_form = send_soup.select('form[action*="takeinvite.php"]')
+                    if invite_form:
+                        # 检查表单中是否有submit按钮且不是disabled状态
+                        submit_btn = None
+                        for form in invite_form:
+                            submit_btn = form.select_one('input[type="submit"]:not([disabled])')
+                            if submit_btn:
+                                break
+                        
+                        if submit_btn:
+                            can_send_invite = True
+                            logger.info(f"站点 {site_name} 可以发送邀请，确认有takeinvite表单")
+                        else:
+                            # 表单存在但提交按钮被禁用
+                            disabled_submit = None
+                            for form in invite_form:
+                                disabled_submit = form.select_one('input[type="submit"][disabled]')
+                                if disabled_submit:
+                                    break
+                            
+                            if disabled_submit:
+                                disabled_text = disabled_submit.get('value', '').strip()
+                                if disabled_text:
+                                    send_page_reason = disabled_text
+                                    can_send_invite = False
+                                    logger.info(f"站点 {site_name} 发现不可用邀请原因(disabled submit): {send_page_reason}")
+                    else:
+                        # 没有邀请表单，检查其他情况
+                        # 检查页面中是否包含账户上限相关文本
+                        page_text = send_soup.get_text()
+                        if "账户上限" in page_text or "上限数已到" in page_text:
+                            send_page_reason = "当前账户上限数已到"
+                            # 如果找到更完整的原因，提取它
+                            account_limit_pattern = re.search(r"当前账户上限数已到.*?(?:\s*这里|$)", page_text)
+                            if account_limit_pattern:
+                                complete_reason = account_limit_pattern.group(0)
+                                # 清理原因文本
+                                complete_reason = re.sub(r'\s*这里.*返回。?', '', complete_reason)
+                                complete_reason = re.sub(r'\s*<a.*?这里</a>.*?返回。?', '', complete_reason)
+                                if complete_reason and len(complete_reason) > 10:
+                                    send_page_reason = complete_reason
+                            can_send_invite = False
+                            logger.info(f"站点 {site_name} 发现不可用邀请原因: {send_page_reason}")
+                        elif "数量不足" in page_text or "名额不足" in page_text:
+                            send_page_reason = "可以发送邀请，但当前邀请数量不足"
+                            can_send_invite = True
+                            logger.info(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足")
+                
+                # 3. 如果在发送邀请页面发现限制，覆盖主页面的邀请状态
+                if send_page_reason:
+                    # 特殊处理："数量不足"表示可以发药但当前无名额
+                    if "数量不足" in send_page_reason or "名额不足" in send_page_reason:
+                        invite_result["invite_status"]["can_invite"] = True
+                        invite_result["invite_status"]["reason"] = send_page_reason
+                    else:
+                        # 其他限制原因，标记为不可邀请
+                        invite_result["invite_status"]["can_invite"] = False
+                        invite_result["invite_status"]["reason"] = send_page_reason
+                elif can_send_invite:
+                    # 确认可以发送邀请
                     invite_result["invite_status"]["can_invite"] = True
                     if not invite_result["invite_status"]["reason"]:
                         invite_result["invite_status"]["reason"] = "可以发送邀请"
-                    logger.info(f"站点 {site_name} 可以发送邀请，确认有takeinvite表单")
-                else:
-                    # 没有表单，检查是否有错误消息
-                    sorry_text = send_soup.find(text=re.compile(r'对不起|sorry'))
-                    if sorry_text:
-                        parent_element = None
-                        for parent in sorry_text.parents:
-                            if parent.name in ['td', 'div', 'p', 'h2']:
-                                parent_element = parent
-                                break
-                        
-                        if parent_element:
-                            # 获取整个限制文本
-                            restriction_text = ""
-                            for parent in parent_element.parents:
-                                if parent.name in ['table']:
-                                    restriction_text = parent.get_text().strip()
-                                    break
-                            
-                            if not restriction_text:
-                                restriction_text = parent_element.get_text().strip()
-                            
-                            invite_result["invite_status"]["can_invite"] = False
-                            invite_result["invite_status"]["reason"] = restriction_text
-                            logger.info(f"站点 {site_name} 有邀请限制: {restriction_text}")
                 
             except requests.exceptions.RequestException as e:
                 logger.warning(f"访问站点发送邀请页面失败，使用默认权限判断: {str(e)}")
@@ -386,48 +469,273 @@ class NexusPhpHandler(_ISiteHandler):
                     # 使用任意表格继续尝试
                     invite_tables = any_tables
             
-            # 检查是否存在"没有邀请权限"或"当前没有可用邀请名额"等提示
-            error_patterns = [
-                r"没有邀请权限",
-                r"不能使用邀请",
-                r"当前没有可用邀请名额",
-                r"低于要求的等级",
-                r"需要更高的用户等级",
-                r"无法进行邀请注册",
-                r"当前账户上限数已到",
-                r"抱歉，目前没有开放注册",
-                r"当前邀请注册人数已达上限",
-                r"对不起",
-                r"只有.*等级才能发送邀请",
-                r"及以上.*才能发送邀请",
-                r"\w+\s*or above can send invites"
-            ]
+            # 判断邀请权限和提取不可邀请原因 - 完全重写此部分逻辑
+            invite_reason = ""
+            can_invite = False
             
-            # 解析邀请权限状态
-            page_text = soup.get_text()
-            
-            # 查找是否有邀请限制文本
-            has_restriction = False
-            restriction_reason = ""
-            
-            for pattern in error_patterns:
-                matches = re.search(pattern, page_text, re.IGNORECASE)
-                if matches:
-                    has_restriction = True
-                    restriction_reason = matches.group(0)
-                    result["invite_status"]["can_invite"] = False
-                    result["invite_status"]["reason"] = f"无法发送邀请: {restriction_reason}"
-                    logger.info(f"站点 {site_name} 发现邀请限制: {restriction_reason}")
-                    break
-            
-            # 检查是否存在发送邀请表单，这是最直接的判断依据
+            # 1. 首先检查是否存在发送邀请表单，这是判断可以发送邀请的最直接依据
             invite_form = soup.select('form[action*="takeinvite.php"]')
             if invite_form:
-                if not has_restriction:
+                # 检查表单中是否有submit按钮且不是disabled状态
+                submit_btn = None
+                for form in invite_form:
+                    submit_btn = form.select_one('input[type="submit"]:not([disabled])')
+                    if submit_btn:
+                        break
+                
+                if submit_btn:
+                    can_invite = True
+                    invite_reason = "存在可用邀请表单"
+                    logger.info(f"站点 {site_name} 存在可用邀请表单，可以发送邀请")
+            
+            # 2. 如果不存在可用邀请表单，检查disabled的submit按钮，通常包含不可邀请的具体原因
+            if not can_invite:
+                disabled_submit = soup.select('input[type="submit"][disabled]')
+                if disabled_submit:
+                    for btn in disabled_submit:
+                        disabled_text = btn.get('value', '').strip()
+                        if disabled_text:
+                            invite_reason = disabled_text
+                            logger.info(f"站点 {site_name} 发现不可用邀请原因(disabled submit): {invite_reason}")
+                            break
+            
+            # 3. 检查页面中的"对不起"错误提示信息
+            if not invite_reason:
+                # 使用多种选择器尝试找到"对不起"标题和内容
+                sorry_blocks = []
+                
+                # 先尝试找h2标题
+                h2_sorry = soup.find('h2', text=lambda t: t and ('对不起' in t or 'Sorry' in t))
+                if h2_sorry:
+                    sorry_blocks.append(h2_sorry)
+                
+                # 查找包含"对不起"的div
+                sorry_divs = soup.find_all('div', text=lambda t: t and ('对不起' in t or 'Sorry' in t))
+                sorry_blocks.extend(sorry_divs)
+                
+                # 查找包含"对不起"的td
+                sorry_tds = soup.find_all('td', text=lambda t: t and ('对不起' in t or 'Sorry' in t))
+                sorry_blocks.extend(sorry_tds)
+                
+                # 查找文本节点包含"对不起"的任何元素
+                sorry_elements = soup.find_all(text=lambda t: t and ('对不起' in t or 'Sorry' in t))
+                for elem in sorry_elements:
+                    parent = elem.parent
+                    if parent not in sorry_blocks:
+                        sorry_blocks.append(parent)
+                
+                # 处理找到的"对不起"区块
+                for block in sorry_blocks:
+                    # 尝试找到包含完整错误信息的元素
+                    error_container = None
+                    
+                    # 1. 检查自身内容
+                    block_text = block.get_text(strip=True)
+                    
+                    # 2. 查找相邻的td元素
+                    sibling_td = block.find_next('td')
+                    sibling_text = sibling_td.get_text(strip=True) if sibling_td else ""
+                    
+                    # 3. 查找包含完整信息的父级表格
+                    parent_table = None
+                    for parent in block.parents:
+                        if parent.name == 'table':
+                            parent_table = parent
+                            break
+                    
+                    table_text = parent_table.get_text(strip=True) if parent_table else ""
+                    
+                    # 确定最终要使用的错误文本
+                    full_error_text = ""
+                    
+                    # 优先查找最完整的消息
+                    if len(sibling_text) > len(block_text) and len(sibling_text) > 10:
+                        full_error_text = sibling_text
+                    elif len(block_text) > 10 and "对不起" in block_text:
+                        full_error_text = block_text
+                    elif len(table_text) > len(block_text) and "对不起" in table_text:
+                        full_error_text = table_text
+                    
+                    # 清理错误文本并提取关键部分
+                    if full_error_text:
+                        # 特殊处理：如果是"邀请数量不足"，标记为可发药但当前没有名额
+                        if "邀请数量不足" in full_error_text:
+                            can_invite = True
+                            invite_reason = "可以发送邀请，但当前邀请数量不足"
+                            logger.info(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足")
+                            break
+                        
+                        # 提取"对不起"之后的具体原因，并移除"这里返回"及后续内容
+                        sorry_pattern = re.search(r'对不起[,，]?\s*(.*?)(?:\s*<|\s*这里|$)', full_error_text)
+                        if sorry_pattern and sorry_pattern.group(1):
+                            reason = sorry_pattern.group(1).strip()
+                            # 移除"这里返回"及相关内容
+                            reason = re.sub(r'\s*这里.*返回。?', '', reason)
+                            if reason and len(reason) > 3:  # 确保提取的原因有实际内容
+                                invite_reason = reason
+                                logger.info(f"站点 {site_name} 发现不可用邀请原因(对不起后文本): {invite_reason}")
+                                break
+                        else:
+                            # 如果无法提取特定模式，使用整个文本
+                            invite_reason = re.sub(r'对不起[,，]?\s*', '', full_error_text.strip())
+                            # 移除"这里返回"及相关内容
+                            invite_reason = re.sub(r'\s*这里.*返回。?', '', invite_reason)
+                            invite_reason = re.sub(r'\s*<a.*?这里</a>.*?返回。?', '', invite_reason)
+                            if invite_reason and len(invite_reason) > 3:
+                                logger.info(f"站点 {site_name} 发现不可用邀请原因(完整对不起文本): {invite_reason}")
+                                break
+            
+            # 4. 检查现代UI中的div结构错误信息
+            if not invite_reason:
+                try:
+                    # 使用更安全的选择器，避免CSS语法错误
+                    # 1. 尝试常见错误提示CSS类
+                    modern_selectors = [
+                        'div.tips', 'div.error-message', 'div.text', 'div.error',
+                        # 尝试常见的错误容器
+                        'div.message', 'div.alert', 'div.notice', 'div.warning',
+                        # 特定颜色或样式的div (处理特殊属性以避免语法错误)
+                        'div[class*="bg-"]', 'div[class*="error"]', 'div[class*="warning"]'
+                    ]
+                    
+                    error_divs = []
+                    for selector in modern_selectors:
+                        try:
+                            found_divs = soup.select(selector)
+                            error_divs.extend(found_divs)
+                        except Exception as e:
+                            logger.debug(f"选择器 {selector} 失败: {str(e)}")
+                    
+                    # 2. 如果上面的选择器没找到，尝试查找所有div并检查内容
+                    if not error_divs:
+                        all_divs = soup.find_all('div')
+                        for div in all_divs:
+                            div_text = div.get_text(strip=True)
+                            if ('对不起' in div_text or 'Sorry' in div_text or 
+                                '只有' in div_text or '账户上限' in div_text):
+                                error_divs.append(div)
+                    
+                    # 处理找到的div
+                    for div in error_divs:
+                        div_text = div.get_text(strip=True)
+                        if ('对不起' in div_text or 'Sorry' in div_text or '只有' in div_text or 
+                            '账户上限' in div_text or '上限数已到' in div_text):
+                            # 提取完整错误信息
+                            if "数量不足" in div_text or "名额不足" in div_text:
+                                # 特殊处理："邀请数量不足"表示可以发药但当前无名额
+                                can_invite = True 
+                                invite_reason = "可以发送邀请，但当前邀请数量不足"
+                                logger.info(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足(现代UI div)")
+                            elif "账户上限" in div_text or "上限数已到" in div_text:
+                                # 特殊处理：账户上限问题
+                                can_invite = False
+                                invite_reason = "当前账户上限数已到"
+                                logger.info(f"站点 {site_name} 发现不可用邀请原因(现代UI div): 当前账户上限数已到")
+                            else:
+                                # 其他情况
+                                clean_text = div_text.replace('对不起', '').replace('Sorry', '').strip()
+                                if clean_text:
+                                    invite_reason = clean_text
+                                else:
+                                    invite_reason = div_text
+                                logger.info(f"站点 {site_name} 发现不可用邀请原因(现代UI div): {invite_reason}")
+                            break
+                except Exception as e:
+                    logger.warning(f"站点 {site_name} 处理现代UI div时出错: {str(e)}")
+            
+            # 5. 检查表格中可能包含的特定限制信息
+            if not invite_reason:
+                # 查找包含权限提示的行或单元格
+                restriction_patterns = [
+                    r"只有.*才能发送邀请",
+                    r".*及以上.*才能发送邀请",
+                    r".*才可以发送邀请",
+                    r".*或以上等级才可以发送邀请",
+                    r".*或以上等级才可以.*邀请",
+                    r"贵宾.*及以上.*",
+                    r"当前账户上限数已到"
+                ]
+                
+                # 尝试在表格行中寻找
+                restriction_rows = soup.select('tr')
+                for row in restriction_rows:
+                    row_text = row.get_text(strip=True)
+                    
+                    for pattern in restriction_patterns:
+                        match = re.search(pattern, row_text)
+                        if match:
+                            invite_reason = match.group(0)
+                            logger.info(f"站点 {site_name} 发现不可用邀请原因(表格行): {invite_reason}")
+                            break
+                    
+                    if invite_reason:
+                        break
+            
+            # 6. 如果以上方法都没有找到具体原因，使用更宽泛的正则表达式从页面文本中提取
+            if not invite_reason:
+                page_text = soup.get_text()
+                
+                # 先检查是否有邀请数量不足，这种情况属于"可以发药但当前没有名额"
+                if re.search(r"邀请数量不足|邀请名额不足|没有足够的邀请|没有剩余邀请", page_text):
+                    can_invite = True
+                    invite_reason = "可以发送邀请，但当前邀请数量不足"
+                    logger.info(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足")
+                # 检查是否是账户上限问题
+                elif re.search(r"当前账户上限数已到|账户上限|已达到最大邀请数|已达上限|达到上限", page_text):
+                    can_invite = False
+                    invite_reason = "当前账户上限数已到"
+                    logger.info(f"站点 {site_name} 发现不可用邀请原因: 当前账户上限数已到")
+                else:
+                    # 检查各种不可邀请的原因模式
+                    error_patterns = [
+                        r"只有.*才能发送邀请",
+                        r".*及以上.*才能发送邀请",
+                        r".*用户才可以邀请.*",
+                        r".*才可以发送邀请",
+                        r"当前账户上限数已到.*",
+                        r"账户上限.*",
+                        r"已达到最大邀请数.*",
+                        r"已达上限.*",
+                        r"达到上限.*",
+                        r"当前邀请注册人数已达上限.*",
+                        r"贵宾.*及以上等级才.*邀请",
+                        r"没有邀请权限.*",
+                        r"不能使用邀请.*",
+                        r"无法进行邀请注册.*",
+                        r"维护开发员.*及以上.*才能发送邀请",
+                        r"精英训练家.*或以上等级才可以发送邀请"
+                    ]
+                    
+                    for pattern in error_patterns:
+                        match = re.search(pattern, page_text)
+                        if match:
+                            invite_reason = match.group(0)
+                            # 移除"这里返回"及相关内容
+                            invite_reason = re.sub(r'\s*这里.*返回。?', '', invite_reason)
+                            invite_reason = re.sub(r'\s*<a.*?这里</a>.*?返回。?', '', invite_reason)
+                            logger.info(f"站点 {site_name} 发现不可用邀请原因(页面文本): {invite_reason}")
+                            break
+            
+            # 7. 最后检查基于通用判断规则 - 如果找不到具体原因且没有邀请表单，返回通用消息
+            if not invite_reason and not can_invite:
+                invite_reason = "无法发送邀请，请手动查看原因"
+                logger.warning(f"站点 {site_name} 无法找到具体的不可邀请原因")
+            
+            # 更新结果
+            if can_invite:
+                if not result["invite_status"]["can_invite"]:
                     result["invite_status"]["can_invite"] = True
                     if not result["invite_status"]["reason"]:
-                        result["invite_status"]["reason"] = "存在邀请表单，可以发送邀请"
-                    logger.info(f"站点 {site_name} 存在邀请表单，可以发送邀请")
+                        if "不足" in invite_reason:
+                            result["invite_status"]["reason"] = invite_reason
+                        else:
+                            result["invite_status"]["reason"] = "可以发送邀请"
+            else:
+                result["invite_status"]["can_invite"] = False
+                result["invite_status"]["reason"] = invite_reason
+                logger.info(f"站点 {site_name} 最终不可邀请原因: {invite_reason}")
+                
+            # 在成功解析到邀请数量时，会覆盖上面的reason，保持当前逻辑
         
         # 优先查找带有border属性的表格，这通常是用户列表表格
         invitee_tables = soup.select('table[border="1"]')
