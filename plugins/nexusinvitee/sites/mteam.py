@@ -405,9 +405,24 @@ class MTeamHandler(_ISiteHandler):
                 
             # 标准化分享率字符串 - 正确处理千分位逗号
             try:
-                # 先移除千分位逗号，再替换小数点逗号
-                normalized_ratio = re.sub(r'(\d),(\d{3})', r'\1\2', ratio_str)  # 去除千分位逗号
-                normalized_ratio = normalized_ratio.replace(',', '.')  # 将剩余逗号替换为点
+                # 使用更好的方法完全移除千分位逗号
+                normalized_ratio = ratio_str
+                # 循环处理，直到没有千分位逗号
+                while ',' in normalized_ratio:
+                    # 检查每个逗号是否是千分位分隔符
+                    comma_positions = [pos for pos, char in enumerate(normalized_ratio) if char == ',']
+                    for pos in comma_positions:
+                        # 如果逗号后面是数字，且前面也是数字，则视为千分位逗号
+                        if (pos > 0 and pos < len(normalized_ratio) - 1 and 
+                            normalized_ratio[pos-1].isdigit() and normalized_ratio[pos+1].isdigit()):
+                            normalized_ratio = normalized_ratio[:pos] + normalized_ratio[pos+1:]
+                            break
+                    else:
+                        # 如果没有找到千分位逗号，退出循环
+                        break
+                
+                # 最后，将任何剩余的逗号替换为小数点（可能是小数点表示）
+                normalized_ratio = normalized_ratio.replace(',', '.')
                 ratio = float(normalized_ratio)
                 return self._get_health_from_ratio_value(ratio)
             except (ValueError, TypeError) as e:

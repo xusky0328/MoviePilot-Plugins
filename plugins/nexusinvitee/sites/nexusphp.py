@@ -101,13 +101,45 @@ class NexusPhpHandler(_ISiteHandler):
                 result["invite_status"]["reason"] = "无法获取用户ID，请检查站点Cookie是否有效"
                 return result
             
-            # 获取邀请页面
+            # 获取邀请页面 - 从第一页开始
             invite_url = urljoin(site_url, f"invite.php?id={user_id}")
             response = session.get(invite_url, timeout=(10, 30))
             response.raise_for_status()
             
             # 解析邀请页面
             invite_result = self._parse_nexusphp_invite_page(site_name, response.text)
+            
+            # 尝试获取更多页面的后宫成员
+            next_page = 1  # 从第二页开始，因为第一页已经解析过了
+            max_pages = 100  # 防止无限循环
+            
+            # 继续获取后续页面，直到没有更多数据或达到最大页数
+            while next_page < max_pages:
+                next_page_url = urljoin(site_url, f"invite.php?id={user_id}&menu=invitee&page={next_page}")
+                logger.info(f"站点 {site_name} 正在获取第 {next_page+1} 页后宫成员数据: {next_page_url}")
+                
+                try:
+                    next_response = session.get(next_page_url, timeout=(10, 30))
+                    next_response.raise_for_status()
+                    
+                    # 解析下一页数据
+                    next_page_result = self._parse_nexusphp_invite_page(site_name, next_response.text, is_next_page=True)
+                    
+                    # 如果没有找到任何后宫成员，说明已到达最后一页
+                    if not next_page_result["invitees"]:
+                        logger.info(f"站点 {site_name} 第 {next_page+1} 页没有后宫成员数据，停止获取")
+                        break
+                    
+                    # 将下一页的后宫成员添加到结果中
+                    invite_result["invitees"].extend(next_page_result["invitees"])
+                    logger.info(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
+                    
+                    # 继续下一页
+                    next_page += 1
+                    
+                except Exception as e:
+                    logger.warning(f"站点 {site_name} 获取第 {next_page+1} 页数据失败: {str(e)}")
+                    break
             
             # 获取魔力值商店页面，尝试解析邀请价格
             try:
@@ -214,6 +246,10 @@ class NexusPhpHandler(_ISiteHandler):
             except requests.exceptions.RequestException as e:
                 logger.warning(f"访问站点发送邀请页面失败，使用默认权限判断: {str(e)}")
             
+            # 如果成功解析到后宫成员，记录总数
+            if invite_result["invitees"]:
+                logger.info(f"站点 {site_name} 共解析到 {len(invite_result['invitees'])} 个后宫成员")
+            
             return invite_result
             
         except Exception as e:
@@ -221,11 +257,12 @@ class NexusPhpHandler(_ISiteHandler):
             result["invite_status"]["reason"] = f"解析邀请页面失败: {str(e)}"
             return result
     
-    def _parse_nexusphp_invite_page(self, site_name: str, html_content: str) -> Dict[str, Any]:
+    def _parse_nexusphp_invite_page(self, site_name: str, html_content: str, is_next_page: bool = False) -> Dict[str, Any]:
         """
         解析NexusPHP邀请页面HTML内容
         :param site_name: 站点名称
         :param html_content: HTML内容
+        :param is_next_page: 是否是翻页内容，如果是则只提取后宫成员数据
         :return: 解析结果
         """
         result = {
@@ -250,129 +287,131 @@ class NexusPhpHandler(_ISiteHandler):
                 logger.info(f"站点 {site_name} 检测到特殊标题: {title_text}")
                 special_title = True
         
-        # 先检查info_block中的邀请信息
-        info_block = soup.select_one('#info_block')
-        if info_block:
-            info_text = info_block.get_text()
-            logger.info(f"站点 {site_name} 获取到info_block信息")
-            
-            # 识别邀请数量 - 查找邀请链接并获取数量
-            invite_link = info_block.select_one('a[href*="invite.php"]')
-            if invite_link:
-                # 获取invite链接周围的文本
-                parent_text = invite_link.parent.get_text() if invite_link.parent else ""
-                logger.debug(f"站点 {site_name} 原始邀请文本: {parent_text}")
+        # 如果不是翻页内容，解析邀请状态
+        if not is_next_page:
+            # 先检查info_block中的邀请信息
+            info_block = soup.select_one('#info_block')
+            if info_block:
+                info_text = info_block.get_text()
+                logger.info(f"站点 {site_name} 获取到info_block信息")
                 
-                # 更精确的邀请解析模式：处理两种情况
-                # 1. 只有永久邀请: "邀请 [发送]: 0"
-                # 2. 永久+临时邀请: "探视权 [发送]: 1(0)"
-                invite_pattern = re.compile(r'(?:邀请|探视权|invite|邀請|查看权|查看權).*?(?:\[.*?\]|发送|查看).*?:?\s*(\d+)(?:\s*\((\d+)\))?', re.IGNORECASE)
-                invite_match = invite_pattern.search(parent_text)
-                
-                if invite_match:
-                    # 获取永久邀请数量
-                    if invite_match.group(1):
-                        result["invite_status"]["permanent_count"] = int(invite_match.group(1))
+                # 识别邀请数量 - 查找邀请链接并获取数量
+                invite_link = info_block.select_one('a[href*="invite.php"]')
+                if invite_link:
+                    # 获取invite链接周围的文本
+                    parent_text = invite_link.parent.get_text() if invite_link.parent else ""
+                    logger.debug(f"站点 {site_name} 原始邀请文本: {parent_text}")
                     
-                    # 如果有临时邀请数量
-                    if len(invite_match.groups()) > 1 and invite_match.group(2):
-                        result["invite_status"]["temporary_count"] = int(invite_match.group(2))
+                    # 更精确的邀请解析模式：处理两种情况
+                    # 1. 只有永久邀请: "邀请 [发送]: 0"
+                    # 2. 永久+临时邀请: "探视权 [发送]: 1(0)"
+                    invite_pattern = re.compile(r'(?:邀请|探视权|invite|邀請|查看权|查看權).*?(?:\[.*?\]|发送|查看).*?:?\s*(\d+)(?:\s*\((\d+)\))?', re.IGNORECASE)
+                    invite_match = invite_pattern.search(parent_text)
                     
-                    logger.info(f"站点 {site_name} 解析到邀请数量: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}")
-                    
-                    # 如果有邀请名额，初步判断为可邀请
-                    if result["invite_status"]["permanent_count"] > 0 or result["invite_status"]["temporary_count"] > 0:
-                        result["invite_status"]["can_invite"] = True
-                        result["invite_status"]["reason"] = f"可用邀请数: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}"
-                else:
-                    # 尝试直接查找邀请链接后面的文本
-                    after_text = ""
-                    next_sibling = invite_link.next_sibling
-                    while next_sibling and not after_text.strip():
-                        if isinstance(next_sibling, str):
-                            after_text = next_sibling
-                        next_sibling = next_sibling.next_sibling if hasattr(next_sibling, 'next_sibling') else None
-                    
-                    logger.debug(f"站点 {site_name} 后续文本: {after_text}")
-                    
-                    if after_text:
-                        # 处理格式: ": 1(0)" 或 ": 1" 或 "1(0)" 或 "1"
-                        after_pattern = re.compile(r'(?::)?\s*(\d+)(?:\s*\((\d+)\))?')
-                        after_match = after_pattern.search(after_text)
+                    if invite_match:
+                        # 获取永久邀请数量
+                        if invite_match.group(1):
+                            result["invite_status"]["permanent_count"] = int(invite_match.group(1))
                         
-                        if after_match:
-                            # 获取永久邀请数量
-                            if after_match.group(1):
-                                result["invite_status"]["permanent_count"] = int(after_match.group(1))
+                        # 如果有临时邀请数量
+                        if len(invite_match.groups()) > 1 and invite_match.group(2):
+                            result["invite_status"]["temporary_count"] = int(invite_match.group(2))
+                        
+                        logger.info(f"站点 {site_name} 解析到邀请数量: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}")
+                        
+                        # 如果有邀请名额，初步判断为可邀请
+                        if result["invite_status"]["permanent_count"] > 0 or result["invite_status"]["temporary_count"] > 0:
+                            result["invite_status"]["can_invite"] = True
+                            result["invite_status"]["reason"] = f"可用邀请数: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}"
+                    else:
+                        # 尝试直接查找邀请链接后面的文本
+                        after_text = ""
+                        next_sibling = invite_link.next_sibling
+                        while next_sibling and not after_text.strip():
+                            if isinstance(next_sibling, str):
+                                after_text = next_sibling
+                            next_sibling = next_sibling.next_sibling if hasattr(next_sibling, 'next_sibling') else None
+                        
+                        logger.debug(f"站点 {site_name} 后续文本: {after_text}")
+                        
+                        if after_text:
+                            # 处理格式: ": 1(0)" 或 ": 1" 或 "1(0)" 或 "1"
+                            after_pattern = re.compile(r'(?::)?\s*(\d+)(?:\s*\((\d+)\))?')
+                            after_match = after_pattern.search(after_text)
                             
-                            # 如果有临时邀请数量
-                            if len(after_match.groups()) > 1 and after_match.group(2):
-                                result["invite_status"]["temporary_count"] = int(after_match.group(2))
-                            
-                            logger.info(f"站点 {site_name} 从后续文本解析到邀请数量: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}")
-                            
-                            # 如果有邀请名额，初步判断为可邀请
-                            if result["invite_status"]["permanent_count"] > 0 or result["invite_status"]["temporary_count"] > 0:
-                                result["invite_status"]["can_invite"] = True
-                                result["invite_status"]["reason"] = f"可用邀请数: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}"
-        
-        # 检查是否有标准的NexusPHP邀请页面结构
-        invite_tables = soup.select('table.main > tbody > tr > td > table')
-        
-        # 如果页面没有invite_tables可能是未登录或者错误页面
-        if not invite_tables:
-            # 检查是否有其他表格
-            any_tables = soup.select('table')
-            if not any_tables:
-                result["invite_status"]["reason"] = "页面解析错误，可能未登录或者站点结构特殊"
-                logger.error(f"站点 {site_name} 邀请页面解析失败：没有找到任何表格")
-                return result
-            else:
-                # 使用任意表格继续尝试
-                invite_tables = any_tables
-        
-        # 检查是否存在"没有邀请权限"或"当前没有可用邀请名额"等提示
-        error_patterns = [
-            r"没有邀请权限",
-            r"不能使用邀请",
-            r"当前没有可用邀请名额",
-            r"低于要求的等级",
-            r"需要更高的用户等级",
-            r"无法进行邀请注册",
-            r"当前账户上限数已到",
-            r"抱歉，目前没有开放注册",
-            r"当前邀请注册人数已达上限",
-            r"对不起",
-            r"只有.*等级才能发送邀请",
-            r"及以上.*才能发送邀请",
-            r"\w+\s*or above can send invites"
-        ]
-        
-        # 解析邀请权限状态
-        page_text = soup.get_text()
-        
-        # 查找是否有邀请限制文本
-        has_restriction = False
-        restriction_reason = ""
-        
-        for pattern in error_patterns:
-            matches = re.search(pattern, page_text, re.IGNORECASE)
-            if matches:
-                has_restriction = True
-                restriction_reason = matches.group(0)
-                result["invite_status"]["can_invite"] = False
-                result["invite_status"]["reason"] = f"无法发送邀请: {restriction_reason}"
-                logger.info(f"站点 {site_name} 发现邀请限制: {restriction_reason}")
-                break
-        
-        # 检查是否存在发送邀请表单，这是最直接的判断依据
-        invite_form = soup.select('form[action*="takeinvite.php"]')
-        if invite_form:
-            if not has_restriction:
-                result["invite_status"]["can_invite"] = True
-                if not result["invite_status"]["reason"]:
-                    result["invite_status"]["reason"] = "存在邀请表单，可以发送邀请"
-                logger.info(f"站点 {site_name} 存在邀请表单，可以发送邀请")
+                            if after_match:
+                                # 获取永久邀请数量
+                                if after_match.group(1):
+                                    result["invite_status"]["permanent_count"] = int(after_match.group(1))
+                                
+                                # 如果有临时邀请数量
+                                if len(after_match.groups()) > 1 and after_match.group(2):
+                                    result["invite_status"]["temporary_count"] = int(after_match.group(2))
+                                
+                                logger.info(f"站点 {site_name} 从后续文本解析到邀请数量: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}")
+                                
+                                # 如果有邀请名额，初步判断为可邀请
+                                if result["invite_status"]["permanent_count"] > 0 or result["invite_status"]["temporary_count"] > 0:
+                                    result["invite_status"]["can_invite"] = True
+                                    result["invite_status"]["reason"] = f"可用邀请数: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}"
+            
+            # 检查是否有标准的NexusPHP邀请页面结构
+            invite_tables = soup.select('table.main > tbody > tr > td > table')
+            
+            # 如果页面没有invite_tables可能是未登录或者错误页面
+            if not invite_tables:
+                # 检查是否有其他表格
+                any_tables = soup.select('table')
+                if not any_tables:
+                    result["invite_status"]["reason"] = "页面解析错误，可能未登录或者站点结构特殊"
+                    logger.error(f"站点 {site_name} 邀请页面解析失败：没有找到任何表格")
+                    return result
+                else:
+                    # 使用任意表格继续尝试
+                    invite_tables = any_tables
+            
+            # 检查是否存在"没有邀请权限"或"当前没有可用邀请名额"等提示
+            error_patterns = [
+                r"没有邀请权限",
+                r"不能使用邀请",
+                r"当前没有可用邀请名额",
+                r"低于要求的等级",
+                r"需要更高的用户等级",
+                r"无法进行邀请注册",
+                r"当前账户上限数已到",
+                r"抱歉，目前没有开放注册",
+                r"当前邀请注册人数已达上限",
+                r"对不起",
+                r"只有.*等级才能发送邀请",
+                r"及以上.*才能发送邀请",
+                r"\w+\s*or above can send invites"
+            ]
+            
+            # 解析邀请权限状态
+            page_text = soup.get_text()
+            
+            # 查找是否有邀请限制文本
+            has_restriction = False
+            restriction_reason = ""
+            
+            for pattern in error_patterns:
+                matches = re.search(pattern, page_text, re.IGNORECASE)
+                if matches:
+                    has_restriction = True
+                    restriction_reason = matches.group(0)
+                    result["invite_status"]["can_invite"] = False
+                    result["invite_status"]["reason"] = f"无法发送邀请: {restriction_reason}"
+                    logger.info(f"站点 {site_name} 发现邀请限制: {restriction_reason}")
+                    break
+            
+            # 检查是否存在发送邀请表单，这是最直接的判断依据
+            invite_form = soup.select('form[action*="takeinvite.php"]')
+            if invite_form:
+                if not has_restriction:
+                    result["invite_status"]["can_invite"] = True
+                    if not result["invite_status"]["reason"]:
+                        result["invite_status"]["reason"] = "存在邀请表单，可以发送邀请"
+                    logger.info(f"站点 {site_name} 存在邀请表单，可以发送邀请")
         
         # 优先查找带有border属性的表格，这通常是用户列表表格
         invitee_tables = soup.select('table[border="1"]')
@@ -482,9 +521,25 @@ class NexusPhpHandler(_ISiteHandler):
                             if ratio_text == '∞':
                                 invitee["ratio_value"] = 1e20  # 用一个非常大的数代表无限
                             else:
-                                # 正确处理千分位逗号 - 首先删除所有千分位逗号，然后将小数点逗号替换为点
-                                normalized_ratio = re.sub(r'(\d),(\d{3})', r'\1\2', ratio_text)  # 去除千分位逗号
-                                normalized_ratio = normalized_ratio.replace(',', '.')  # 将小数点逗号替换为点
+                                # 正确处理千分位逗号 - 使用更好的方法完全移除千分位逗号
+                                # 先将所有千分位逗号去掉，然后再处理小数点
+                                normalized_ratio = ratio_text
+                                # 循环处理，直到没有千分位逗号
+                                while ',' in normalized_ratio:
+                                    # 检查每个逗号是否是千分位分隔符
+                                    comma_positions = [pos for pos, char in enumerate(normalized_ratio) if char == ',']
+                                    for pos in comma_positions:
+                                        # 如果逗号后面是数字，且前面也是数字，则视为千分位逗号
+                                        if (pos > 0 and pos < len(normalized_ratio) - 1 and 
+                                            normalized_ratio[pos-1].isdigit() and normalized_ratio[pos+1].isdigit()):
+                                            normalized_ratio = normalized_ratio[:pos] + normalized_ratio[pos+1:]
+                                            break
+                                    else:
+                                        # 如果没有找到千分位逗号，退出循环
+                                        break
+                                
+                                # 最后，将任何剩余的逗号替换为小数点（可能是小数点表示）
+                                normalized_ratio = normalized_ratio.replace(',', '.')
                                 invitee["ratio_value"] = float(normalized_ratio)
                         except (ValueError, TypeError):
                             invitee["ratio_value"] = 0
@@ -607,10 +662,13 @@ class NexusPhpHandler(_ISiteHandler):
             
             # 如果已找到用户数据，跳出循环
             if result["invitees"]:
-                logger.info(f"站点 {site_name} 已解析 {len(result['invitees'])} 个后宫成员")
+                if is_next_page:
+                    logger.info(f"站点 {site_name} 从翻页中解析到 {len(result['invitees'])} 个后宫成员")
+                else:
+                    logger.info(f"站点 {site_name} 从首页解析到 {len(result['invitees'])} 个后宫成员")
                 break
         
-        return result 
+        return result
 
     def _parse_bonus_shop(self, site_name: str, html_content: str) -> Dict[str, Any]:
         """
@@ -1025,12 +1083,27 @@ class NexusPhpHandler(_ISiteHandler):
             # 统一处理所有表示无限的情况，忽略大小写
             if ratio_str == '∞' or ratio_str.lower() in ['inf.', 'inf', 'infinite', '无限']:
                 return "excellent", ["分享率无限", "text-success"]
-                
+
             # 标准化分享率字符串 - 正确处理千分位逗号
             try:
-                # 先移除千分位逗号，再替换小数点逗号
-                normalized_ratio = re.sub(r'(\d),(\d{3})', r'\1\2', ratio_str)  # 去除千分位逗号
-                normalized_ratio = normalized_ratio.replace(',', '.')  # 将剩余逗号替换为点
+                # 使用更好的方法完全移除千分位逗号
+                normalized_ratio = ratio_str
+                # 循环处理，直到没有千分位逗号
+                while ',' in normalized_ratio:
+                    # 检查每个逗号是否是千分位分隔符
+                    comma_positions = [pos for pos, char in enumerate(normalized_ratio) if char == ',']
+                    for pos in comma_positions:
+                        # 如果逗号后面是数字，且前面也是数字，则视为千分位逗号
+                        if (pos > 0 and pos < len(normalized_ratio) - 1 and 
+                            normalized_ratio[pos-1].isdigit() and normalized_ratio[pos+1].isdigit()):
+                            normalized_ratio = normalized_ratio[:pos] + normalized_ratio[pos+1:]
+                            break
+                    else:
+                        # 如果没有找到千分位逗号，退出循环
+                        break
+                
+                # 最后，将任何剩余的逗号替换为小数点（可能是小数点表示）
+                normalized_ratio = normalized_ratio.replace(',', '.')
                 ratio = float(normalized_ratio)
                 return self._get_health_from_ratio_value(ratio)
             except (ValueError, TypeError) as e:
@@ -1055,4 +1128,44 @@ class NexusPhpHandler(_ISiteHandler):
         elif ratio > 0:
             return "warning" if ratio >= 0.4 else "danger", ["较低", "text-warning"] if ratio >= 0.4 else ["危险", "text-error"]
         else:
-            return "neutral", ["无数据", "text-grey"] 
+            return "neutral", ["无数据", "text-grey"]
+
+    def _check_ratio(self, row_data, row_html):
+        """
+        检查分享率是否满足条件
+        """
+        ratio_str = row_data.get("ratio") or ""
+        
+        # 处理无限分享率情况
+        if ratio_str == '∞' or ratio_str.lower() in ['inf.', 'inf', 'infinite', '无限']:
+            return True
+
+        try:
+            # 标准化字符串 - 正确处理千分位逗号
+            # 使用更好的方法完全移除千分位逗号
+            normalized_ratio = ratio_str
+            # 循环处理，直到没有千分位逗号
+            while ',' in normalized_ratio:
+                # 检查每个逗号是否是千分位分隔符
+                comma_positions = [pos for pos, char in enumerate(normalized_ratio) if char == ',']
+                for pos in comma_positions:
+                    # 如果逗号后面是数字，且前面也是数字，则视为千分位逗号
+                    if (pos > 0 and pos < len(normalized_ratio) - 1 and 
+                        normalized_ratio[pos-1].isdigit() and normalized_ratio[pos+1].isdigit()):
+                        normalized_ratio = normalized_ratio[:pos] + normalized_ratio[pos+1:]
+                        break
+                else:
+                    # 如果没有找到千分位逗号，退出循环
+                    break
+            
+            # 最后，将任何剩余的逗号替换为小数点（可能是小数点表示）
+            normalized_ratio = normalized_ratio.replace(',', '.')
+            
+            ratio = float(normalized_ratio) if normalized_ratio else 0
+            min_ratio = self.config.get("min_ratio", 0.5)
+            if ratio < min_ratio:
+                return False
+            return True
+        except (ValueError, TypeError):
+            # 转换失败时也返回True，避免误判
+            return True 
