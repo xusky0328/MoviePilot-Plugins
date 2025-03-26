@@ -109,6 +109,14 @@ class NexusPhpHandler(_ISiteHandler):
             # 解析邀请页面
             invite_result = self._parse_nexusphp_invite_page(site_name, response.text)
             
+            # 检查第一页后宫成员数量，如果少于50人，则不再翻页
+            if len(invite_result["invitees"]) < 50:
+                logger.info(f"站点 {site_name} 首页后宫成员数量少于50人({len(invite_result['invitees'])}人)，不再查找后续页面")
+                # 如果成功解析到后宫成员，记录总数
+                if invite_result["invitees"]:
+                    logger.info(f"站点 {site_name} 共解析到 {len(invite_result['invitees'])} 个后宫成员")
+                return invite_result
+            
             # 尝试获取更多页面的后宫成员
             next_page = 1  # 从第二页开始，因为第一页已经解析过了
             max_pages = 100  # 防止无限循环
@@ -128,6 +136,14 @@ class NexusPhpHandler(_ISiteHandler):
                     # 如果没有找到任何后宫成员，说明已到达最后一页
                     if not next_page_result["invitees"]:
                         logger.info(f"站点 {site_name} 第 {next_page+1} 页没有后宫成员数据，停止获取")
+                        break
+                    
+                    # 如果当前页面后宫成员少于50人，默认认为没有下一页，避免错误进入下一页
+                    if len(next_page_result["invitees"]) < 50:
+                        logger.info(f"站点 {site_name} 第 {next_page+1} 页后宫成员数量少于50人({len(next_page_result['invitees'])}人)，默认没有下一页")
+                        # 将当前页数据合并到结果中后退出循环
+                        invite_result["invitees"].extend(next_page_result["invitees"])
+                        logger.info(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
                         break
                     
                     # 将下一页的后宫成员添加到结果中
