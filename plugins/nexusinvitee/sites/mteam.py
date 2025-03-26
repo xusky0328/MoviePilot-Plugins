@@ -4,6 +4,7 @@ M-Team站点处理
 import time
 from typing import Dict, Any, List
 import requests
+import re
 
 from app.log import logger
 from plugins.nexusinvitee.sites import _ISiteHandler
@@ -376,10 +377,12 @@ class MTeamHandler(_ISiteHandler):
         计算分享率健康度
         """
         try:
-            # 处理无限分享率情况
-            if ratio_str == '∞' or ratio_str.lower() == 'inf.' or ratio_str.lower() == 'inf':
-                return "excellent", ["分享率无限", "text-success"]
-
+            # 优先使用上传下载直接计算分享率（如果都是数值类型）
+            if isinstance(uploaded, (int, float)) and isinstance(downloaded, (int, float)) and downloaded > 0:
+                ratio = uploaded / downloaded
+                # 使用计算结果生成适当的健康状态和标签
+                return self._get_health_from_ratio_value(ratio)
+                
             # 检查是否是无数据情况（上传下载都是0）
             is_no_data = False
             if isinstance(uploaded, str) and isinstance(downloaded, str):
@@ -391,23 +394,42 @@ class MTeamHandler(_ISiteHandler):
 
             if is_no_data:
                 return "neutral", ["无数据", "text-grey"]
-
-            # 标准化分享率字符串
-            ratio_str = ratio_str.replace(',', '.')
-            ratio = float(ratio_str) if ratio_str else 0
-
-            # 分享率健康度判断
-            if ratio >= 4.0:
-                return "excellent", ["极好", "text-success"]
-            elif ratio >= 2.0:
-                return "good", ["良好", "text-success"]
-            elif ratio >= 1.0:
-                return "good", ["正常", "text-success"]
-            elif ratio > 0:
-                return "warning" if ratio >= 0.4 else "danger", ["较低", "text-warning"] if ratio >= 0.4 else ["危险", "text-error"]
-            else:
-                return "neutral", ["无数据", "text-grey"]
+                
+            # 处理无限分享率情况 - 增强检测逻辑
+            if not ratio_str:
+                return "neutral", ["无效", "text-grey"]
+                
+            # 统一处理所有表示无限的情况，忽略大小写
+            if ratio_str == '∞' or ratio_str.lower() in ['inf.', 'inf', 'infinite', '无限']:
+                return "excellent", ["分享率无限", "text-success"]
+                
+            # 标准化分享率字符串 - 正确处理千分位逗号
+            try:
+                # 先移除千分位逗号，再替换小数点逗号
+                normalized_ratio = re.sub(r'(\d),(\d{3})', r'\1\2', ratio_str)  # 去除千分位逗号
+                normalized_ratio = normalized_ratio.replace(',', '.')  # 将剩余逗号替换为点
+                ratio = float(normalized_ratio)
+                return self._get_health_from_ratio_value(ratio)
+            except (ValueError, TypeError) as e:
+                logger.error(f"分享率转换错误: {ratio_str}, 错误: {str(e)}")
+                return "neutral", ["无效", "text-grey"]
 
         except (ValueError, TypeError) as e:
             logger.error(f"分享率计算错误: {str(e)}")
             return "neutral", ["无效", "text-grey"]
+            
+    def _get_health_from_ratio_value(self, ratio):
+        """
+        根据分享率数值获取健康状态和标签
+        """
+        # 分享率健康度判断
+        if ratio >= 4.0:
+            return "excellent", ["极好", "text-success"]
+        elif ratio >= 2.0:
+            return "good", ["良好", "text-success"]
+        elif ratio >= 1.0:
+            return "good", ["正常", "text-success"]
+        elif ratio > 0:
+            return "warning" if ratio >= 0.4 else "danger", ["较低", "text-warning"] if ratio >= 0.4 else ["危险", "text-error"]
+        else:
+            return "neutral", ["无数据", "text-grey"]

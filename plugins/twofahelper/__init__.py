@@ -25,7 +25,7 @@ class twofahelper(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/2fa.png"
     # 插件版本
-    plugin_version = "1.2.6"
+    plugin_version = "1.2.7"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -221,7 +221,6 @@ class twofahelper(_PluginBase):
         global_config = {
             "refresh": 5,  # 5秒自动刷新
             "title": "两步验证码",
-            "subtitle": f"共 {len(codes)} 个站点",
             "border": True,
             "fullscreen": True,  # 使用全屏模式
             "style": "width: 100vw !important; max-width: 100% !important; padding: 0 !important; margin: 0 !important;"  # 确保容器充满屏幕宽度
@@ -263,6 +262,22 @@ class twofahelper(_PluginBase):
             /* 防止卡片过度拉伸 */
             .v-card {
                 width: auto !important;
+            }
+
+            /* 减少标题与内容间的留白 */
+            .v-toolbar__content {
+                padding-bottom: 0 !important;
+                min-height: 48px !important;
+            }
+
+            /* 减少dashboard顶部空间 */
+            .dashboard-container {
+                padding-top: 0 !important;
+            }
+            
+            /* 移除标题下方的margin */
+            .dashboard-title {
+                margin-bottom: 0 !important;
             }
             """
         })

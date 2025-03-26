@@ -336,7 +336,7 @@ class ButterflyHandler(_ISiteHandler):
                         elif any(kw in header for kw in ['分享率', '分享比率', 'ratio']):
                             ratio_text = cell_text
                             
-                            # 处理特殊分享率表示
+                            # 处理特殊分享率表示 - 扩展无限分享率识别
                             if ratio_text.lower() in ['inf.', 'inf', '∞', 'infinite', '无限']:
                                 invitee["ratio"] = "∞"
                                 invitee["ratio_value"] = 1e20
@@ -351,10 +351,11 @@ class ButterflyHandler(_ISiteHandler):
                                 
                                 invitee["ratio"] = ratio_text
                                 
-                                # 尝试解析为浮点数
+                                # 尝试解析为浮点数 - 正确处理千分位逗号
                                 try:
-                                    # 替换逗号为点
-                                    normalized_ratio = ratio_text.replace(',', '.')
+                                    # 先移除千分位逗号，再替换小数点逗号
+                                    normalized_ratio = re.sub(r'(\d),(\d{3})', r'\1\2', ratio_text)  # 去除千分位逗号
+                                    normalized_ratio = normalized_ratio.replace(',', '.')  # 将剩余逗号替换为点
                                     invitee["ratio_value"] = float(normalized_ratio)
                                 except (ValueError, TypeError):
                                     logger.warning(f"无法解析分享率: {ratio_text}")
@@ -580,3 +581,19 @@ class ButterflyHandler(_ISiteHandler):
         except Exception as e:
             logger.error(f"解析站点 {site_name} 魔力值商店失败: {str(e)}")
             return result 
+
+    def _get_health_from_ratio_value(self, ratio):
+        """
+        根据分享率数值获取健康状态和标签
+        """
+        # 分享率健康度判断
+        if ratio >= 4.0:
+            return "excellent", ["极好", "text-success"]
+        elif ratio >= 2.0:
+            return "good", ["良好", "text-success"]
+        elif ratio >= 1.0:
+            return "good", ["正常", "text-success"]
+        elif ratio > 0:
+            return "warning" if ratio >= 0.4 else "danger", ["较低", "text-warning"] if ratio >= 0.4 else ["危险", "text-error"]
+        else:
+            return "neutral", ["无数据", "text-grey"] 

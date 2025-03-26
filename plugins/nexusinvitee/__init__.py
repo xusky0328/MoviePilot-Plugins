@@ -56,7 +56,7 @@ class nexusinvitee(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png"
     # 插件版本
-    plugin_version = "1.1.1"
+    plugin_version = "1.1.2"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -329,7 +329,7 @@ class nexusinvitee(_PluginBase):
                 "component": "VCard",
                 "props": {
                     "class": "mb-4",
-                    "variant": "outlined"
+                    "variant": "flat"  # 修改为flat，去掉内边框
                 },
                 "content": [
                     {
@@ -778,6 +778,8 @@ class nexusinvitee(_PluginBase):
         """
         详情页面
         """
+        import re  # 在函数内部也导入re模块，确保可用
+        
         try:
             # 从data_manager获取站点数据
             cached_data = {}
@@ -1140,7 +1142,7 @@ class nexusinvitee(_PluginBase):
                 "component": "VCard",
                 "props": {
                     "class": "mb-4",
-                    "variant": "outlined"
+                    "variant": "flat"  # 修改为flat，去掉内边框
                 },
                 "content": [
                     {
@@ -1457,27 +1459,29 @@ class nexusinvitee(_PluginBase):
                         
                         # 处理分享率
                         ratio_str = invitee.get('ratio', '')
-                        # 处理无限分享率情况
-                        if ratio_str == '∞' or ratio_str.lower() == 'inf.' or ratio_str.lower() == 'inf':
+                        # 处理无限分享率情况 - 增强识别能力
+                        if ratio_str == '∞' or ratio_str.lower() in ['inf.', 'inf', 'infinite', '无限']:
                             continue  # 无限分享率不计入低分享率
                         
                         try:
-                            # 标准化字符串，替换逗号为点
-                            ratio_str = ratio_str.replace(',', '.')
-                            ratio_val = float(ratio_str) if ratio_str else 0
+                            # 标准化字符串 - 正确处理千分位逗号
+                            # 先移除千分位逗号，再替换小数点逗号
+                            normalized_ratio = re.sub(r'(\d),(\d{3})', r'\1\2', ratio_str)  # 去除千分位逗号
+                            normalized_ratio = normalized_ratio.replace(',', '.')  # 将剩余逗号替换为点
+                            ratio_val = float(normalized_ratio) if normalized_ratio else 0
                             if ratio_val < 1 and ratio_val > 0:  # 确保分享率大于0且小于1才算低分享率
                                 low_ratio_count += 1
-                        except (ValueError, TypeError):
+                                logger.info(f"【总览】检测到低分享率用户: {invitee.get('username', '未知')}, 分享率={ratio_str}({ratio_val})")
+                        except (ValueError, TypeError) as e:
                             # 转换错误时记录警告
-                            logger.warning(f"分享率转换失败: {ratio_str}")
+                            logger.warning(f"分享率转换失败: {ratio_str}, 错误: {str(e)}")
 
                     # 合并站点信息和数据到一张卡片
                     site_card = {
                         "component": "VCard",
                         "props": {
                             "class": "mb-4",
-                            "variant": "outlined",
-                            "elevation": "1"
+                            "variant": "flat"  # 修改为flat，去掉内边框
                         },
                         "content": [
                             # 站点信息头部

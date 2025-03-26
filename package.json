@@ -3,13 +3,13 @@
     "name": "两步验证助手",
     "description": "懒人板2FA，配合浏览器扩展使用，支持自动弹出验证码一键复制",
     "labels": "TOTP,验证码,扩展",
-    "version": "1.2.6",
+    "version": "1.2.7",
     "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/2fa.png",
     "author": "madrays",
     "level": 1,
     "v2": true,
     "history": {
-      "v1.2.6": "满屏面板"
+      "v1.2.7": "满屏面板"
     }
   },
   "fnossign": {
@@ -45,13 +45,13 @@
     "name": "后宫管理系统",
     "description": "管理添加到MP站点的邀请系统，包括邀请名额、已邀请用户状态等",
     "labels": "PT,后宫,邀请",
-    "version": "1.1.1",
+    "version": "1.1.2",
     "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png",
     "author": "madrays",
     "level": 2,
     "v2": true,
     "history": {
-      "v1.1.1": "适配多个特殊魔力值名称站点，后宫数据折叠展示，修复不可邀请原因展示"
+      "v1.1.2": "修复分享率计算错误"
     }
   }
 } 

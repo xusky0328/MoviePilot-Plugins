@@ -471,7 +471,8 @@ class NexusPhpHandler(_ISiteHandler):
                         ratio_text = cell_text
                         if ratio_text == '---' or not ratio_text:
                             ratio_text = '0'
-                        elif ratio_text.lower() in ['inf.', 'inf', '无限']:
+                        # 扩展无限分享率识别，包括任何大小写的inf或inf.
+                        elif ratio_text.lower() in ['inf.', 'inf', '无限', 'infinite', '∞']:
                             ratio_text = '∞'
                             
                         invitee["ratio"] = ratio_text
@@ -479,10 +480,11 @@ class NexusPhpHandler(_ISiteHandler):
                         # 计算分享率数值
                         try:
                             if ratio_text == '∞':
-                                invitee["ratio_value"] = 1e20
+                                invitee["ratio_value"] = 1e20  # 用一个非常大的数代表无限
                             else:
-                                # 替换逗号为点
-                                normalized_ratio = ratio_text.replace(',', '.')
+                                # 正确处理千分位逗号 - 首先删除所有千分位逗号，然后将小数点逗号替换为点
+                                normalized_ratio = re.sub(r'(\d),(\d{3})', r'\1\2', ratio_text)  # 去除千分位逗号
+                                normalized_ratio = normalized_ratio.replace(',', '.')  # 将小数点逗号替换为点
                                 invitee["ratio_value"] = float(normalized_ratio)
                         except (ValueError, TypeError):
                             invitee["ratio_value"] = 0
@@ -502,7 +504,7 @@ class NexusPhpHandler(_ISiteHandler):
                     
                     # 做种时魔/当前纯做种时魔 - 这是我们需要特别解析的字段
                     elif any(keyword in header for keyword in ['做种时魔', '纯做种时魔', '当前纯做种时魔', '做种积分', 'seed bonus', 'seed magic', 
-                                                              '单种魔力', '单种杏仁', '单种UCoin', '单种麦粒', '单种银元', '单种电力值', '单种憨豆', 
+                                                              '单种魔力', '单种杏仁', '单种UCoin', '单种麦粒', '单种银元', '单种电力值','单种松子','单种松子值', '单种憨豆', 
                                                               '单种茉莉', '单种蟹币值', '单种鲸币', '单种蝌蚪', '单种灵石', '单种爆米花', '单种冰晶', 
                                                               '单种积分', '单种魅力值', '单种猫粮', '单种星焱']):
                         invitee["seed_magic"] = cell_text
@@ -519,12 +521,12 @@ class NexusPhpHandler(_ISiteHandler):
                     # 做种魔力/积分/加成
                     elif any(keyword in header for keyword in ['魔力', 'magic', '积分', 'bonus', '加成', 'leeched', '杏仁', 'ucoin', '麦粒', '银元',
                                                               '电力值', '憨豆', '茉莉', '蟹币值', '鲸币', '蝌蚪', '灵石', '爆米花', '冰晶', '魅力值', 
-                                                              '猫粮', '星焱']):
+                                                              '猫粮', '星焱','松子','松子值']):
                         header_lower = header.lower()
                         # 所有魔力值类型名称都统一存储到magic字段
                         if any(keyword in header_lower for keyword in ['魔力', 'magic', '杏仁', 'ucoin', '麦粒', '银元', '电力值', '憨豆', 
                                                                       '茉莉', '蟹币值', '蟹币值', '鲸币', '蝌蚪', '灵石', '爆米花', '冰晶', '魅力值', 
-                                                                      '猫粮', '星焱']):
+                                                                      '猫粮', '星焱','松子','松子值']):
                             invitee["magic"] = cell_text
                         elif '加成' in header_lower or 'bonus' in header_lower:
                             invitee["bonus"] = cell_text
@@ -642,7 +644,7 @@ class NexusPhpHandler(_ISiteHandler):
                               'table td:contains("茉莉"), table td:contains("蟹币值"), table td:contains("蟹币值"), table td:contains("鲸币"), ' + 
                               'table td:contains("蝌蚪"), table td:contains("灵石"), table td:contains("爆米花"), ' + 
                               'table td:contains("冰晶"), table td:contains("魅力值"), table td:contains("猫粮"), ' + 
-                              'table td:contains("星焱"), table td:contains("音浪"), table td:contains("金元宝")'),
+                              'table td:contains("星焱"), table td:contains("音浪"), table td:contains("金元宝"), table td:contains("松子"), table td:contains("松子值")'),
                 # 页面顶部通常显示用户信息的区域
                 soup.select_one('#info_block, .info, #userinfo')
             ]
@@ -665,6 +667,8 @@ class NexusPhpHandler(_ISiteHandler):
                         r'麦粒[^(]*\(当前([\d,\.]+)[^)]*\)',
                         r'银元[^(]*\(当前([\d,\.]+)[^)]*\)',
                         r'电力值[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'松子[^(]*\(当前([\d,\.]+)[^)]*\)',
+                        r'松子值[^(]*\(当前([\d,\.]+)[^)]*\)',
                         r'憨豆[^(]*\(当前([\d,\.]+)[^)]*\)',
                         r'茉莉[^(]*\(当前([\d,\.]+)[^)]*\)',
                         r'蟹币值*[^(]*\(当前([\d,\.]+)[^)]*\)',  # 修改：同时支持蟹币和蟹币值
@@ -685,6 +689,8 @@ class NexusPhpHandler(_ISiteHandler):
                         r'当前([\d,\.]+)[^)]*麦粒',
                         r'当前([\d,\.]+)[^)]*银元',
                         r'当前([\d,\.]+)[^)]*电力值',
+                        r'当前([\d,\.]+)[^)]*松子',
+                        r'当前([\d,\.]+)[^)]*松子值',
                         r'当前([\d,\.]+)[^)]*憨豆',
                         r'当前([\d,\.]+)[^)]*茉莉',
                         r'当前([\d,\.]+)[^)]*蟹币值',
@@ -705,6 +711,8 @@ class NexusPhpHandler(_ISiteHandler):
                         r'当前([\d,\.]+)[^)]*麦粒', 
                         r'当前([\d,\.]+)[^)]*银元',
                         r'当前([\d,\.]+)[^)]*电力值',
+                        r'当前([\d,\.]+)[^)]*松子',
+                        r'当前([\d,\.]+)[^)]*松子值',
                         r'当前([\d,\.]+)[^)]*憨豆',
                         r'当前([\d,\.]+)[^)]*茉莉',
                         r'当前([\d,\.]+)[^)]*蟹币值',
@@ -724,6 +732,8 @@ class NexusPhpHandler(_ISiteHandler):
                         r'([\d,\.]+)\s*个麦粒',
                         r'([\d,\.]+)\s*个银元',
                         r'([\d,\.]+)\s*个电力值',
+                        r'([\d,\.]+)\s*个松子',
+                        r'([\d,\.]+)\s*个松子值',
                         r'([\d,\.]+)\s*个憨豆',
                         r'([\d,\.]+)\s*个茉莉',
                         r'([\d,\.]+)\s*个蟹币值',
@@ -795,6 +805,8 @@ class NexusPhpHandler(_ISiteHandler):
                     r'麦粒\s*[:：]\s*([\d,\.]+)',
                     r'银元\s*[:：]\s*([\d,\.]+)',
                     r'电力值\s*[:：]\s*([\d,\.]+)',
+                    r'松子\s*[:：]\s*([\d,\.]+)',
+                    r'松子值\s*[:：]\s*([\d,\.]+)',
                     r'憨豆\s*[:：]\s*([\d,\.]+)',
                     r'茉莉\s*[:：]\s*([\d,\.]+)',
                     r'蟹币值*\s*[:：]\s*([\d,\.]+)',  # 修改：同时支持蟹币和蟹币值
@@ -812,6 +824,8 @@ class NexusPhpHandler(_ISiteHandler):
                     r'当前麦粒[^(]*\(当前([\d,\.]+)\)',
                     r'当前银元[^(]*\(当前([\d,\.]+)\)',
                     r'当前电力值[^(]*\(当前([\d,\.]+)\)',
+                    r'当前松子[^(]*\(当前([\d,\.]+)\)',
+                    r'当前松子值[^(]*\(当前([\d,\.]+)\)',
                     r'当前憨豆[^(]*\(当前([\d,\.]+)\)',
                     r'当前茉莉[^(]*\(当前([\d,\.]+)\)',
                     r'当前蟹币值[^(]*\(当前([\d,\.]+)\)',
@@ -828,6 +842,8 @@ class NexusPhpHandler(_ISiteHandler):
                     r'当前([\d,\.]+)[^)]*UCoin',
                     r'当前([\d,\.]+)[^)]*麦粒', 
                     r'当前([\d,\.]+)[^)]*银元',
+                    r'当前([\d,\.]+)[^)]*电力值',
+                    r'当前([\d,\.]+)[^)]*电力值',
                     r'当前([\d,\.]+)[^)]*电力值',
                     r'当前([\d,\.]+)[^)]*憨豆',
                     r'当前([\d,\.]+)[^)]*茉莉',
@@ -848,6 +864,8 @@ class NexusPhpHandler(_ISiteHandler):
                     r'([\d,\.]+)\s*个麦粒',
                     r'([\d,\.]+)\s*个银元',
                     r'([\d,\.]+)\s*个电力值',
+                    r'([\d,\.]+)\s*个松子',
+                    r'([\d,\.]+)\s*个松子值',
                     r'([\d,\.]+)\s*个憨豆',
                     r'([\d,\.]+)\s*个茉莉',
                     r'([\d,\.]+)\s*个蟹币值',
@@ -894,7 +912,7 @@ class NexusPhpHandler(_ISiteHandler):
                 header_text = ' '.join([h.get_text().lower() for h in headers])
                 
                 bonus_keywords = ['魔力值', '积分', 'bonus', '工分', '杏仁值', 'ucoin', '麦粒', '银元', 
-                                 '电力值', '憨豆', '茉莉', '蟹币', '蟹币值', '鲸币', '蝌蚪', '灵石', '爆米花', 
+                                 '电力值','松子','松子值', '憨豆', '茉莉', '蟹币', '蟹币值', '鲸币', '蝌蚪', '灵石', '爆米花', 
                                  '冰晶', '魅力值', '猫粮', '星焱', '音浪', '金元宝']
                 
                 if any(keyword in header_text for keyword in bonus_keywords):
@@ -982,10 +1000,12 @@ class NexusPhpHandler(_ISiteHandler):
         计算分享率健康度
         """
         try:
-            # 处理无限分享率情况
-            if ratio_str == '∞' or ratio_str.lower() == 'inf.' or ratio_str.lower() == 'inf':
-                return "excellent", ["分享率无限", "text-success"]
-
+            # 优先使用上传下载直接计算分享率（如果都是数值类型）
+            if isinstance(uploaded, (int, float)) and isinstance(downloaded, (int, float)) and downloaded > 0:
+                ratio = uploaded / downloaded
+                # 使用计算结果生成适当的健康状态和标签
+                return self._get_health_from_ratio_value(ratio)
+                
             # 检查是否是无数据情况（上传下载都是0）
             is_no_data = False
             if isinstance(uploaded, str) and isinstance(downloaded, str):
@@ -997,23 +1017,42 @@ class NexusPhpHandler(_ISiteHandler):
 
             if is_no_data:
                 return "neutral", ["无数据", "text-grey"]
-
-            # 标准化分享率字符串
-            ratio_str = ratio_str.replace(',', '.')
-            ratio = float(ratio_str) if ratio_str else 0
-
-            # 分享率健康度判断
-            if ratio >= 4.0:
-                return "excellent", ["极好", "text-success"]
-            elif ratio >= 2.0:
-                return "good", ["良好", "text-success"]
-            elif ratio >= 1.0:
-                return "good", ["正常", "text-success"]
-            elif ratio > 0:
-                return "warning" if ratio >= 0.4 else "danger", ["较低", "text-warning"] if ratio >= 0.4 else ["危险", "text-error"]
-            else:
-                return "neutral", ["无数据", "text-grey"]
+                
+            # 处理无限分享率情况 - 增强检测逻辑
+            if not ratio_str:
+                return "neutral", ["无效", "text-grey"]
+                
+            # 统一处理所有表示无限的情况，忽略大小写
+            if ratio_str == '∞' or ratio_str.lower() in ['inf.', 'inf', 'infinite', '无限']:
+                return "excellent", ["分享率无限", "text-success"]
+                
+            # 标准化分享率字符串 - 正确处理千分位逗号
+            try:
+                # 先移除千分位逗号，再替换小数点逗号
+                normalized_ratio = re.sub(r'(\d),(\d{3})', r'\1\2', ratio_str)  # 去除千分位逗号
+                normalized_ratio = normalized_ratio.replace(',', '.')  # 将剩余逗号替换为点
+                ratio = float(normalized_ratio)
+                return self._get_health_from_ratio_value(ratio)
+            except (ValueError, TypeError) as e:
+                logger.error(f"分享率转换错误: {ratio_str}, 错误: {str(e)}")
+                return "neutral", ["无效", "text-grey"]
 
         except (ValueError, TypeError) as e:
             logger.error(f"分享率计算错误: {str(e)}")
-            return "neutral", ["无效", "text-grey"] 
+            return "neutral", ["无效", "text-grey"]
+            
+    def _get_health_from_ratio_value(self, ratio):
+        """
+        根据分享率数值获取健康状态和标签
+        """
+        # 分享率健康度判断
+        if ratio >= 4.0:
+            return "excellent", ["极好", "text-success"]
+        elif ratio >= 2.0:
+            return "good", ["良好", "text-success"]
+        elif ratio >= 1.0:
+            return "good", ["正常", "text-success"]
+        elif ratio > 0:
+            return "warning" if ratio >= 0.4 else "danger", ["较低", "text-warning"] if ratio >= 0.4 else ["危险", "text-error"]
+        else:
+            return "neutral", ["无数据", "text-grey"] 
