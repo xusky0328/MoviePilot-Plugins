@@ -315,7 +315,7 @@ class MTeamHandler(_ISiteHandler):
                 status = "待确认"
                     
                     # 创建用户记录
-                    user = {
+            user = {
                 "username": invitee.get("username", ""),
                 "email": invitee.get("email", ""),
                 "uploaded": self._format_size(uploaded),
@@ -417,7 +417,7 @@ class MTeamHandler(_ISiteHandler):
                             normalized_ratio[pos-1].isdigit() and normalized_ratio[pos+1].isdigit()):
                             normalized_ratio = normalized_ratio[:pos] + normalized_ratio[pos+1:]
                             break
-        else:
+                    else:
                         # 如果没有找到千分位逗号，退出循环
                         break
                 
