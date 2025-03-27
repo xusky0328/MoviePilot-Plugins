@@ -45,13 +45,13 @@
     "name": "后宫管理系统",
     "description": "管理添加到MP站点的邀请系统，包括邀请名额、已邀请用户状态等",
     "labels": "PT,后宫,邀请",
-    "version": "1.1.6",
+    "version": "1.1.7",
     "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png",
     "author": "madrays",
     "level": 2,
     "v2": true,
     "history": {
-      "v1.1.6": "修复立即运行一次按钮无法自动关闭，修复不可发药原因展示，变更为增量刷新模式，刷新方式为增量刷新（不清空旧数据）"
+      "v1.1.7": "适配象岛、憨憨（未测试）"
     }
   }
 } 
