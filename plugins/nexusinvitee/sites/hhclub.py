@@ -31,7 +31,8 @@ class HHClubHandler(_ISiteHandler):
         # 憨憨站点的特征 - 域名中包含 hhanclub 或者 hhclub
         hhclub_features = [
             "hhanclub",   # 憨憨官方域名
-            "hhclub"      # 可能的简写域名
+            "hhclub",      # 可能的简写域名
+            "hhan"   # 憨憨官方域名
         ]
         
         site_url_lower = site_url.lower()
