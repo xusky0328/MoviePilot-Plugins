@@ -3,18 +3,13 @@ NexusPHP站点邀请系统解析器基类
 """
 import re
 from abc import ABCMeta, abstractmethod
-from typing import Dict, Optional, Any, List
+from typing import Dict, Optional, Any
 
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
 from app.log import logger
-from plugins.nexusinvitee.sites.base import _ISiteHandler
-from plugins.nexusinvitee.sites.nexusphp import NexusPhpHandler
-from plugins.nexusinvitee.sites.butterfly import ButterflyHandler
-from plugins.nexusinvitee.sites.xiangdao import XiangdaoHandler
-from plugins.nexusinvitee.sites.hhclub import HHClubHandler
 
 
 class _ISiteHandler(metaclass=ABCMeta):
@@ -178,12 +173,4 @@ class _ISiteHandler(metaclass=ABCMeta):
             return f"{ratio:.3f}"
         except Exception as e:
             logger.error(f"计算分享率失败: {str(e)}")
-            return "0"
-
-# 注册站点处理器
-site_handlers: List[_ISiteHandler] = [
-    NexusPhpHandler(),  # NexusPHP默认处理器
-    ButterflyHandler(),  # 蝴蝶处理器
-    XiangdaoHandler(),  # 象岛处理器
-    HHClubHandler(),    # 憨憨处理器
-] 
+            return "0" 
