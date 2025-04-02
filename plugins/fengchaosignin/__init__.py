@@ -21,9 +21,9 @@ class FengchaoSignin(_PluginBase):
     # 插件描述
     plugin_desc = "蜂巢论坛签到。"
     # 插件图标
-    plugin_icon = "fengchao.png"
+    plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fengchao.png"
     # 插件版本
-    plugin_version = "1.0.0"
+    plugin_version = "1.0.1"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
