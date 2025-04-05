@@ -23,7 +23,7 @@ class FengchaoSignin(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fengchao.png"
     # 插件版本
-    plugin_version = "1.0.2"
+    plugin_version = "1.0.3"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -47,6 +47,12 @@ class FengchaoSignin(_PluginBase):
     _retry_count = 0  # 最大重试次数
     _current_retry = 0  # 当前重试次数
     _retry_interval = 2  # 重试间隔(小时)
+    # MoviePilot数据推送相关
+    _mp_push_enabled = False  # 是否启用数据推送
+    _mp_push_interval = 1  # 推送间隔(天)
+    _last_push_time = None  # 上次推送时间
+    # 代理相关
+    _use_proxy = True  # 是否使用代理，默认启用
 
     # 定时器
     _scheduler: Optional[BackgroundScheduler] = None
@@ -65,29 +71,59 @@ class FengchaoSignin(_PluginBase):
             # 加载重试设置
             self._retry_count = int(config.get("retry_count") or 0)
             self._retry_interval = int(config.get("retry_interval") or 2)
+            # 加载MoviePilot数据推送设置
+            self._mp_push_enabled = config.get("mp_push_enabled")
+            self._mp_push_interval = int(config.get("mp_push_interval") or 1)
+            # 加载代理设置
+            self._use_proxy = config.get("use_proxy", True)
+            
+            # 加载上次推送时间
+            self._last_push_time = self.get_data('last_push_time')
 
         # 重置当前重试次数
         self._current_retry = 0
 
-        if self._onlyonce:
+        if self._enabled and (
+            self._cron or (self._onlyonce and not self._scheduler)
+        ):
             # 定时服务
             self._scheduler = BackgroundScheduler(timezone=settings.TZ)
-            logger.info(f"蜂巢签到服务启动，立即运行一次")
-            self._scheduler.add_job(func=self.__signin, trigger='date',
-                                    run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=3),
-                                    name="蜂巢签到")
-            # 关闭一次性开关
-            self._onlyonce = False
-            self.update_config({
-                "onlyonce": False,
-                "cron": self._cron,
-                "enabled": self._enabled,
-                "cookie": self._cookie,
-                "notify": self._notify,
-                "history_days": self._history_days,
-                "retry_count": self._retry_count,
-                "retry_interval": self._retry_interval,
-            })
+
+            # 如果是立即运行一次
+            if self._onlyonce:
+                logger.info(f"蜂巢签到服务启动，立即运行一次")
+                self._scheduler.add_job(func=self.__signin, trigger='date',
+                                        run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=3),
+                                        name="蜂巢签到")
+                # 关闭一次性开关
+                self._onlyonce = False
+                self.update_config({
+                    "onlyonce": False,
+                    "cron": self._cron,
+                    "enabled": self._enabled,
+                    "cookie": self._cookie,
+                    "notify": self._notify,
+                    "history_days": self._history_days,
+                    "retry_count": self._retry_count,
+                    "retry_interval": self._retry_interval,
+                    "mp_push_enabled": self._mp_push_enabled,
+                    "mp_push_interval": self._mp_push_interval,
+                    "use_proxy": self._use_proxy
+                })
+            # 周期运行
+            elif self._cron:
+                logger.info(f"蜂巢签到服务启动，周期：{self._cron}")
+                self._scheduler.add_job(func=self.__signin,
+                                       trigger=CronTrigger.from_crontab(self._cron),
+                                       name="蜂巢签到")
+                
+                # 如果启用了MoviePilot数据推送，添加定时任务检查是否需要推送
+                if self._mp_push_enabled:
+                    logger.info(f"MoviePilot数据推送检查服务启动，每6小时检查一次")
+                    self._scheduler.add_job(func=self.__check_and_push_mp_stats,
+                                           trigger='interval',
+                                           hours=6,
+                                           name="MoviePilot数据推送检查")
 
             # 启动任务
             if self._scheduler.get_jobs():
@@ -129,12 +165,35 @@ class FengchaoSignin(_PluginBase):
         if not self._scheduler.running:
             self._scheduler.start()
 
+    def _get_proxies(self):
+        """
+        获取代理设置
+        """
+        if not self._use_proxy:
+            logger.info("未启用代理")
+            return None
+            
+        try:
+            # 获取系统代理设置
+            if hasattr(settings, 'PROXY') and settings.PROXY:
+                logger.info(f"使用系统代理: {settings.PROXY}")
+                return settings.PROXY
+            else:
+                logger.warning("系统代理未配置")
+                return None
+        except Exception as e:
+            logger.error(f"获取代理设置出错: {str(e)}")
+            return None
+
     def __signin(self):
         """
         蜂巢签到
         """
+        # 获取代理设置
+        proxies = self._get_proxies()
+        
         # 连接失败处理
-        res = RequestUtils(cookies=self._cookie).get_res(url="https://pting.club")
+        res = RequestUtils(cookies=self._cookie, proxies=proxies).get_res(url="https://pting.club")
         if not res or res.status_code != 200:
             logger.error("请求蜂巢错误")
             
@@ -151,6 +210,7 @@ class FengchaoSignin(_PluginBase):
                         f"💡 可能的解决方法\n"
                         f"• 检查Cookie是否过期\n"
                         f"• 确认站点是否可访问\n"
+                        f"• 检查代理设置是否正确\n"
                         f"• 尝试手动登录网站\n"
                         f"━━━━━━━━━━"
                     )
@@ -241,6 +301,29 @@ class FengchaoSignin(_PluginBase):
         if match:
             userId = match.group(1)
             logger.info(f"获取userid成功 {userId}")
+            
+            # 调试：无论是否需要推送，都获取并打印站点数据
+            logger.info("调试：开始获取站点数据")
+            debug_stats_data = self._get_site_statistics()
+            if debug_stats_data:
+                sites = debug_stats_data.get("sites", [])
+                sample_sites = [site.get("name") for site in sites[:3] if site.get("name")]
+                logger.info(f"调试：获取到 {len(sites)} 个站点数据，示例站点: {', '.join(sample_sites) if sample_sites else '无'}")
+                
+                # 格式化并打印汇总数据
+                debug_formatted = self._format_stats_data(debug_stats_data)
+                if debug_formatted:
+                    summary = debug_formatted.get("summary", {})
+                    logger.info(f"调试：站点数据汇总 - 总上传: {round(summary.get('total_upload', 0)/1024/1024/1024, 2)} GB, "
+                             f"总下载: {round(summary.get('total_download', 0)/1024/1024/1024, 2)} GB, "
+                             f"总做种数: {summary.get('total_seed', 0)}, "
+                             f"总做种体积: {round(summary.get('total_seed_size', 0)/1024/1024/1024, 2)} GB")
+            else:
+                logger.info("调试：未获取到站点数据")
+            
+            # 如果开启了MoviePilot统计推送，尝试推送数据
+            if self._mp_push_enabled:
+                self.__push_mp_stats(user_id=userId, csrf_token=csrfToken)
         else:
             logger.error("未找到userId")
             
@@ -305,7 +388,7 @@ class FengchaoSignin(_PluginBase):
         }
 
         # 开始签到
-        res = RequestUtils(headers=headers).post_res(url=f"https://pting.club/api/users/{userId}", json=data)
+        res = RequestUtils(headers=headers, proxies=proxies).post_res(url=f"https://pting.club/api/users/{userId}", json=data)
 
         if not res or res.status_code != 200:
             logger.error("蜂巢签到失败")
@@ -465,15 +548,27 @@ class FengchaoSignin(_PluginBase):
             "kwargs": {} # 定时器参数
         }]
         """
+        services = []
+        
         if self._enabled and self._cron:
-            return [{
+            services.append({
                 "id": "FengchaoSignin",
                 "name": "蜂巢签到服务",
                 "trigger": CronTrigger.from_crontab(self._cron),
                 "func": self.__signin,
                 "kwargs": {}
-            }]
-        return []
+            })
+        
+        if self._enabled and self._mp_push_enabled:
+            services.append({
+                "id": "MoviePilotStatsPush",
+                "name": "MoviePilot统计推送检查服务",
+                "trigger": "interval",
+                "func": self.__check_and_push_mp_stats,
+                "kwargs": {"hours": 6} # 每6小时检查一次是否需要推送
+            })
+            
+        return services
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         """
@@ -484,208 +579,242 @@ class FengchaoSignin(_PluginBase):
                 'component': 'VForm',
                 'content': [
                     {
-                        'component': 'VCard',
+                        'component': 'VTabs',
                         'props': {
-                            'variant': 'outlined',
-                            'class': 'mb-3'
+                            'grow': True,
+                            'v-model': 'activeTab'
                         },
                         'content': [
                             {
-                                'component': 'VCardTitle',
-                                'props': {
-                                    'class': 'd-flex align-center'
-                                },
+                                'component': 'VTab',
+                                'props': {'value': 'basic'},
+                                'text': '基本设置'
+                            },
+                            {
+                                'component': 'VTab',
+                                'props': {'value': 'mp_stats'},
+                                'text': 'MoviePilot统计'
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VWindow',
+                        'props': {'v-model': 'activeTab'},
+                        'content': [
+                            {
+                                'component': 'VWindowItem',
+                                'props': {'value': 'basic'},
                                 'content': [
                                     {
-                                        'component': 'VIcon',
+                                        'component': 'VCard',
                                         'props': {
-                                            'style': 'color: #1976D2;',
-                                            'class': 'mr-2'
+                                            'variant': 'outlined',
+                                            'class': 'mt-3'
                                         },
-                                        'text': 'mdi-calendar-check'
-                                    },
-                                    {
-                                        'component': 'span',
-                                        'text': '基本设置'
-                                    }
-                                ]
-                            },
-                            {
-                                'component': 'VDivider'
-                            },
-                            {
-                                'component': 'VCardText',
-                                'content': [
-                                    {
-                                        'component': 'VRow',
                                         'content': [
                                             {
-                                                'component': 'VCol',
+                                                'component': 'VCardTitle',
                                                 'props': {
-                                                    'cols': 12,
-                                                    'md': 4
+                                                    'class': 'd-flex align-center'
                                                 },
                                                 'content': [
                                                     {
-                                                        'component': 'VSwitch',
+                                                        'component': 'VIcon',
                                                         'props': {
-                                                            'model': 'enabled',
-                                                            'label': '启用插件',
-                                                        }
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                'component': 'VCol',
-                                                'props': {
-                                                    'cols': 12,
-                                                    'md': 4
-                                                },
-                                                'content': [
-                                                    {
-                                                        'component': 'VSwitch',
-                                                        'props': {
-                                                            'model': 'notify',
-                                                            'label': '开启通知',
-                                                        }
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                'component': 'VCol',
-                                                'props': {
-                                                    'cols': 12,
-                                                    'md': 4
-                                                },
-                                                'content': [
-                                                    {
-                                                        'component': 'VSwitch',
-                                                        'props': {
-                                                            'model': 'onlyonce',
-                                                            'label': '立即运行一次',
-                                                        }
-                                                    }
-                                                ]
-                                            }
-                                        ]
-                                    },
-                                    {
-                                        'component': 'VRow',
-                                        'content': [
-                                            {
-                                                'component': 'VCol',
-                                                'props': {
-                                                    'cols': 12,
-                                                    'md': 6
-                                                },
-                                                'content': [
-                                                    {
-                                                        'component': 'VCronField',
-                                                        'props': {
-                                                            'model': 'cron',
-                                                            'label': '签到周期'
-                                                        }
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                'component': 'VCol',
-                                                'props': {
-                                                    'cols': 12,
-                                                    'md': 6
-                                                },
-                                                'content': [
-                                                    {
-                                                        'component': 'VTextField',
-                                                        'props': {
-                                                            'model': 'history_days',
-                                                            'label': '历史保留天数',
-                                                            'type': 'number',
-                                                            'placeholder': '30'
-                                                        }
-                                                    }
-                                                ]
-                                            }
-                                        ]
-                                    },
-                                    {
-                                        'component': 'VRow',
-                                        'content': [
-                                            {
-                                                'component': 'VCol',
-                                                'props': {
-                                                    'cols': 12,
-                                                    'md': 6
-                                                },
-                                                'content': [
-                                                    {
-                                                        'component': 'VTextField',
-                                                        'props': {
-                                                            'model': 'retry_count',
-                                                            'label': '失败重试次数',
-                                                            'type': 'number',
-                                                            'placeholder': '0',
-                                                            'hint': '0表示不重试，大于0则在签到失败后重试'
-                                                        }
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                'component': 'VCol',
-                                                'props': {
-                                                    'cols': 12,
-                                                    'md': 6
-                                                },
-                                                'content': [
-                                                    {
-                                                        'component': 'VTextField',
-                                                        'props': {
-                                                            'model': 'retry_interval',
-                                                            'label': '重试间隔(小时)',
-                                                            'type': 'number',
-                                                            'placeholder': '2',
-                                                            'hint': '签到失败后多少小时后重试'
-                                                        }
-                                                    }
-                                                ]
-                                            }
-                                        ]
-                                    },
-                                    {
-                                        'component': 'VRow',
-                                        'content': [
-                                            {
-                                                'component': 'VCol',
-                                                'props': {
-                                                    'cols': 12
-                                                },
-                                                'content': [
-                                                    {
-                                                        'component': 'VAlert',
-                                                        'props': {
-                                                            'type': 'info',
-                                                            'variant': 'tonal',
-                                                            'density': 'compact',
-                                                            'class': 'mt-2'
+                                                            'style': 'color: #1976D2;',
+                                                            'class': 'mr-2'
                                                         },
+                                                        'text': 'mdi-calendar-check'
+                                                    },
+                                                    {
+                                                        'component': 'span',
+                                                        'text': '基本设置'
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                'component': 'VDivider'
+                                            },
+                                            {
+                                                'component': 'VCardText',
+                                                'content': [
+                                                    {
+                                                        'component': 'VRow',
                                                         'content': [
                                                             {
-                                                                'component': 'div',
+                                                                'component': 'VCol',
                                                                 'props': {
-                                                                    'class': 'd-flex align-center'
+                                                                    'cols': 12,
+                                                                    'md': 4
                                                                 },
                                                                 'content': [
                                                                     {
-                                                                        'component': 'VIcon',
+                                                                        'component': 'VSwitch',
                                                                         'props': {
-                                                                            'style': 'color: #FFC107;',
-                                                                            'class': 'mr-2'
-                                                                        },
-                                                                        'text': 'mdi-flower'
-                                                                    },
+                                                                            'model': 'enabled',
+                                                                            'label': '启用插件',
+                                                                        }
+                                                                    }
+                                                                ]
+                                                            },
+                                                            {
+                                                                'component': 'VCol',
+                                                                'props': {
+                                                                    'cols': 12,
+                                                                    'md': 4
+                                                                },
+                                                                'content': [
                                                                     {
-                                                                        'component': 'span',
-                                                                        'text': '每日签到可获得10花粉奖励'
+                                                                        'component': 'VSwitch',
+                                                                        'props': {
+                                                                            'model': 'notify',
+                                                                            'label': '开启通知',
+                                                                        }
+                                                                    }
+                                                                ]
+                                                            },
+                                                            {
+                                                                'component': 'VCol',
+                                                                'props': {
+                                                                    'cols': 12,
+                                                                    'md': 4
+                                                                },
+                                                                'content': [
+                                                                    {
+                                                                        'component': 'VSwitch',
+                                                                        'props': {
+                                                                            'model': 'onlyonce',
+                                                                            'label': '立即运行一次',
+                                                                        }
+                                                                    }
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    {
+                                                        'component': 'VRow',
+                                                        'content': [
+                                                            {
+                                                                'component': 'VCol',
+                                                                'props': {
+                                                                    'cols': 12,
+                                                                    'md': 6
+                                                                },
+                                                                'content': [
+                                                                    {
+                                                                        'component': 'VTextField',
+                                                                        'props': {
+                                                                            'model': 'cron',
+                                                                            'label': '签到周期',
+                                                                            'placeholder': '30 8 * * *',
+                                                                            'hint': '五位cron表达式，每天早上8:30执行'
+                                                                        }
+                                                                    }
+                                                                ]
+                                                            },
+                                                            {
+                                                                'component': 'VCol',
+                                                                'props': {
+                                                                    'cols': 12,
+                                                                    'md': 6
+                                                                },
+                                                                'content': [
+                                                                    {
+                                                                        'component': 'VTextField',
+                                                                        'props': {
+                                                                            'model': 'history_days',
+                                                                            'label': '历史保留天数',
+                                                                            'placeholder': '30',
+                                                                            'hint': '历史记录保留天数'
+                                                                        }
+                                                                    }
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    {
+                                                        'component': 'VRow',
+                                                        'content': [
+                                                            {
+                                                                'component': 'VCol',
+                                                                'props': {
+                                                                    'cols': 12,
+                                                                    'md': 6
+                                                                },
+                                                                'content': [
+                                                                    {
+                                                                        'component': 'VTextField',
+                                                                        'props': {
+                                                                            'model': 'retry_count',
+                                                                            'label': '失败重试次数',
+                                                                            'type': 'number',
+                                                                            'placeholder': '0',
+                                                                            'hint': '0表示不重试，大于0则在签到失败后重试'
+                                                                        }
+                                                                    }
+                                                                ]
+                                                            },
+                                                            {
+                                                                'component': 'VCol',
+                                                                'props': {
+                                                                    'cols': 12,
+                                                                    'md': 6
+                                                                },
+                                                                'content': [
+                                                                    {
+                                                                        'component': 'VTextField',
+                                                                        'props': {
+                                                                            'model': 'retry_interval',
+                                                                            'label': '重试间隔(小时)',
+                                                                            'type': 'number',
+                                                                            'placeholder': '2',
+                                                                            'hint': '签到失败后多少小时后重试'
+                                                                        }
+                                                                    }
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    {
+                                                        'component': 'VRow',
+                                                        'content': [
+                                                            {
+                                                                'component': 'VCol',
+                                                                'props': {
+                                                                    'cols': 12,
+                                                                    'md': 6
+                                                                },
+                                                                'content': [
+                                                                    {
+                                                                        'component': 'VSwitch',
+                                                                        'props': {
+                                                                            'model': 'use_proxy',
+                                                                            'label': '使用代理',
+                                                                            'hint': '与蜂巢论坛通信时使用系统代理'
+                                                                        }
+                                                                    }
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    {
+                                                        'component': 'VRow',
+                                                        'content': [
+                                                            {
+                                                                'component': 'VCol',
+                                                                'props': {
+                                                                    'cols': 12
+                                                                },
+                                                                'content': [
+                                                                    {
+                                                                        'component': 'VTextarea',
+                                                                        'props': {
+                                                                            'model': 'cookie',
+                                                                            'label': 'Cookie',
+                                                                            'rows': 2,
+                                                                            'placeholder': 'session=xxx; uid=xxx',
+                                                                            'hint': '登录蜂巢获取Cookie'
+                                                                        }
                                                                     }
                                                                 ]
                                                             }
@@ -696,99 +825,96 @@ class FengchaoSignin(_PluginBase):
                                         ]
                                     }
                                 ]
-                            }
-                        ]
-                    },
-                    {
-                        'component': 'VCard',
-                        'props': {
-                            'variant': 'outlined'
-                        },
-                        'content': [
+                            },
                             {
-                                'component': 'VCardTitle',
-                                'props': {
-                                    'class': 'd-flex align-center'
-                                },
+                                'component': 'VWindowItem',
+                                'props': {'value': 'mp_stats'},
                                 'content': [
                                     {
-                                        'component': 'VIcon',
+                                        'component': 'VCard',
                                         'props': {
-                                            'style': 'color: #1976D2;',
-                                            'class': 'mr-2'
+                                            'variant': 'outlined',
+                                            'class': 'mt-3'
                                         },
-                                        'text': 'mdi-cookie'
-                                    },
-                                    {
-                                        'component': 'span',
-                                        'text': '账号设置'
-                                    }
-                                ]
-                            },
-                            {
-                                'component': 'VDivider'
-                            },
-                            {
-                                'component': 'VCardText',
-                                'content': [
-                                    {
-                                        'component': 'VRow',
                                         'content': [
                                             {
-                                                'component': 'VCol',
+                                                'component': 'VCardTitle',
                                                 'props': {
-                                                    'cols': 12
+                                                    'class': 'd-flex align-center'
                                                 },
                                                 'content': [
                                                     {
-                                                        'component': 'VTextField',
+                                                        'component': 'VIcon',
                                                         'props': {
-                                                            'model': 'cookie',
-                                                            'label': 'Cookie',
-                                                            'placeholder': '输入蜂巢Cookie'
-                                                        }
-                                                    }
-                                                ]
-                                            }
-                                        ]
-                                    },
-                                    {
-                                        'component': 'VRow',
-                                        'content': [
-                                            {
-                                                'component': 'VCol',
-                                                'props': {
-                                                    'cols': 12
-                                                },
-                                                'content': [
-                                                    {
-                                                        'component': 'VAlert',
-                                                        'props': {
-                                                            'type': 'info',
-                                                            'variant': 'tonal',
-                                                            'density': 'compact',
-                                                            'text': '蜂巢Cookie获取方法：浏览器登录蜂巢，F12控制台，Network标签，刷新页面，找到pting.club请求，右键Copy -> Copy as cURL，从复制内容中找到cookie: 后的内容'
-                                                        }
-                                                    }
-                                                ]
-                                            }
-                                        ]
-                                    },
-                                    {
-                                        'component': 'VRow',
-                                        'content': [
-                                            {
-                                                'component': 'VCol',
-                                                'props': {
-                                                    'cols': 12
-                                                },
-                                                'content': [
-                                                    {
-                                                        'component': 'div',
-                                                        'props': {
-                                                            'class': 'text-caption text-grey text-right mt-2'
+                                                            'style': 'color: #1976D2;',
+                                                            'class': 'mr-2'
                                                         },
-                                                        'text': 'Plugin improved by: thsrite'
+                                                        'text': 'mdi-chart-box'
+                                                    },
+                                                    {
+                                                        'component': 'span',
+                                                        'text': 'MoviePilot统计设置'
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                'component': 'VDivider'
+                                            },
+                                            {
+                                                'component': 'VCardText',
+                                                'content': [
+                                                    {
+                                                        'component': 'VRow',
+                                                        'content': [
+                                                            {
+                                                                'component': 'VCol',
+                                                                'props': {'cols': 12},
+                                                                'content': [{
+                                                                    'component': 'VAlert',
+                                                                    'props': {
+                                                                        'type': 'info',
+                                                                        'text': True,
+                                                                        'variant': 'tonal'
+                                                                    },
+                                                                    'text': '该功能将MoviePilot站点数据推送到蜂巢论坛个人资料页展示'
+                                                                }]
+                                                            }
+                                                        ]
+                                                    },
+                                                    {
+                                                        'component': 'VRow',
+                                                        'content': [
+                                                            {
+                                                                'component': 'VCol',
+                                                                'props': {'cols': 12},
+                                                                'content': [{
+                                                                    'component': 'VSwitch',
+                                                                    'props': {
+                                                                        'model': 'mp_push_enabled',
+                                                                        'label': '启用MoviePilot统计推送'
+                                                                    }
+                                                                }]
+                                                            }
+                                                        ]
+                                                    },
+                                                    {
+                                                        'component': 'VRow',
+                                                        'content': [
+                                                            {
+                                                                'component': 'VCol',
+                                                                'props': {'cols': 12},
+                                                                'content': [{
+                                                                    'component': 'VTextField',
+                                                                    'props': {
+                                                                        'model': 'mp_push_interval',
+                                                                        'label': '推送间隔(天)',
+                                                                        'type': 'number',
+                                                                        'placeholder': '1',
+                                                                        'hint': '多少天推送一次数据，默认1天'
+                                                                    }
+                                                                }]
+                                                            }
+                                                        ]
                                                     }
                                                 ]
                                             }
@@ -808,7 +934,11 @@ class FengchaoSignin(_PluginBase):
             "cookie": "",
             "history_days": 30,
             "retry_count": 0,
-            "retry_interval": 2
+            "retry_interval": 2,
+            "mp_push_enabled": False,
+            "mp_push_interval": 1,
+            "use_proxy": True,
+            "activeTab": "basic"
         }
 
     def get_page(self) -> List[dict]:
@@ -955,19 +1085,19 @@ class FengchaoSignin(_PluginBase):
                         'component': 'VCardText',
                         'content': [
                             # 用户基本信息部分
-                            {
-                                'component': 'VRow',
-                                'props': {'class': 'ma-1'},
-                                'content': [
-                                    # 左侧头像和用户名
                                     {
-                                        'component': 'VCol',
-                                        'props': {
+                                        'component': 'VRow',
+                                'props': {'class': 'ma-1'},
+                                        'content': [
+                                    # 左侧头像和用户名
+                                            {
+                                                'component': 'VCol',
+                                                'props': {
                                             'cols': 12,
                                             'md': 5
-                                        },
-                                        'content': [
-                                            {
+                                                },
+                                                'content': [
+                                                    {
                                                 'component': 'div',
                                                 'props': {'class': 'd-flex align-center'},
                                                 'content': [
@@ -1053,28 +1183,28 @@ class FengchaoSignin(_PluginBase):
                                                 ]
                                             },
                                             # 注册和最后访问时间
-                                            {
-                                                'component': 'VRow',
+                                    {
+                                        'component': 'VRow',
                                                 'props': {'class': 'mt-2'},
-                                                'content': [
-                                                    {
-                                                        'component': 'VCol',
+                                        'content': [
+                                            {
+                                                'component': 'VCol',
                                                         'props': {'cols': 12},
                                                         'content': [
                                                             {
                                                                 'component': 'div',
-                                                                'props': {
+                                                'props': {
                                                                     'class': 'pa-1 elevation-1 mb-1 ml-0',
                                                                     'style': 'background-color: rgba(255, 255, 255, 0.6); border-radius: 4px; width: fit-content;'
-                                                                },
-                                                                'content': [
-                                                                    {
-                                                                        'component': 'div',
+                                                },
+                                                'content': [
+                                                    {
+                                                        'component': 'div',
                                                                         'props': {'class': 'd-flex align-center text-caption'},
                                                                         'content': [
                                                                             {
                                                                                 'component': 'VIcon',
-                                                                                'props': {
+                                                        'props': {
                                                                                     'style': 'color: #4CAF50;',
                                                                                     'size': 'x-small',
                                                                                     'class': 'mr-1'
@@ -1112,13 +1242,13 @@ class FengchaoSignin(_PluginBase):
                                                                             {
                                                                                 'component': 'span',
                                                                                 'text': f'最后访问 {last_seen_at}'
-                                                                            }
-                                                                        ]
-                                                                    }
-                                                                ]
-                                                            }
-                                                        ]
-                                                    }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
                                                 ]
                                             }
                                         ]
@@ -1601,7 +1731,7 @@ class FengchaoSignin(_PluginBase):
                                     },
                                     {
                                         'component': 'span',
-                                        'text': status_text
+                                'text': status_text
                                     }
                                 ]
                             },
@@ -1703,34 +1833,34 @@ class FengchaoSignin(_PluginBase):
             
         # 添加历史记录表
         components.append({
-            'component': 'VCard',
-            'props': {'variant': 'outlined', 'class': 'mb-4'},
-            'content': [
-                {
-                    'component': 'VCardTitle',
-                    'props': {'class': 'd-flex align-center'},
-                    'content': [
-                        {
-                            'component': 'VIcon',
-                            'props': {
+                'component': 'VCard',
+                'props': {'variant': 'outlined', 'class': 'mb-4'},
+                'content': [
+                    {
+                        'component': 'VCardTitle',
+                        'props': {'class': 'd-flex align-center'},
+                        'content': [
+                            {
+                                'component': 'VIcon',
+                                'props': {
                                 'style': 'color: #9C27B0;',
-                                'class': 'mr-2'
+                                    'class': 'mr-2'
+                                },
+                                'text': 'mdi-calendar-check'
                             },
-                            'text': 'mdi-calendar-check'
-                        },
-                        {
-                            'component': 'span',
+                            {
+                                'component': 'span',
                             'props': {'class': 'text-h6 font-weight-bold'},
-                            'text': '蜂巢签到历史'
-                        },
-                        {
-                            'component': 'VSpacer'
-                        },
-                        {
-                            'component': 'VChip',
-                            'props': {
+                                'text': '蜂巢签到历史'
+                            },
+                            {
+                                'component': 'VSpacer'
+                            },
+                            {
+                                'component': 'VChip',
+                                'props': {
                                 'style': 'background-color: #FF9800; color: white;',
-                                'size': 'small',
+                                    'size': 'small',
                                 'variant': 'elevated'
                             },
                             'content': [
@@ -1745,69 +1875,69 @@ class FengchaoSignin(_PluginBase):
                                 },
                                 {
                                     'component': 'span',
-                                    'text': '每日可得10花粉'
+                                'text': '每日可得10花粉'
                                 }
                             ]
-                        }
-                    ]
-                },
-                {
-                    'component': 'VDivider'
-                },
-                {
-                    'component': 'VCardText',
-                    'props': {'class': 'pa-2'},
-                    'content': [
-                        {
-                            'component': 'VTable',
-                            'props': {
-                                'hover': True,
-                                'density': 'comfortable'
-                            },
-                            'content': [
-                                # 表头
-                                {
-                                    'component': 'thead',
-                                    'content': [
-                                        {
-                                            'component': 'tr',
-                                            'content': [
-                                                {'component': 'th', 'text': '时间'},
-                                                {'component': 'th', 'text': '状态'},
-                                                {'component': 'th', 'text': '花粉'},
-                                                {'component': 'th', 'text': '签到天数'},
-                                                {'component': 'th', 'text': '奖励'}
-                                            ]
-                                        }
-                                    ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VDivider'
+                    },
+                    {
+                        'component': 'VCardText',
+                        'props': {'class': 'pa-2'},
+                        'content': [
+                            {
+                                'component': 'VTable',
+                                'props': {
+                                    'hover': True,
+                                    'density': 'comfortable'
                                 },
-                                # 表内容
-                                {
-                                    'component': 'tbody',
-                                    'content': history_rows
-                                }
-                            ]
-                        }
-                    ]
-                }
-            ]
+                                'content': [
+                                    # 表头
+                                    {
+                                        'component': 'thead',
+                                        'content': [
+                                            {
+                                                'component': 'tr',
+                                                'content': [
+                                                    {'component': 'th', 'text': '时间'},
+                                                    {'component': 'th', 'text': '状态'},
+                                                    {'component': 'th', 'text': '花粉'},
+                                                    {'component': 'th', 'text': '签到天数'},
+                                                    {'component': 'th', 'text': '奖励'}
+                                                ]
+                                            }
+                                        ]
+                                    },
+                                    # 表内容
+                                    {
+                                        'component': 'tbody',
+                                        'content': history_rows
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
         })
         
         # 添加基本样式
         components.append({
-            'component': 'style',
-            'text': """
-            .v-table {
-                border-radius: 8px;
-                overflow: hidden;
-                box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-            }
-            .v-table th {
-                background-color: rgba(var(--v-theme-primary), 0.05);
-                color: rgb(var(--v-theme-primary));
-                font-weight: 600;
-            }
-            """
+                'component': 'style',
+                'text': """
+                .v-table {
+                    border-radius: 8px;
+                    overflow: hidden;
+                    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                }
+                .v-table th {
+                    background-color: rgba(var(--v-theme-primary), 0.05);
+                    color: rgb(var(--v-theme-primary));
+                    font-weight: 600;
+                }
+                """
         })
         
         return components
@@ -1824,3 +1954,335 @@ class FengchaoSignin(_PluginBase):
                 self._scheduler = None
         except Exception as e:
             logger.error("退出插件失败：%s" % str(e)) 
+
+    def __check_and_push_mp_stats(self):
+        """检查是否需要推送MoviePilot统计数据"""
+        if not self._mp_push_enabled or not self._cookie:
+            return
+            
+        # 检查上次推送时间，是否需要推送
+        now = datetime.now()
+        if self._last_push_time:
+            last_push = datetime.strptime(self._last_push_time, '%Y-%m-%d %H:%M:%S')
+            days_since_push = (now - last_push).days
+            if days_since_push < self._mp_push_interval:
+                logger.info(f"距离上次推送不足{self._mp_push_interval}天，跳过本次推送")
+                return
+                
+        # 获取代理设置
+        proxies = self._get_proxies()
+        
+        # 需要推送，首先获取用户信息
+        res = RequestUtils(cookies=self._cookie, proxies=proxies).get_res(url="https://pting.club")
+        if not res or res.status_code != 200:
+            logger.error("请求蜂巢失败，无法获取用户信息进行推送")
+            return
+            
+        # 获取CSRF令牌
+        pattern = r'"csrfToken":"(.*?)"'
+        csrf_matches = re.findall(pattern, res.text)
+        if not csrf_matches:
+            logger.error("获取CSRF令牌失败，无法进行推送")
+            return
+        csrf_token = csrf_matches[0]
+        
+        # 获取用户ID
+        pattern = r'"userId":(\d+)'
+        user_matches = re.search(pattern, res.text)
+        if not user_matches:
+            logger.error("获取用户ID失败，无法进行推送")
+            return
+        user_id = user_matches.group(1)
+        
+        # 执行推送
+        self.__push_mp_stats(user_id=user_id, csrf_token=csrf_token)
+
+    def __push_mp_stats(self, user_id=None, csrf_token=None):
+        """推送MoviePilot统计数据到蜂巢论坛"""
+        # 检查是否启用推送
+        if not self._mp_push_enabled:
+            return
+
+        # 检查上次推送时间，是否需要推送
+        now = datetime.now()
+        if self._last_push_time:
+            last_push = datetime.strptime(self._last_push_time, '%Y-%m-%d %H:%M:%S')
+            days_since_push = (now - last_push).days
+            if days_since_push < self._mp_push_interval:
+                logger.info(f"距离上次推送不足{self._mp_push_interval}天，跳过本次推送")
+                return
+        
+        # 如果没有传入user_id和csrf_token，直接返回
+        if not user_id or not csrf_token:
+            logger.error("用户ID或CSRF令牌为空，无法进行推送")
+            return
+        
+        logger.info(f"开始获取站点统计数据以推送到蜂巢论坛 (用户ID: {user_id})")
+            
+        # 获取站点统计数据
+        stats_data = self._get_site_statistics()
+        if not stats_data:
+            logger.error("获取站点统计数据失败，无法进行推送")
+            return
+            
+        # 格式化数据
+        formatted_stats = self._format_stats_data(stats_data)
+        if not formatted_stats:
+            logger.error("格式化站点统计数据失败，无法进行推送")
+            return
+        
+        # 记录第一个站点的数据以便确认所有字段是否都被正确传递
+        if formatted_stats.get("sites") and len(formatted_stats.get("sites")) > 0:
+            first_site = formatted_stats.get("sites")[0]
+            logger.info(f"推送数据示例：站点={first_site.get('name')}, 用户名={first_site.get('username')}, 等级={first_site.get('user_level')}, "
+                        f"上传={first_site.get('upload')}, 下载={first_site.get('download')}, 分享率={first_site.get('ratio')}, "
+                        f"魔力值={first_site.get('bonus')}, 做种数={first_site.get('seeding')}, 做种体积={first_site.get('seeding_size')}")
+            
+        # 准备请求头和请求体
+        headers = {
+            "X-Csrf-Token": csrf_token,
+            "X-Http-Method-Override": "PATCH",  # 关键：使用PATCH方法覆盖
+            "Content-Type": "application/json",
+            "Cookie": self._cookie
+        }
+        
+        # 创建请求数据
+        data = {
+            "data": {
+                "type": "users",  # 注意：类型是users不是moviepilot-stats
+                "attributes": {
+                    "mpStatsSummary": json.dumps(formatted_stats.get("summary", {})),
+                    "mpStatsSites": json.dumps(formatted_stats.get("sites", []))
+                },
+                "id": user_id
+            }
+        }
+        
+        # 输出JSON数据片段以便确认
+        json_data = json.dumps(formatted_stats.get("sites", []))
+        if len(json_data) > 500:
+            logger.info(f"推送的JSON数据片段: {json_data[:500]}...")
+        else:
+            logger.info(f"推送的JSON数据: {json_data}")
+        
+        # 获取代理设置
+        proxies = self._get_proxies()
+        
+        # 发送请求
+        url = f"https://pting.club/api/users/{user_id}"
+        logger.info(f"准备推送站点统计数据到蜂巢论坛: {len(formatted_stats.get('sites', []))} 个站点")
+        res = RequestUtils(headers=headers, proxies=proxies).post_res(url=url, json=data)
+        
+        if res and res.status_code == 200:
+            logger.info(f"成功推送MoviePilot统计数据到蜂巢论坛: 总上传 {round(formatted_stats['summary']['total_upload']/1024/1024/1024, 2)} GB, 总下载 {round(formatted_stats['summary']['total_download']/1024/1024/1024, 2)} GB")
+            # 更新最后推送时间
+            self._last_push_time = now.strftime('%Y-%m-%d %H:%M:%S')
+            self.save_data('last_push_time', self._last_push_time)
+            
+            if self._notify:
+                self._send_notification(
+                    title="【✅ MoviePilot统计推送成功】",
+                    text=(
+                        f"📢 执行结果\n"
+                        f"━━━━━━━━━━\n"
+                        f"🕐 时间：{now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"✨ 状态：成功推送MoviePilot统计数据\n"
+                        f"📊 站点数：{len(formatted_stats.get('sites', []))} 个\n"
+                        f"🔄 下次推送：{(now + timedelta(days=self._mp_push_interval)).strftime('%Y-%m-%d')}\n"
+                        f"━━━━━━━━━━"
+                    )
+                )
+        else:
+            logger.error(f"推送MoviePilot统计数据失败：{res.status_code if res else '请求失败'}, 响应: {res.text[:100] if res else ''}")
+            if self._notify:
+                self._send_notification(
+                    title="【❌ MoviePilot统计推送失败】",
+                    text=(
+                        f"📢 执行结果\n"
+                        f"━━━━━━━━━━\n"
+                        f"🕐 时间：{now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"❌ 状态：推送MoviePilot统计数据失败\n"
+                        f"━━━━━━━━━━\n"
+                        f"💡 可能的解决方法\n"
+                        f"• 检查Cookie是否有效\n"
+                        f"• 确认站点是否可访问\n"
+                        f"• 尝试手动登录网站\n"
+                        f"━━━━━━━━━━"
+                    )
+                )
+
+    def _get_site_statistics(self):
+        """获取站点统计数据（参考站点统计插件实现）"""
+        try:
+            # 导入SiteOper类
+            from app.db.site_oper import SiteOper
+            from app.db.models.siteuserdata import SiteUserData
+            
+            # 初始化SiteOper
+            site_oper = SiteOper()
+            
+            # 获取站点数据 - 使用get_userdata()方法
+            raw_data_list = site_oper.get_userdata()
+            
+            if not raw_data_list:
+                logger.error("未获取到站点数据")
+                return None
+            
+            logger.info(f"成功获取到 {len(raw_data_list)} 条原始站点数据记录")
+            
+            # 打印第一条数据的所有字段，用于调试
+            if raw_data_list and len(raw_data_list) > 0:
+                first_data = raw_data_list[0]
+                data_dict = first_data.to_dict() if hasattr(first_data, "to_dict") else first_data.__dict__
+                if "_sa_instance_state" in data_dict:
+                    data_dict.pop("_sa_instance_state")
+                logger.info(f"站点数据示例字段: {list(data_dict.keys())}")
+                logger.info(f"站点数据示例值: {data_dict}")
+            
+            # 每个站点只保留最新的一条数据（参考站点统计插件的__get_data方法）
+            # 使用站点名称和日期组合作为键，确保每个站点每天只有一条记录
+            data_dict = {f"{data.updated_day}_{data.name}": data for data in raw_data_list}
+            data_list = list(data_dict.values())
+            
+            # 按日期倒序排序
+            data_list.sort(key=lambda x: x.updated_day, reverse=True)
+            
+            # 获取每个站点的最新数据
+            site_names = set()
+            latest_site_data = []
+            
+            for data in data_list:
+                if data.name not in site_names:
+                    site_names.add(data.name)
+                    latest_site_data.append(data)
+            
+            logger.info(f"处理后得到 {len(latest_site_data)} 个站点的最新数据")
+                
+            # 转换为字典格式
+            sites = []
+            for site_data in latest_site_data:
+                # 转换为字典
+                site_dict = site_data.to_dict() if hasattr(site_data, "to_dict") else site_data.__dict__
+                # 移除不需要的属性
+                if "_sa_instance_state" in site_dict:
+                    site_dict.pop("_sa_instance_state")
+                sites.append(site_dict)
+                
+            # 记录几个站点的名称作为示例
+            sample_sites = [site.get("name") for site in sites[:3] if site.get("name")]
+            logger.info(f"站点数据示例: {', '.join(sample_sites) if sample_sites else '无'}")
+                
+            return {"sites": sites}
+                
+        except ImportError as e:
+            logger.error(f"导入站点操作模块失败: {str(e)}")
+            # 降级到API方式获取
+            return self._get_site_statistics_via_api()
+        except Exception as e:
+            logger.error(f"获取站点统计数据出错: {str(e)}")
+            # 降级到API方式获取
+            return self._get_site_statistics_via_api()
+            
+    def _get_site_statistics_via_api(self):
+        """通过API获取站点统计数据（备用方法）"""
+        try:
+            # 使用正确的API URL
+            api_url = f"{settings.HOST}/api/v1/site/statistics"
+            
+            # 使用全局API KEY
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {settings.API_TOKEN}"
+            }
+            
+            logger.info(f"尝试通过API获取站点数据: {api_url}")
+            res = RequestUtils(headers=headers).get_res(url=api_url)
+            if res and res.status_code == 200:
+                data = res.json()
+                sites = data.get("sites", [])
+                logger.info(f"通过API成功获取 {len(sites)} 个站点数据")
+                return data
+            else:
+                logger.error(f"获取站点统计数据失败: {res.status_code if res else '连接失败'}")
+                return None
+        except Exception as e:
+            logger.error(f"获取站点统计数据出错: {str(e)}")
+            return None
+            
+    def _format_stats_data(self, stats_data):
+        """格式化站点统计数据"""
+        try:
+            if not stats_data or not stats_data.get("sites"):
+                return None
+                
+            sites = stats_data.get("sites", [])
+            logger.info(f"开始格式化 {len(sites)} 个站点的数据")
+            
+            # 汇总数据
+            total_upload = 0
+            total_download = 0
+            total_seed = 0
+            total_seed_size = 0
+            site_details = []
+            valid_sites_count = 0
+            
+            # 处理每个站点数据
+            for site in sites:
+                if not site.get("name") or site.get("error"):
+                    continue
+                
+                valid_sites_count += 1
+                
+                # 计算分享率
+                upload = float(site.get("upload", 0))
+                download = float(site.get("download", 0))
+                ratio = round(upload / download, 2) if download > 0 else float('inf')
+                
+                # 汇总
+                total_upload += upload
+                total_download += download
+                total_seed += int(site.get("seeding", 0))
+                total_seed_size += float(site.get("seeding_size", 0))
+                
+                # 确保数值类型字段有默认值
+                username = site.get("username", "")
+                user_level = site.get("user_level", "")
+                bonus = site.get("bonus", 0)
+                seeding = site.get("seeding", 0)
+                seeding_size = site.get("seeding_size", 0)
+                
+                # 将所有需要的字段保存到站点详情中
+                site_details.append({
+                    "name": site.get("name"),
+                    "username": username,
+                    "user_level": user_level,
+                    "upload": upload,
+                    "download": download,
+                    "ratio": ratio,
+                    "bonus": bonus,
+                    "seeding": seeding,
+                    "seeding_size": seeding_size
+                })
+                
+                # 记录日志确认某个特定站点的数据是否包含所有字段
+                if site.get("name") == sites[0].get("name"):
+                    logger.info(f"站点 {site.get('name')} 数据: 用户名={username}, 等级={user_level}, 魔力值={bonus}, 做种大小={seeding_size}")
+            
+            # 构建结果
+            result = {
+                "summary": {
+                    "total_upload": total_upload,
+                    "total_download": total_download,
+                    "total_seed": total_seed,
+                    "total_seed_size": total_seed_size,
+                    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                },
+                "sites": site_details
+            }
+            
+            logger.info(f"数据格式化完成: 有效站点 {valid_sites_count} 个，总上传 {round(total_upload/1024/1024/1024, 2)} GB，总下载 {round(total_download/1024/1024/1024, 2)} GB，总做种数 {total_seed}")
+            
+            return result
+        except Exception as e:
+            logger.error(f"格式化站点统计数据出错: {str(e)}")
+            return None 
