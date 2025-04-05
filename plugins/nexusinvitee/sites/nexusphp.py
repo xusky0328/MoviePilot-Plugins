@@ -176,45 +176,45 @@ class NexusPhpHandler(_ISiteHandler):
                 if invite_result["invitees"]:
                     logger.info(f"站点 {site_name} 共解析到 {len(invite_result['invitees'])} 个后宫成员")
             else:
-            # 尝试获取更多页面的后宫成员
-            next_page = 1  # 从第二页开始，因为第一页已经解析过了
-            max_pages = 100  # 防止无限循环
-            
-            # 继续获取后续页面，直到没有更多数据或达到最大页数
-            while next_page < max_pages:
-                next_page_url = urljoin(site_url, f"invite.php?id={user_id}&menu=invitee&page={next_page}")
-                logger.info(f"站点 {site_name} 正在获取第 {next_page+1} 页后宫成员数据: {next_page_url}")
+                # 尝试获取更多页面的后宫成员
+                next_page = 1  # 从第二页开始，因为第一页已经解析过了
+                max_pages = 100  # 防止无限循环
                 
-                try:
-                    next_response = session.get(next_page_url, timeout=(10, 30))
-                    next_response.raise_for_status()
+                # 继续获取后续页面，直到没有更多数据或达到最大页数
+                while next_page < max_pages:
+                    next_page_url = urljoin(site_url, f"invite.php?id={user_id}&menu=invitee&page={next_page}")
+                    logger.info(f"站点 {site_name} 正在获取第 {next_page+1} 页后宫成员数据: {next_page_url}")
                     
-                    # 解析下一页数据
-                    next_page_result = self._parse_nexusphp_invite_page(site_name, next_response.text, is_next_page=True)
-                    
-                    # 如果没有找到任何后宫成员，说明已到达最后一页
-                    if not next_page_result["invitees"]:
-                        logger.info(f"站点 {site_name} 第 {next_page+1} 页没有后宫成员数据，停止获取")
-                        break
-                    
-                    # 如果当前页面后宫成员少于50人，默认认为没有下一页，避免错误进入下一页
-                    if len(next_page_result["invitees"]) < 50:
-                        logger.info(f"站点 {site_name} 第 {next_page+1} 页后宫成员数量少于50人({len(next_page_result['invitees'])}人)，默认没有下一页")
-                        # 将当前页数据合并到结果中后退出循环
+                    try:
+                        next_response = session.get(next_page_url, timeout=(10, 30))
+                        next_response.raise_for_status()
+                        
+                        # 解析下一页数据
+                        next_page_result = self._parse_nexusphp_invite_page(site_name, next_response.text, is_next_page=True)
+                        
+                        # 如果没有找到任何后宫成员，说明已到达最后一页
+                        if not next_page_result["invitees"]:
+                            logger.info(f"站点 {site_name} 第 {next_page+1} 页没有后宫成员数据，停止获取")
+                            break
+                        
+                        # 如果当前页面后宫成员少于50人，默认认为没有下一页，避免错误进入下一页
+                        if len(next_page_result["invitees"]) < 50:
+                            logger.info(f"站点 {site_name} 第 {next_page+1} 页后宫成员数量少于50人({len(next_page_result['invitees'])}人)，默认没有下一页")
+                            # 将当前页数据合并到结果中后退出循环
+                            invite_result["invitees"].extend(next_page_result["invitees"])
+                            logger.info(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
+                            break
+                        
+                        # 将下一页的后宫成员添加到结果中
                         invite_result["invitees"].extend(next_page_result["invitees"])
                         logger.info(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
+                        
+                        # 继续下一页
+                        next_page += 1
+                        
+                    except Exception as e:
+                        logger.warning(f"站点 {site_name} 获取第 {next_page+1} 页数据失败: {str(e)}")
                         break
-                    
-                    # 将下一页的后宫成员添加到结果中
-                    invite_result["invitees"].extend(next_page_result["invitees"])
-                    logger.info(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
-                    
-                    # 继续下一页
-                    next_page += 1
-                    
-                except Exception as e:
-                    logger.warning(f"站点 {site_name} 获取第 {next_page+1} 页数据失败: {str(e)}")
-                    break
             
             # 访问发送邀请页面，这是判断权限的关键
             send_invite_url = urljoin(site_url, f"invite.php?id={user_id}&type=new")
@@ -278,8 +278,8 @@ class NexusPhpHandler(_ISiteHandler):
                 
                 # 2. 如果没有找到"对不起"消息，检查是否有takeinvite.php表单
                 if not send_page_reason:
-                invite_form = send_soup.select('form[action*="takeinvite.php"]')
-                if invite_form:
+                    invite_form = send_soup.select('form[action*="takeinvite.php"]')
+                    if invite_form:
                         # 检查表单中是否有submit按钮且不是disabled状态
                         submit_btn = None
                         for form in invite_form:
@@ -289,15 +289,15 @@ class NexusPhpHandler(_ISiteHandler):
                         
                         if submit_btn:
                             can_send_invite = True
-                    logger.info(f"站点 {site_name} 可以发送邀请，确认有takeinvite表单")
-                else:
+                            logger.info(f"站点 {site_name} 可以发送邀请，确认有takeinvite表单")
+                        else:
                             # 表单存在但提交按钮被禁用
                             disabled_submit = None
                             for form in invite_form:
                                 disabled_submit = form.select_one('input[type="submit"][disabled]')
                                 if disabled_submit:
-                                break
-                        
+                                    break
+                            
                             if disabled_submit:
                                 disabled_text = disabled_submit.get('value', '').strip()
                                 if disabled_text:
@@ -334,7 +334,7 @@ class NexusPhpHandler(_ISiteHandler):
                         invite_result["invite_status"]["reason"] = send_page_reason
                     else:
                         # 其他限制原因，标记为不可邀请
-                            invite_result["invite_status"]["can_invite"] = False
+                        invite_result["invite_status"]["can_invite"] = False
                         invite_result["invite_status"]["reason"] = send_page_reason
                 elif can_send_invite:
                     # 确认可以发送邀请
@@ -673,8 +673,8 @@ class NexusPhpHandler(_ISiteHandler):
             
             # 6. 如果以上方法都没有找到具体原因，使用更宽泛的正则表达式从页面文本中提取
             if not invite_reason:
-            page_text = soup.get_text()
-            
+                page_text = soup.get_text()
+                
                 # 先检查是否有邀请数量不足，这种情况属于"可以发药但当前没有名额"
                 if re.search(r"邀请数量不足|邀请名额不足|没有足够的邀请|没有剩余邀请", page_text):
                     can_invite = True
@@ -705,8 +705,8 @@ class NexusPhpHandler(_ISiteHandler):
                         r"维护开发员.*及以上.*才能发送邀请",
                         r"精英训练家.*或以上等级才可以发送邀请"
                     ]
-            
-            for pattern in error_patterns:
+                    
+                    for pattern in error_patterns:
                         match = re.search(pattern, page_text)
                         if match:
                             invite_reason = match.group(0)
@@ -714,7 +714,7 @@ class NexusPhpHandler(_ISiteHandler):
                             invite_reason = re.sub(r'\s*这里.*返回。?', '', invite_reason)
                             invite_reason = re.sub(r'\s*<a.*?这里</a>.*?返回。?', '', invite_reason)
                             logger.info(f"站点 {site_name} 发现不可用邀请原因(页面文本): {invite_reason}")
-                    break
+                            break
             
             # 7. 最后检查基于通用判断规则 - 如果找不到具体原因且没有邀请表单，返回通用消息
             if not invite_reason and not can_invite:
