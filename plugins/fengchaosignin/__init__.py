@@ -23,7 +23,7 @@ class FengchaoSignin(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fengchao.png"
     # 插件版本
-    plugin_version = "1.0.5"
+    plugin_version = "1.0.6"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -127,11 +127,11 @@ class FengchaoSignin(_PluginBase):
                 
                 # 如果启用了MoviePilot数据推送，添加定时任务检查是否需要推送
                 if self._mp_push_enabled:
-                    logger.info(f"MoviePilot数据推送检查服务启动，每6小时检查一次")
+                    logger.info(f"PT人生数据更新检查服务启动，每6小时检查一次")
                     self._scheduler.add_job(func=self.__check_and_push_mp_stats,
                                            trigger='interval',
                                            hours=6,
-                                           name="MoviePilot数据推送检查")
+                                           name="PT人生数据更新检查")
 
             # 启动任务
             if self._scheduler.get_jobs():
@@ -195,7 +195,7 @@ class FengchaoSignin(_PluginBase):
             logger.error(f"获取代理设置出错: {str(e)}")
             return None
 
-    def __signin(self):
+    def __signin(self, retry_count=0, max_retries=3):
         """
         蜂巢签到
         """
@@ -207,17 +207,23 @@ class FengchaoSignin(_PluginBase):
         if not res or res.status_code != 200:
             logger.error("请求蜂巢错误")
             
+            # 即时重试逻辑
+            if retry_count < max_retries:
+                retry_seconds = 10
+                retry_number = retry_count + 1
+                logger.info(f"连接失败，将在{retry_seconds}秒后进行第{retry_number}次重试...")
+                time.sleep(retry_seconds)
+                return self.__signin(retry_count=retry_number, max_retries=max_retries)
+            
             # 如果配置了用户名密码，尝试自动登录获取cookie
             if self._username and self._password:
                 logger.info(f"尝试使用用户名'{self._username}'自动登录获取Cookie...")
                 new_cookie = self._login_and_get_cookie(proxies)
                 if new_cookie:
-                    logger.info("获取Cookie成功，更新配置并重试签到...")
+                    # 更新cookie并重新尝试签到
+                    logger.info(f"使用新获取的cookie重试签到...")
                     self.update_cookie(new_cookie)
-                    # 立即重试
                     return self.__signin()
-                else:
-                    logger.error("使用用户名密码自动登录失败，请检查用户名密码是否正确")
             
             # 发送通知
             if self._notify:
@@ -227,7 +233,7 @@ class FengchaoSignin(_PluginBase):
                         f"📢 执行结果\n"
                         f"━━━━━━━━━━\n"
                         f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                        f"❌ 状态：签到失败，无法连接到站点\n"
+                        f"❌ 状态：签到失败，无法连接到站点（已重试{retry_count}次）\n"
                         f"━━━━━━━━━━\n"
                         f"💡 可能的解决方法\n"
                         f"• 检查Cookie是否过期\n"
@@ -241,7 +247,7 @@ class FengchaoSignin(_PluginBase):
             # 记录历史
             history = {
                 "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-                "status": "签到失败：无法连接到站点",
+                "status": f"签到失败：无法连接到站点（已重试{retry_count}次）",
                 "money": None,
                 "totalContinuousCheckIn": None,
                 "retry": {
@@ -272,6 +278,14 @@ class FengchaoSignin(_PluginBase):
         if not csrfToken:
             logger.error("请求csrfToken失败")
             
+            # 即时重试逻辑
+            if retry_count < max_retries:
+                retry_seconds = 10
+                retry_number = retry_count + 1
+                logger.info(f"获取CSRF令牌失败，将在{retry_seconds}秒后进行第{retry_number}次重试...")
+                time.sleep(retry_seconds)
+                return self.__signin(retry_count=retry_number, max_retries=max_retries)
+            
             # 发送通知
             if self._notify:
                 self._send_notification(
@@ -280,7 +294,7 @@ class FengchaoSignin(_PluginBase):
                         f"📢 执行结果\n"
                         f"━━━━━━━━━━\n"
                         f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                        f"❌ 状态：签到失败，无法获取CSRF令牌\n"
+                        f"❌ 状态：签到失败，无法获取CSRF令牌（已重试{retry_count}次）\n"
                         f"━━━━━━━━━━\n"
                         f"💡 可能的解决方法\n"
                         f"• 检查Cookie是否过期\n"
@@ -292,7 +306,7 @@ class FengchaoSignin(_PluginBase):
             # 记录历史
             history = {
                 "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-                "status": "签到失败：无法获取CSRF令牌",
+                "status": f"签到失败：无法获取CSRF令牌（已重试{retry_count}次）",
                 "money": None,
                 "totalContinuousCheckIn": None,
                 "retry": {
@@ -432,6 +446,14 @@ class FengchaoSignin(_PluginBase):
         if not res or res.status_code != 200:
             logger.error("蜂巢签到失败")
 
+            # 即时重试逻辑
+            if retry_count < max_retries:
+                retry_seconds = 10
+                retry_number = retry_count + 1
+                logger.info(f"签到请求失败，将在{retry_seconds}秒后进行第{retry_number}次重试...")
+                time.sleep(retry_seconds)
+                return self.__signin(retry_count=retry_number, max_retries=max_retries)
+
             # 发送通知
             if self._notify:
                 self._send_notification(
@@ -440,7 +462,7 @@ class FengchaoSignin(_PluginBase):
                         f"📢 执行结果\n"
                         f"━━━━━━━━━━\n"
                         f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                        f"❌ 状态：签到失败，API请求错误\n"
+                        f"❌ 状态：签到失败，API请求错误（已重试{retry_count}次）\n"
                         f"━━━━━━━━━━\n"
                         f"💡 可能的解决方法\n"
                         f"• 检查Cookie是否有效\n"
@@ -453,7 +475,7 @@ class FengchaoSignin(_PluginBase):
             # 记录历史
             history = {
                 "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-                "status": "签到失败：API请求错误",
+                "status": f"签到失败：API请求错误（已重试{retry_count}次）",
                 "money": None,
                 "totalContinuousCheckIn": None,
                 "retry": {
@@ -785,7 +807,7 @@ class FengchaoSignin(_PluginBase):
                                                 },
                                                 'content': [
                                                     {
-                                                        'component': 'VTextField',
+                                                        'component': 'VCronField',
                                                         'props': {
                                                             'model': 'cron',
                                                             'label': '签到周期',
@@ -927,31 +949,9 @@ class FengchaoSignin(_PluginBase):
                                                                 'props': {
                                                                     'style': 'font-size: 1.1rem; font-weight: 500;'
                                                                 },
-                                                                'text': 'MoviePilot统计设置'
+                                                                'text': '蜂巢个人主页PT人生卡片数据更新'
                                                             }
                                                         ]
-                                                    }
-                                                ]
-                                            }
-                                        ]
-                                    },
-                                    # MoviePilot统计说明
-                                    {
-                                        'component': 'VRow',
-                                        'content': [
-                                            {
-                                                'component': 'VCol',
-                                                'props': {'cols': 12},
-                                                'content': [
-                                                    {
-                                                        'component': 'VAlert',
-                                                        'props': {
-                                                            'type': 'info',
-                                                            'text': True,
-                                                            'variant': 'tonal',
-                                                            'dense': True
-                                                        },
-                                                        'text': '该功能将MoviePilot站点数据推送到蜂巢论坛个人资料页展示，需要安装 flarum-ext-moviepilot-stats 扩展'
                                                     }
                                                 ]
                                             }
@@ -963,29 +963,14 @@ class FengchaoSignin(_PluginBase):
                                         'content': [
                                             {
                                                 'component': 'VCol',
-                                                'props': {'cols': 12, 'md': 6},
+                                                'props': {'cols': 12},
                                                 'content': [
                                                     {
                                                         'component': 'VSwitch',
                                                         'props': {
                                                             'model': 'mp_push_enabled',
-                                                            'label': '启用MoviePilot统计推送'
-                                                        }
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                'component': 'VCol',
-                                                'props': {'cols': 12, 'md': 6},
-                                                'content': [
-                                                    {
-                                                        'component': 'VTextField',
-                                                        'props': {
-                                                            'model': 'mp_push_interval',
-                                                            'label': '推送间隔(天)',
-                                                            'type': 'number',
-                                                            'placeholder': '1',
-                                                            'hint': '多少天推送一次数据，默认1天'
+                                                            'label': '启用PT人生数据更新',
+                                                            'hint': '每次签到时都会自动更新PT人生数据'
                                                         }
                                                     }
                                                 ]
@@ -2035,15 +2020,6 @@ class FengchaoSignin(_PluginBase):
         if not self._mp_push_enabled or not self._cookie:
             return
             
-        # 检查上次推送时间，是否需要推送
-        now = datetime.now()
-        if self._last_push_time:
-            last_push = datetime.strptime(self._last_push_time, '%Y-%m-%d %H:%M:%S')
-            days_since_push = (now - last_push).days
-            if days_since_push < self._mp_push_interval:
-                logger.info(f"距离上次推送不足{self._mp_push_interval}天，跳过本次推送")
-                return
-                
         # 获取代理设置
         proxies = self._get_proxies()
         
@@ -2072,26 +2048,18 @@ class FengchaoSignin(_PluginBase):
         # 执行推送
         self.__push_mp_stats(user_id=user_id, csrf_token=csrf_token)
 
-    def __push_mp_stats(self, user_id=None, csrf_token=None):
+    def __push_mp_stats(self, user_id=None, csrf_token=None, retry_count=0, max_retries=3):
         """推送MoviePilot统计数据到蜂巢论坛"""
         # 检查是否启用推送
         if not self._mp_push_enabled:
             return
 
-        # 检查上次推送时间，是否需要推送
-        now = datetime.now()
-        if self._last_push_time:
-            last_push = datetime.strptime(self._last_push_time, '%Y-%m-%d %H:%M:%S')
-            days_since_push = (now - last_push).days
-            if days_since_push < self._mp_push_interval:
-                logger.info(f"距离上次推送不足{self._mp_push_interval}天，跳过本次推送")
-                return
-        
         # 如果没有传入user_id和csrf_token，直接返回
         if not user_id or not csrf_token:
             logger.error("用户ID或CSRF令牌为空，无法进行推送")
             return
         
+        now = datetime.now()
         logger.info(f"开始获取站点统计数据以推送到蜂巢论坛 (用户ID: {user_id})")
             
         # 获取站点统计数据
@@ -2115,19 +2083,19 @@ class FengchaoSignin(_PluginBase):
             
         # 准备请求头和请求体
         headers = {
-            "X-CSRF-Token": csrf_token,
+            "X-Csrf-Token": csrf_token,
             "X-Http-Method-Override": "PATCH",  # 关键：使用PATCH方法覆盖
-            "Content-Type": "application/json; charset=UTF-8",
+            "Content-Type": "application/json",
             "Cookie": self._cookie
         }
         
-        # 创建请求数据 - 使用新的字段名
+        # 创建请求数据
         data = {
             "data": {
                 "type": "users",  # 注意：类型是users不是moviepilot-stats
                 "attributes": {
-                    "mp_stats_summary": json.dumps(formatted_stats.get("summary", {})),
-                    "mp_stats_sites": json.dumps(formatted_stats.get("sites", []))
+                    "mpStatsSummary": json.dumps(formatted_stats.get("summary", {})),
+                    "mpStatsSites": json.dumps(formatted_stats.get("sites", []))
                 },
                 "id": user_id
             }
@@ -2156,27 +2124,35 @@ class FengchaoSignin(_PluginBase):
             
             if self._notify:
                 self._send_notification(
-                    title="【✅ MoviePilot统计推送成功】",
+                    title="【✅ 更新PT人生数据成功】",
                     text=(
                         f"📢 执行结果\n"
                         f"━━━━━━━━━━\n"
                         f"🕐 时间：{now.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                        f"✨ 状态：成功推送MoviePilot统计数据\n"
+                        f"✨ 状态：成功更新PT人生数据\n"
                         f"📊 站点数：{len(formatted_stats.get('sites', []))} 个\n"
-                        f"🔄 下次推送：{(now + timedelta(days=self._mp_push_interval)).strftime('%Y-%m-%d')}\n"
                         f"━━━━━━━━━━"
                     )
                 )
         else:
             logger.error(f"推送MoviePilot统计数据失败：{res.status_code if res else '请求失败'}, 响应: {res.text[:100] if res and hasattr(res, 'text') else '无响应内容'}")
+            
+            # 即时重试逻辑
+            if retry_count < max_retries:
+                retry_seconds = 10
+                retry_number = retry_count + 1
+                logger.info(f"推送失败，将在{retry_seconds}秒后进行第{retry_number}次重试...")
+                time.sleep(retry_seconds)
+                return self.__push_mp_stats(user_id=user_id, csrf_token=csrf_token, retry_count=retry_number, max_retries=max_retries)
+            
             if self._notify:
                 self._send_notification(
-                    title="【❌ MoviePilot统计推送失败】",
+                    title="【❌ 更新PT人生数据失败】",
                     text=(
                         f"📢 执行结果\n"
                         f"━━━━━━━━━━\n"
                         f"🕐 时间：{now.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                        f"❌ 状态：推送MoviePilot统计数据失败\n"
+                        f"❌ 状态：更新PT人生数据失败（已重试{retry_count}次）\n"
                         f"━━━━━━━━━━\n"
                         f"💡 可能的解决方法\n"
                         f"• 检查Cookie是否有效\n"
