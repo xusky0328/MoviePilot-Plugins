@@ -777,6 +777,7 @@ class nexusinvitee(_PluginBase):
         """
         import re  # 在函数内部也导入re模块，确保可用
         
+        
         try:
             # 从data_manager获取站点数据
             cached_data = {}
@@ -1087,6 +1088,7 @@ class nexusinvitee(_PluginBase):
 
             # 准备站点卡片
             cards = []
+            dics = {}
             
             # 计算所有站点统计信息
             total_sites = len(cached_data)
@@ -1131,6 +1133,8 @@ class nexusinvitee(_PluginBase):
                 total_perm_invites += invite_status.get("permanent_count", 0)
                 total_temp_invites += invite_status.get("temporary_count", 0)
 
+                dics[site_name] = {"p":invite_status.get("permanent_count", 0),"t":invite_status.get("temporary_count", 0)}
+            
             # 记录总计算结果
             logger.info(f"仪表盘总统计结果: 总站点数={total_sites}, 总后宫成员={total_invitees}, 低分享率={total_low_ratio}, 已禁用={total_banned}, 无数据={total_no_data}")
 
@@ -1144,7 +1148,7 @@ class nexusinvitee(_PluginBase):
                 "content": [
                     {
                         "component": "VCardTitle",
-                        "text": "后宫总览"
+                        "text": "后宫总览3"
                     },
                     {
                         "component": "VCardText",
@@ -2058,12 +2062,16 @@ class nexusinvitee(_PluginBase):
                         can_buy_permanent = 0
                         can_buy_temporary = 0
                         
+                        
                         if permanent_invite_price > 0:
                             can_buy_permanent = int(bonus / permanent_invite_price)
                         
                         if temporary_invite_price > 0:
                             can_buy_temporary = int(bonus / temporary_invite_price)
                         
+                        dics[site_name]["cbp"]= can_buy_permanent
+                        dics[site_name]["cbt"]= can_buy_temporary
+
                         # 计算购买邀请后剩余魔力
                         remaining_bonus = bonus
                         if can_buy_permanent > 0 and permanent_invite_price > 0:
@@ -2803,6 +2811,52 @@ class nexusinvitee(_PluginBase):
                     }
                 })
 
+            med_list = ""
+            for k in dics:
+                site_name = k
+                site_remain = dics[k]['p']+dics[k]['t']
+                site_can_buy = 0 if 'cbp' not in dics[k] else dics[k]["cbp"]+dics[k]["cbt"]
+                if site_remain+site_can_buy>0:
+                    site_content = "站点[{}]: 剩余[{}]个. 可购买[{}]个\r\n".format(site_name,site_remain,site_can_buy)
+                    # logger.info(site_content)
+                    med_list+=site_content
+            logger.info(med_list)
+            page_content.insert(0,{
+                "component": "VAlert",
+                "props": {
+                    "type": "info",
+                    "text": f"药单生成:",
+                    "variant": "tonal",
+                    "class": "mb-4",
+                },
+                "content": [
+                    {
+                        "component": "a",
+                        "text": f"点我复制",
+                        "props":{
+                            "href":"javascript:void(0)",
+                            "onclick":"(async ()=>{var med = `"+med_list+"`; await navigator.clipboard.writeText(med); alert(\"药单已生成\");})()"
+                        }
+                    }
+                ]
+            })
+            # 
+            # for item in page_content:
+            #     if item['component'] == "VCard":
+            #         item['content'][1]['content'].insert(0,{
+            #             "component": "VRow",
+            #             "content":[
+            #                 {
+            #                     "component":"a",
+            #                     "text":"生成药单",
+            #                     "props":{
+            #                         "href":"javascript:void(0)",
+            #                         "onclick":"navigator.clipboard.writeText("+ med_list +")"
+            #                     }
+            #                 }
+            #             ]
+            #         })
+                    
             return page_content
             
         except Exception as e:
