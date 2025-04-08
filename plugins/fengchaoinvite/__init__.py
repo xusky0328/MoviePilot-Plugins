@@ -756,7 +756,3 @@ class FengchaoInvite(_PluginBase):
             self.post_message(mtype=NotificationType.SiteMessage, title=title, text=text)
         except Exception as e:
             self.error(f"发送通知失败: {str(e)}")
-
-
-
-plugin_class = FengchaoInvite
