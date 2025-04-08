@@ -54,6 +54,19 @@
       "v1.1.9": "适配憨憨多域名"
     }
   },
+  "nexusinviteetest": {
+    "name": "后宫管理系统test",
+    "description": "管理添加到MP站点的邀请系统，包括邀请名额、已邀请用户状态等",
+    "labels": "PT,后宫,邀请",
+    "version": "1.1.9",
+    "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png",
+    "author": "JhouXerox",
+    "level": 2,
+    "v2": true,
+    "history": {
+      "v1.1.9": "适配憨憨多域名"
+    }
+  },
   "nodeseeksign": {
     "name": "NodeSeek论坛签到",
     "description": "懒羊羊定制：自动完成NodeSeek论坛每日签到，支持随机奖励和自动加鸡腿功能",
