@@ -1186,9 +1186,9 @@ class nexusinvitee(_PluginBase):
                 # 统计邀请数量
                 total_perm_invites += invite_status.get("permanent_count", 0)
                 total_temp_invites += invite_status.get("temporary_count", 0)
+                # 向药单打标临药永药
                 self.presc.setP(site_name,invite_status.get("permanent_count", 0))
                 self.presc.setT(site_name,invite_status.get("temporary_count", 0))
-            
             # 记录总计算结果
             logger.info(f"仪表盘总统计结果: 总站点数={total_sites}, 总后宫成员={total_invitees}, 低分享率={total_low_ratio}, 已禁用={total_banned}, 无数据={total_no_data}")
 
@@ -1202,7 +1202,7 @@ class nexusinvitee(_PluginBase):
                 "content": [
                     {
                         "component": "VCardTitle",
-                        "text": "后宫总览3"
+                        "text": "后宫总览"
                     },
                     {
                         "component": "VCardText",
@@ -1818,6 +1818,7 @@ class nexusinvitee(_PluginBase):
                     invite_status_for_check = invite_status  # 使用上面已获取的invite_status
                     
                     can_invite = invite_status_for_check.get("can_invite", False)
+                    # 向药单打标发药权限
                     self.presc.setCanInvite(site_name,can_invite)
                     reason = invite_status_for_check.get("reason", "")
 
@@ -2117,15 +2118,14 @@ class nexusinvitee(_PluginBase):
                         can_buy_permanent = 0
                         can_buy_temporary = 0
                         
-                        
                         if permanent_invite_price > 0:
                             can_buy_permanent = int(bonus / permanent_invite_price)
                         
                         if temporary_invite_price > 0:
                             can_buy_temporary = int(bonus / temporary_invite_price)
+                        # 向药单打标可购买临药永药数量
                         self.presc.setCBP(site_name,can_buy_permanent)
                         self.presc.setCBT(site_name,can_buy_temporary)
-
                         # 计算购买邀请后剩余魔力
                         remaining_bonus = bonus
                         if can_buy_permanent > 0 and permanent_invite_price > 0:
@@ -2864,24 +2864,8 @@ class nexusinvitee(_PluginBase):
                         "class": "mt-4"
                     }
                 })
+            # 向UI插入药单导出
             page_content.insert(0,self.presc.getComponent())
-            # 
-            # for item in page_content:
-            #     if item['component'] == "VCard":
-            #         item['content'][1]['content'].insert(0,{
-            #             "component": "VRow",
-            #             "content":[
-            #                 {
-            #                     "component":"a",
-            #                     "text":"生成药单",
-            #                     "props":{
-            #                         "href":"javascript:void(0)",
-            #                         "onclick":"navigator.clipboard.writeText("+ med_list +")"
-            #                     }
-            #                 }
-            #             ]
-            #         })
-                    
             return page_content
             
         except Exception as e:
@@ -3597,7 +3581,6 @@ class nexusinvitee(_PluginBase):
         except Exception as e:
             logger.error(f"获取配置失败: {str(e)}")
             return Response(success=False, message=f"获取配置失败: {str(e)}")
-
 
 
 # 插件类导出
