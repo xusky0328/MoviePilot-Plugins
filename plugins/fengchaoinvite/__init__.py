@@ -26,7 +26,7 @@ class FengchaoInvite(_PluginBase):
     # 插件名称
     plugin_name = "蜂巢邀请监控"
     # 插件描述
-    plugin_desc = "监控蜂巢论坛待审核邀请，并实时推送到通知渠道"
+    plugin_desc = "蜂巢论坛管理组定制专用"
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fengchao.png"
     # 插件版本
