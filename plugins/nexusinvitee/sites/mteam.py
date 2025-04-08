@@ -101,14 +101,14 @@ class MTeamHandler(_ISiteHandler):
             api_base_url = f"https://api.{api_domain}/api"
             logger.info(f"站点 {site_name} 使用API基础URL: {api_base_url}")
             
-            # 配置API请求头
+            # 配置API请求头 (根据最新参考调整，但恢复 Authorization)
             headers = {
                 "Content-Type": "application/json",
                 "User-Agent": site_info.get("ua", "Mozilla/5.0"),
                 "Accept": "application/json, text/plain, */*",
-                "Authorization": authorization,
+                "Authorization": authorization, # 恢复 Authorization
                 "x-api-key": api_key,
-                "ts": str(int(time.time()))
+                # "ts": str(int(time.time())) # 保持移除 ts
             }
             
             # 重置会话并添加API认证头
@@ -237,11 +237,41 @@ class MTeamHandler(_ISiteHandler):
             profile_url = f"{api_base_url}/member/profile"
             logger.info(f"站点 {site_name} 获取用户信息: {profile_url}")
             
-            response = session.post(profile_url, timeout=(10, 30))
+            # --- 修正：严格按照 SiteChain.__mteam_test 方式准备 Headers --- 
+            # 获取原始 session 中的 UA 和 API Key
+            original_ua = session.headers.get("User-Agent", "Mozilla/5.0")
+            original_api_key = session.headers.get("x-api-key")
+
+            if not original_api_key:
+                 logger.error(f"无法从会话中获取 x-api-key")
+                 return {}
+
+            # 只构造必要的 Headers
+            request_headers = {
+                "User-Agent": original_ua,
+                "Accept": "application/json, text/plain, */*",
+                "x-api-key": original_api_key
+            }
+                         
+            # 不再设置 Content-Type 和 Authorization
+            logger.debug(f"为 /member/profile 设置 Headers: {request_headers}")
+            # --- 修正结束 ---
+
+            # 使用修正后的 headers 发送 POST 请求，不带 uid 参数，不显式设置 Content-Type
+            # 注意：这里直接用 requests.post 而不是 session.post，避免 session 默认 headers 干扰
+            response = requests.post(profile_url, headers=request_headers, timeout=(10, 30), proxies=session.proxies)
+            
             if response.status_code != 200:
                 logger.error(f"站点 {site_name} 获取用户信息失败，状态码: {response.status_code}")
+                # 尝试解析错误信息
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get("message", response.reason)
+                    logger.error(f"API错误信息: {error_msg}")
+                except Exception:
+                    logger.error(f"无法解析API错误响应: {response.text[:200]}")
                 return {}
-                
+
             data = response.json()
             if data.get("code") != "0" or not data.get("data"):
                 error_msg = data.get("message", "未知错误")
@@ -268,8 +298,14 @@ class MTeamHandler(_ISiteHandler):
             params = {"uid": user_id}
             logger.info(f"站点 {site_name} 获取邀请历史: {history_url}?uid={user_id}")
             
-            # 使用POST方法而不是GET
-            response = session.post(history_url, params=params, timeout=(10, 30))
+            # --- 修正：为本次请求单独设置 Content-Type --- 
+            request_headers = session.headers.copy() # 复制现有会话headers
+            request_headers['Content-Type'] = 'application/x-www-form-urlencoded'
+            logger.debug(f"为 getUserInviteHistory 设置 Content-Type: {request_headers['Content-Type']}")
+            # --- 修正结束 ---
+
+            # 使用POST方法，uid通过params加到URL，使用修正后的headers
+            response = session.post(history_url, params=params, headers=request_headers, timeout=(10, 30))
             if response.status_code != 200:
                 logger.error(f"站点 {site_name} 获取邀请历史失败，状态码: {response.status_code}")
                 return []

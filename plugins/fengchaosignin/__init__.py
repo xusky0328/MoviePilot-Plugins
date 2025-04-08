@@ -23,7 +23,7 @@ class FengchaoSignin(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fengchao.png"
     # 插件版本
-    plugin_version = "1.0.7"
+    plugin_version = "1.0.8"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -1988,11 +1988,11 @@ class FengchaoSignin(_PluginBase):
                 
                 # 检查数据大小，站点数量过多可能导致请求失败
                 sites = formatted_stats.get("sites", [])
-                if len(sites) > 50:
+                if len(sites) > 300:
                     # 如果站点数量太多，只保留做种数最多的前50个
-                    logger.warning(f"站点数据过多({len(sites)}个)，将只推送做种数最多的前50个站点")
+                    logger.warning(f"站点数据过多({len(sites)}个)，将只推送做种数最多的前300个站点")
                     sites.sort(key=lambda x: x.get("seeding", 0), reverse=True)
-                    formatted_stats["sites"] = sites[:50]
+                    formatted_stats["sites"] = sites[:300]
                     
                 # 准备请求头和请求体
                 headers = {

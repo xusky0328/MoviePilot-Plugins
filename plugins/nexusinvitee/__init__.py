@@ -47,39 +47,276 @@ class Prescription():
         self._tag(site_name,"cbt",value)
     def setCanInvite(self,site_name,value):
         self._tag(site_name,"can_invite",value)
+    def setMTBuyable(self,site_name,value):
+        self._tag(site_name,"mt_buyable",value)
 
     def _export(self):
-        med_list = ""
+        med_list = []
+        total_remain = 0
+        total_can_buy = 0
+        
         for k in self._cache:
             site_name = k
-            site_remain = self._cache[k]['p']+self._cache[k]['t']
-            site_can_buy = 0 if 'cbp' not in self._cache[k] else self._cache[k]["cbp"]+self._cache[k]["cbt"]
-            if site_remain+site_can_buy>0 and 'can_invite' in self._cache[k] and self._cache[k]['can_invite']:
-                site_content = "站点[{}]: 剩余[{}]个. 可购买[{}]个\r\n".format(site_name,site_remain,site_can_buy)
-                # logger.info(site_content)
-                med_list+=site_content
-        return med_list
+            site_remain = self._cache[k].get('p', 0) + self._cache[k].get('t', 0)
+            # 合并普通可购买和MT可购买的数量
+            site_can_buy = 0 
+            if 'cbp' in self._cache[k]:
+                site_can_buy += self._cache[k].get("cbp", 0) + self._cache[k].get("cbt", 0)
+            if 'mt_buyable' in self._cache[k]:
+                site_can_buy += self._cache[k].get("mt_buyable", 0)
+            
+            if (site_remain + site_can_buy > 0 and 
+                self._cache[k].get('can_invite', False)):
+                site_content = {
+                    "site": site_name,
+                    "remain": site_remain,
+                    "can_buy": site_can_buy
+                }
+                med_list.append(site_content)
+                total_remain += site_remain
+                total_can_buy += site_can_buy
+                
+        return {
+            "total": {
+                "remain": total_remain,
+                "can_buy": total_can_buy
+            },
+            "details": sorted(med_list, key=lambda x: (-x['remain'], -x['can_buy'], x['site']))
+        }
     
     def getComponent(self):
+        med_data = self._export()
+        if not med_data["details"]:
+            return None
+            
+        # 生成药单内容字符串 - 保持统一的格式
+        med_text = ""
+        for site in med_data["details"]:
+            med_text += f"站点[{site['site']}]: 剩余[{site['remain']}]个. 可购买[{site['can_buy']}]个\r\n"
+            
+        # 使用 json.dumps 来安全地将 Python 字符串嵌入 JS 字符串
+        js_safe_med_text = json.dumps(med_text)
+        
+        # 构建健壮的 onclick JavaScript 代码
+        onclick_js = f"""
+        (function(button) {{
+            button.disabled = true; // 禁用按钮防止重复点击
+            const originalText = button.textContent;
+            const textToCopy = {js_safe_med_text};
+            navigator.clipboard.writeText(textToCopy).then(() => {{
+                button.textContent = '已复制';
+                setTimeout(() => {{ button.textContent = originalText; button.disabled = false; }}, 1500);
+            }}).catch(err => {{
+                console.error('Clipboard API 失败:', err);
+                const textArea = document.createElement('textarea');
+                textArea.value = textToCopy;
+                textArea.style.position = 'fixed'; textArea.style.left = '-9999px';
+                document.body.appendChild(textArea);
+                textArea.focus(); textArea.select();
+                try {{
+                    const successful = document.execCommand('copy');
+                    if (successful) {{
+                        button.textContent = '已复制(FB)';
+                        setTimeout(() => {{ button.textContent = originalText; button.disabled = false; }}, 1500);
+                    }} else {{
+                        alert('复制失败: execCommand 未成功'); button.disabled = false;
+                    }}
+                }} catch (err) {{
+                    console.error('Fallback 复制失败:', err);
+                    alert('复制失败: ' + err); button.disabled = false;
+                }}
+                document.body.removeChild(textArea);
+            }});
+        }})(this);
+        """
+        
+        # 生成药单容器
         return {
-                "component": "VAlert",
-                "props": {
-                    "type": "info",
-                    "text": f"药单生成:",
-                    "variant": "tonal",
-                    "class": "mb-4",
-                },
-                "content": [
-                    {
-                        "component": "a",
-                        "text": f"点我复制",
-                        "props":{
-                            "href":"javascript:void(0)",
-                            "onclick":"(async ()=>{var med = `"+self._export()+"`; await navigator.clipboard.writeText(med); alert(\"药单已生成\");})()"
+            "component": "VCard",
+            "props": {
+                "variant": "flat",
+                "class": "mt-4"
+            },
+            "content": [
+                {
+                    "component": "VCardItem",
+                    "content": [
+                        {
+                            "component": "VCardTitle",
+                            "props": {
+                                "class": "text-h6"
+                            },
+                            "text": "药单信息"
                         }
-                    }
-                ]
-            }
+                    ]
+                },
+                {
+                    "component": "VCardText",
+                    "content": [
+                        {
+                            "component": "VRow",
+                            "props": {
+                                "justify": "space-around",
+                                "align": "center",
+                                "class": "mb-2",
+                                "dense": True
+                            },
+                            "content": [
+                                {
+                                    "component": "VCol",
+                                    "props": {
+                                        "cols": "auto"
+                                    },
+                                    "content": [
+                                        {
+                                            "component": "VChip",
+                                            "props": {
+                                                "color": "primary",
+                                                "variant": "flat",
+                                                "size": "default",
+                                                "prepend-icon": "mdi-package-variant-closed"
+                                            },
+                                            "text": f"总剩余: {med_data['total']['remain']}"
+                                        }
+                                    ]
+                                },
+                                {
+                                    "component": "VCol",
+                                    "props": {
+                                        "cols": "auto"
+                                    },
+                                    "content": [
+                                        {
+                                            "component": "VChip",
+                                            "props": {
+                                                "color": "success",
+                                                "variant": "flat",
+                                                "size": "default",
+                                                "prepend-icon": "mdi-cart-plus"
+                                            },
+                                            "text": f"总可购买: {med_data['total']['can_buy']}"
+                                        }
+                                    ]
+                                },
+                                {
+                                    "component": "VCol",
+                                    "props": {
+                                        "cols": "auto"
+                                    },
+                                    "content": [
+                                        {
+                                            "component": "VBtn",
+                                            "props": {
+                                                "color": "primary",
+                                                "size": "default",
+                                                "variant": "tonal",
+                                                "prepend-icon": "mdi-content-copy",
+                                                "onclick": onclick_js
+                                            },
+                                            "text": "复制药单"
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "component": "VExpansionPanels",
+                            "props": {
+                                "variant": "accordion",
+                                "class": "mt-2"
+                            },
+                            "content": [
+                                {
+                                    "component": "VExpansionPanel",
+                                    "content": [
+                                        {
+                                            "component": "VExpansionPanelTitle",
+                                            # 模仿站点卡片样式添加图标
+                                            "content": [
+                                                {
+                                                    "component": "VIcon",
+                                                    "props": {
+                                                        "start": True,
+                                                        "icon": "mdi-pill",
+                                                        "color": "blue-grey"
+                                                    }
+                                                },
+                                                {
+                                                    "component": "span",
+                                                    "text": "药单详情"
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "component": "VExpansionPanelText",
+                                            # 移除内边距以使表格更紧凑
+                                            "props": {
+                                                "class": "pa-0"
+                                            },
+                                            "content": [
+                                                {
+                                                    "component": "VTable",
+                                                    "props": {
+                                                        "density": "compact",
+                                                        "hover": True
+                                                    },
+                                                    "content": [
+                                                        {
+                                                            "component": "thead",
+                                                            "content": [
+                                                                {
+                                                                    "component": "tr",
+                                                                    "content": [
+                                                                        {
+                                                                            "component": "th",
+                                                                            "text": "站点"
+                                                                        },
+                                                                        {
+                                                                            "component": "th",
+                                                                            "text": "剩余"
+                                                                        },
+                                                                        {
+                                                                            "component": "th",
+                                                                            "text": "可购买"
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "component": "tbody",
+                                                            "content": [
+                                                                {
+                                                                    "component": "tr",
+                                                                    "content": [
+                                                                        {
+                                                                            "component": "td",
+                                                                            "text": site["site"]
+                                                                        },
+                                                                        {
+                                                                            "component": "td",
+                                                                            "text": str(site["remain"])
+                                                                        },
+                                                                        {
+                                                                            "component": "td",
+                                                                            "text": str(site["can_buy"])
+                                                                        }
+                                                                    ]
+                                                                } for site in med_data["details"]
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
 
 def get_nested_value(data_dict: dict, key_path: List[str], default: Any = None) -> Any:
     """
@@ -107,7 +344,7 @@ class nexusinvitee(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png"
     # 插件版本
-    plugin_version = "1.1.9"
+    plugin_version = "1.2.0"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -193,10 +430,7 @@ class nexusinvitee(_PluginBase):
                         elif isinstance(site_id, int):
                             self._nexus_sites.append(site_id)
                     except:
-                        pass
-            
-            logger.info(f"从配置加载的站点ID: {self._nexus_sites}")
-            
+                        pass           
             # 保存配置
             self.__update_config()
         
@@ -244,7 +478,6 @@ class nexusinvitee(_PluginBase):
         }
         # 使用父类的update_config方法而不是自己的方法，避免递归
         super().update_config(config)
-        logger.debug(f"配置已更新: {config}")
 
     def get_state(self) -> bool:
         """
@@ -377,10 +610,6 @@ class nexusinvitee(_PluginBase):
                 total_low_ratio += low_ratio_count
                 total_no_data += no_data_count
 
-                logger.info(f"站点 {site_name} 统计结果: 总人数={len(invitees)}, 低分享率={low_ratio_count}, 已禁用={banned_count}, 无数据={no_data_count}")
-
-            # 记录总计算结果
-            logger.info(f"仪表盘总统计结果: 总站点数={total_sites}, 总后宫成员={total_invitees}, 低分享率={total_low_ratio}, 已禁用={total_banned}, 无数据={total_no_data}")
 
             # 列配置
             col_config = {
@@ -406,7 +635,7 @@ class nexusinvitee(_PluginBase):
                     "class": "mb-4",
                     "variant": "flat"  # 修改为flat，去掉内边框
                 },
-                "content": [
+"content": [
                     {
                         "component": "VCardTitle",
                         "text": "后宫总览"
@@ -419,7 +648,7 @@ class nexusinvitee(_PluginBase):
                                 "content": [
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 2},
+                                        "props": {"cols": 1.7},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -433,7 +662,7 @@ class nexusinvitee(_PluginBase):
                                                         "color": "#2196F3",
                                                         "class": "mb-2"
                                                     },
-                                                    "text": "mdi-web"
+                                                    "text": "mdi-domain"
                                                 },
                                                 {
                                                     "component": "div",
@@ -450,7 +679,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 2},
+                                        "props": {"cols": 1.7},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -481,7 +710,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 2},
+                                        "props": {"cols": 1.7},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -512,7 +741,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 2},
+                                        "props": {"cols": 1.7},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -543,7 +772,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 2},
+                                        "props": {"cols": 1.7},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -574,7 +803,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 1},
+                                        "props": {"cols": 1.7},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -605,7 +834,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 1},
+                                        "props": {"cols": 1.7},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -1189,15 +1418,14 @@ class nexusinvitee(_PluginBase):
                 # 向药单打标临药永药
                 self.presc.setP(site_name,invite_status.get("permanent_count", 0))
                 self.presc.setT(site_name,invite_status.get("temporary_count", 0))
-            # 记录总计算结果
-            logger.info(f"仪表盘总统计结果: 总站点数={total_sites}, 总后宫成员={total_invitees}, 低分享率={total_low_ratio}, 已禁用={total_banned}, 无数据={total_no_data}")
+
 
             # 添加全局统计信息
             page_content.append({
                 "component": "VCard",
                 "props": {
                     "class": "mb-4",
-                    "variant": "flat"  # 修改为flat，去掉内边框
+                    "variant": "flat"
                 },
                 "content": [
                     {
@@ -1212,7 +1440,7 @@ class nexusinvitee(_PluginBase):
                                 "content": [
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 2},
+                                        "props": {"cols": 1.7},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -1226,7 +1454,7 @@ class nexusinvitee(_PluginBase):
                                                         "color": "#2196F3",
                                                         "class": "mb-2"
                                                     },
-                                                    "text": "mdi-web"
+                                                    "text": "mdi-domain"
                                                 },
                                                 {
                                                     "component": "div",
@@ -1243,7 +1471,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 2},
+                                        "props": {"cols": 1.7},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -1274,7 +1502,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 2},
+                                        "props": {"cols": 1.7},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -1305,7 +1533,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 2},
+                                        "props": {"cols": 1.7},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -1336,7 +1564,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 2},
+                                        "props": {"cols": 1.7},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -1367,7 +1595,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 1},
+                                        "props": {"cols": 1.7},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -1398,7 +1626,7 @@ class nexusinvitee(_PluginBase):
                                     },
                                     {
                                         "component": "VCol",
-                                        "props": {"cols": 1},
+                                        "props": {"cols": 1.7},
                                         "content": [{
                                             "component": "div",
                                             "props": {
@@ -1474,13 +1702,7 @@ class nexusinvitee(_PluginBase):
                         result = get_nested_value(site_cache_data, path, {})
                         if result and isinstance(result, dict):
                             invite_status = result
-                            # 调试输出临时邀请数量
-                            if "temporary_count" in result:
-                                logger.debug(f"详情页: 站点{site_name}临时邀请数量={result.get('temporary_count', 0)}")
-                            if "reason" in result:
-                                logger.debug(f"详情页: 站点{site_name}不可邀请原因={result.get('reason', '')}")
-                            break
-                    
+
                     # 计算此站点的统计信息
                     banned_count = sum(1 for i in invitees if i.get('enabled', '').lower() == 'no')
                     low_ratio_count = sum(1 for i in invitees if i.get('ratio_health') == 'warning' or i.get('ratio_health') == 'danger')
@@ -1878,45 +2100,45 @@ class nexusinvitee(_PluginBase):
                     if is_mteam_site:
                         # 尝试从reason中提取用户等级和魔力值信息
                         import re
-                        
-                        # 记录原始reason用于调试
-                        logger.debug(f"M-Team站点 {site_name} 原始reason: {reason}")
+
                         
                         # 提取用户等级
                         user_role = ""
                         level_match = re.search(r'用户等级\(([^)]+)\)', reason)
                         if level_match:
                             user_role = level_match.group(1)
-                            logger.debug(f"M-Team站点 {site_name} 提取到用户等级: {user_role}")
+
                         
                         # 提取魔力值
                         user_bonus = ""
                         bonus_match = re.search(r'魔力值\(([0-9.]+)\)', reason)
                         if bonus_match:
-                            user_bonus = bonus_match.group(1)
-                            logger.debug(f"M-Team站点 {site_name} 提取到魔力值: {user_bonus}")
-                        
+                            user_bonus = bonus_match.group(1)                       
                         # 提取可购买邀请数
                         buyable_invites = 0
                         buy_match = re.search(r'可购买(\d+)个', reason)
                         if buy_match:
-                            buyable_invites = int(buy_match.group(1))
-                            logger.debug(f"M-Team站点 {site_name} 提取到可购买邀请数: {buyable_invites}")
-                        
-                        # 如果魔力值和用户等级有效
+                            buyable_invites = int(buy_match.group(1))                           
+                        # 计算MT可买药数量
+                        mt_buyable = 0
                         if user_bonus and user_role:
-                            logger.info(f"M-Team站点 {site_name} 成功提取特殊信息，准备展示")
-                            
+                            try:
+                                user_bonus_float = float(user_bonus)
+                                # 每80000魔力可买一个
+                                mt_buyable = int(user_bonus_float / 80000)
+                                # 向药单打标MT可买药数量
+                                self.presc.setMTBuyable(site_name, mt_buyable)
+                            except (ValueError, TypeError):
+                                user_bonus_float = 0                               
+                        # 如果魔力值和用户等级有效
+                        if user_bonus and user_role:                          
                             # 计算还需多少魔力
                             try:
                                 user_bonus_float = float(user_bonus)
                                 needed_bonus = 80000 - (user_bonus_float % 80000)
-                                needed_bonus_text = f"(还需{needed_bonus:.1f}魔力)" if buyable_invites == 0 and user_bonus_float > 0 else ""
+                                needed_bonus_text = f"(还需{needed_bonus:.1f}魔力)" if mt_buyable == 0 and user_bonus_float > 0 else ""
                             except (ValueError, TypeError):
-                                logger.warning(f"M-Team站点 {site_name} 魔力值转换失败: {user_bonus}")
                                 user_bonus_float = 0
-                                needed_bonus = 80000
-                                needed_bonus_text = ""
                             
                             # 添加用户等级卡片
                             site_card["content"].append({
@@ -2112,7 +2334,6 @@ class nexusinvitee(_PluginBase):
                     
                     # 通用NexusPHP和蝶粉站点处理
                     elif bonus > 0 and (permanent_invite_price > 0 or temporary_invite_price > 0):
-                        logger.info(f"站点 {site_name} 检测到魔力值信息: 魔力={bonus}, 永久邀请价格={permanent_invite_price}, 临时邀请价格={temporary_invite_price}")
                         
                         # 计算可购买邀请数量
                         can_buy_permanent = 0
@@ -2849,6 +3070,10 @@ class nexusinvitee(_PluginBase):
                         })
                     
                     cards.append(site_card)
+                                # 添加药单组件到总览下方
+            drug_component = self.presc.getComponent()
+            if drug_component:
+                page_content.append(drug_component)
             
             # 将站点卡片添加到页面
             page_content.extend(cards)
@@ -2864,8 +3089,8 @@ class nexusinvitee(_PluginBase):
                         "class": "mt-4"
                     }
                 })
-            # 向UI插入药单导出
-            page_content.insert(0,self.presc.getComponent())
+            # 删除这行，因为我们已经在后宫总览下方添加了药单
+            # page_content.insert(0,self.presc.getComponent())
             return page_content
             
         except Exception as e:
@@ -3079,8 +3304,6 @@ class nexusinvitee(_PluginBase):
             # 使用处理器解析邀请页面
             site_data = handler.parse_invite_page(site_info, session)
             
-            # 输出返回的数据结构用于调试
-            logger.debug(f"站点 {site_name} 返回数据结构: {site_data}")
             
             # 检查站点数据结构是否正确
             if "invite_status" in site_data:
@@ -3290,8 +3513,7 @@ class nexusinvitee(_PluginBase):
             # 记录刷新开始 - 说明是增量更新模式
             logger.info("开始增量刷新站点数据，只更新选择的站点，失败时保留旧数据")
             
-            # 调试记录当前已选择的站点ID
-            logger.info(f"当前选择的站点ID: {self._nexus_sites}")
+
             
             # 重新加载站点处理器
             self._site_handlers = ModuleLoader.load_site_handlers()
