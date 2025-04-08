@@ -82,15 +82,15 @@
   },
   "FengchaoInvite": {
     "name": "蜂巢论坛邀请监控",
-    "description": "监控蜂巢论坛待审核邀请，并实时推送到通知渠道",
+    "description": "蜂巢论坛管理组定制专用",
     "labels": "邀请,蜂巢,论坛",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fengchao.png",
     "author": "madrays",
     "level": 2,
     "v2": true,
     "history": {
-      "v1.0.0": "监控蜂巢论坛待审核邀请，并实时推送到通知渠道"
+      "v1.1.0": "修复等级识别错误问题"
     }
   }
 } 

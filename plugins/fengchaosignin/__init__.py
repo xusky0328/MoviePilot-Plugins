@@ -1771,7 +1771,7 @@ class FengchaoSignin(_PluginBase):
                                 },
                                 {
                                     'component': 'span',
-                                'text': '每日可得随机花粉奖励'
+                                'text': '每日可得花粉奖励'
                                 }
                             ]
                             }
