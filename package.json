@@ -79,5 +79,18 @@
     "history": {
       "v1.0.7": "删除cookie签到功能，调整为只添加当前管理站点，排除历史站点"
     }
+  },
+  "FengchaoInvite": {
+    "name": "蜂巢论坛邀请监控",
+    "description": "监控蜂巢论坛待审核邀请，并实时推送到通知渠道",
+    "labels": "邀请,蜂巢,论坛",
+    "version": "1.0.0",
+    "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fengchao.png",
+    "author": "madrays",
+    "level": 2,
+    "v2": true,
+    "history": {
+      "v1.0": "监控蜂巢论坛待审核邀请，并实时推送到通知渠道"
+    }
   }
 } 
