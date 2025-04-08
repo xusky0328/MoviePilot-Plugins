@@ -5,17 +5,14 @@ import re
 from datetime import datetime, timedelta
 from typing import Any, List, Dict, Tuple, Optional
 
+import pytz # 确保导入 pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from app.core.config import settings
 from app.core.event import eventmanager
-from app.db.systemconfig_oper import SystemConfigOper
 from app.helper.cookie import CookieHelper
-from app.helper.module import ModuleHelper
-from app.helper.plugin import PluginHelper
 from app.log import logger
 from app.plugins import _PluginBase
-from app.scheduler import scheduler
 from app.utils.http import RequestUtils
 from app.utils.string import StringUtils
 from app.schemas import NotificationType
@@ -70,32 +67,62 @@ class FengchaoInvite(_PluginBase):
             self._username = config.get("username")
             self._password = config.get("password")
             self._check_interval = config.get("check_interval", 5)
-            self._retry_count = config.get("retry_count", 3)
-            self._retry_interval = config.get("retry_interval", 5)
+            self._retry_count = int(config.get("retry_count", 3)) # 确保是整数
+            self._retry_interval = int(config.get("retry_interval", 5)) # 确保是整数
             self._use_proxy = config.get("use_proxy", True)
             self._pending_reviews = self.get_data('pending_reviews') or {}
 
         # 启动服务
         if self._enabled:
-            self._scheduler = scheduler
+            # 创建独立的 scheduler 实例
+            self._scheduler = BackgroundScheduler(timezone=settings.TZ)
+            
             if self._onlyonce:
                 self.info(f"监控蜂巢论坛邀请...")
-                self.check_invites()
+                # 立即执行一次检查，使用 run_date
+                self._scheduler.add_job(func=self.check_invites, trigger='date',
+                                   run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=3),
+                                   id=f"{self.__class__.__name__}_check_invite_once",
+                                   name=f"蜂巢邀请监控服务 (一次性)")
+                # 关闭一次性开关
+                self._onlyonce = False
+                # 注意：更新配置的操作应该在基类或 MoviePilot 核心中完成，插件内部通常不需要手动调用 update_config
+                # self.update_config({...}) # 移除或注释掉插件内部的 update_config 调用
+            
+            # 添加周期性任务
             if self._cron:
                 self.info(f"监控蜂巢论坛邀请服务启动，定时任务：{self._cron}")
-                self._scheduler.add_job(func=self.check_invites,
-                                        trigger="cron",
-                                        id=f"{self.__class__.__name__}_check_invite",
-                                        name=f"蜂巢邀请监控服务",
-                                        **CookieHelper.parse_cron(self._cron))
-            else:
+                try:
+                    # 使用 CronTrigger.from_crontab
+                    self._scheduler.add_job(func=self.check_invites,
+                                            trigger=CronTrigger.from_crontab(self._cron),
+                                            id=f"{self.__class__.__name__}_check_invite_cron",
+                                            name=f"蜂巢邀请监控服务 (Cron)")
+                except Exception as e:
+                    logger.error(f"添加 Cron 任务失败: {str(e)}")
+            # 添加间隔任务（仅当没有 cron 时）
+            elif self._check_interval and int(self._check_interval) > 0: 
                 self.info(f"监控蜂巢论坛邀请服务启动，间隔：{self._check_interval}分钟")
-                self._scheduler.add_job(func=self.check_invites,
-                                        trigger="interval",
-                                        minutes=int(self._check_interval),
-                                        id=f"{self.__class__.__name__}_check_invite",
-                                        name=f"蜂巢邀请监控服务")
-    
+                try:
+                    self._scheduler.add_job(func=self.check_invites,
+                                            trigger="interval",
+                                            minutes=int(self._check_interval),
+                                            id=f"{self.__class__.__name__}_check_invite_interval",
+                                            name=f"蜂巢邀请监控服务 (间隔)")
+                except Exception as e:
+                    logger.error(f"添加 Interval 任务失败: {str(e)}")
+            
+            # 启动 scheduler (如果添加了任务)
+            if self._scheduler and self._scheduler.get_jobs():
+                try:
+                    self._scheduler.start()
+                    logger.info(f"蜂巢邀请监控服务的 Scheduler 已启动")
+                except Exception as e:
+                    logger.error(f"启动 Scheduler 失败: {str(e)}")
+                    self._scheduler = None # 启动失败则重置
+        else:
+            logger.info("蜂巢邀请监控插件未启用")
+            
     def get_state(self) -> bool:
         """
         获取插件状态
@@ -117,17 +144,24 @@ class FengchaoInvite(_PluginBase):
 
     def get_service(self) -> List[Dict[str, Any]]:
         """
-        注册服务
+        注册服务 (如果需要对外提供)
         """
-        if self._enabled and self._cron:
-            return [{
-                "id": "fengchaoinvite",
-                "name": "蜂巢邀请监控",
-                "trigger": CronTrigger.from_crontab(self._cron),
-                "func": self.check_invites,
-                "kwargs": {}
-            }]
-        return []
+        # 如果 check_invites 主要是由内部 scheduler 调用，这里可以返回 []
+        # 如果希望 MoviePilot 核心也能管理这个任务（例如在服务页面显示），则可以保留
+        # 但要注意不要重复调度
+        # 为了保持与之前的行为类似，暂时保留，但 func 指向 self.check_invites
+        # if self._enabled and self._cron:
+        #     try:
+        #         return [{
+        #             "id": f"{self.__class__.__name__}_service", # 使用唯一的服务 ID
+        #             "name": "蜂巢邀请监控 (服务注册)",
+        #             "trigger": CronTrigger.from_crontab(self._cron),
+        #             "func": self.check_invites, # 指向实例方法
+        #             "kwargs": {}
+        #         }]
+        #     except Exception as e:
+        #         logger.error(f"注册蜂巢邀请监控服务失败: {str(e)}")
+        return [] # 推荐返回空列表，由插件内部 scheduler 管理
     
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         """
@@ -487,13 +521,20 @@ class FengchaoInvite(_PluginBase):
 
     def stop_service(self):
         """
-        停止服务
+        停止服务并清理 scheduler
         """
         try:
             if self._scheduler:
-                self._scheduler.remove_job(id=f"{self.__class__.__name__}_check_invite")
+                if self._scheduler.running:
+                    # 先移除所有任务，防止任务仍在执行时关闭 scheduler 出错
+                    self._scheduler.remove_all_jobs()
+                    # 关闭 scheduler
+                    self._scheduler.shutdown()
+                    logger.info("蜂巢邀请监控服务的 Scheduler 已关闭")
+                self._scheduler = None # 将引用置为 None
         except Exception as e:
-            self.debug(f"停止服务失败: {str(e)}")
+            # 使用 error 记录停止服务失败
+            self.error(f"停止服务失败: {str(e)}")
 
     def check_invites(self):
         """
@@ -606,9 +647,11 @@ class FengchaoInvite(_PluginBase):
         使用cookie检查待审核邀请
         """
         if max_retries is None:
-            max_retries = self._retry_count
+            # 确保使用整数类型的重试次数
+            max_retries = int(self._retry_count) 
         if retry_delay is None:
-            retry_delay = self._retry_interval
+            # 确保使用整数类型的重试间隔
+            retry_delay = int(self._retry_interval)
             
         url = "https://pting.club/api/store/invite/list"
         params = {
@@ -634,7 +677,7 @@ class FengchaoInvite(_PluginBase):
                     self.error(f"获取待审核邀请失败，状态码：{response.status_code if response else '未知'}")
                     retries += 1
                     if retries <= max_retries:
-                        self.debug(f"第{retries}次重试...")
+                        self.debug(f"第{retries}/{max_retries}次重试...")
                         time.sleep(retry_delay)
                     continue
                 
@@ -666,16 +709,19 @@ class FengchaoInvite(_PluginBase):
                                 except:
                                     last_time = None
                                     
-                            if last_time and (datetime.now() - last_time).total_seconds() > 4 * 3600:
+                            # 确保 last_time 是 datetime 对象再比较
+                            if last_time and isinstance(last_time, datetime) and (datetime.now() - last_time).total_seconds() > 4 * 3600:
                                 is_overtime = True
                         
                         if is_new or is_overtime:
                             # 提取邀请信息
-                            user = item['attributes']['user']
-                            email = item['attributes']['email']
-                            username = item['attributes']['username']
-                            link = item['attributes']['link']
-                            link2 = item['attributes']['link2']
+                            # 使用 .get() 避免 KeyError
+                            attributes = item.get('attributes', {})
+                            user = attributes.get('user', '未知')
+                            email = attributes.get('email', '未知')
+                            username = attributes.get('username', '未知')
+                            link = attributes.get('link', '未知')
+                            link2 = attributes.get('link2', '未知')
                             
                             # 添加到通知列表
                             notification_items.append({
@@ -700,8 +746,9 @@ class FengchaoInvite(_PluginBase):
                 
                 else:
                     self.info("没有待审核的邀请")
-                    self._pending_reviews = {}  # 重置记录
-                    self.save_data('pending_reviews', self._pending_reviews)
+                    if self._pending_reviews: # 仅当之前有记录时才重置
+                        self._pending_reviews = {}  # 重置记录
+                        self.save_data('pending_reviews', self._pending_reviews)
                 
                 # 成功获取数据，跳出循环
                 break
@@ -710,10 +757,11 @@ class FengchaoInvite(_PluginBase):
                 self.error(f"检查待审核邀请过程中发生异常: {str(e)}")
                 retries += 1
                 if retries <= max_retries:
-                    self.debug(f"第{retries}次重试...")
+                    self.debug(f"第{retries}/{max_retries}次重试...")
                     time.sleep(retry_delay)
                 else:
-                    self.error("已达到最大重试次数，请求失败")
+                    self.error(f"已达到最大重试次数 ({max_retries})，请求失败")
+                    break # 达到最大次数后也跳出循环
 
     def _send_invites_notification(self, items):
         """
@@ -756,3 +804,6 @@ class FengchaoInvite(_PluginBase):
             self.post_message(mtype=NotificationType.SiteMessage, title=title, text=text)
         except Exception as e:
             self.error(f"发送通知失败: {str(e)}")
+
+
+plugin_class = FengchaoInvite
