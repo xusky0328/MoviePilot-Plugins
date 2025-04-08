@@ -24,17 +24,17 @@ from bs4 import BeautifulSoup # 确保导入
 
 class FengchaoInvite(_PluginBase):
     # 插件名称
-    plugin_name = "蜂巢邀请监控"
+    plugin_name = "蜂巢邀请监控test"
     # 插件描述
-    plugin_desc = "蜂巢论坛管理组定制专用"
+    plugin_desc = "蜂巢论坛管理组定制专用test"
     # 插件图标
-    plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fengchao.png"
+    plugin_icon = "https://raw.githubusercontent.com/JhouXerox/MoviePilot-Plugins/main/icons/fengchao.png"
     # 插件版本
     plugin_version = "1.1.1"
     # 插件作者
-    plugin_author = "madrays"
+    plugin_author = "JhouXerox"
     # 作者主页
-    author_url = "https://github.com/madrays/MoviePilot-Plugins"
+    author_url = "https://github.com/JhouXerox/MoviePilot-Plugins"
     # 插件配置项ID前缀
     plugin_config_prefix = "fengchaoinvite_"
     # 加载顺序
