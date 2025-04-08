@@ -30,7 +30,7 @@ class FengchaoInvite(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fengchao.png"
     # 插件版本
-    plugin_version = "1.1.0"
+    plugin_version = "1.1.1"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -1314,7 +1314,9 @@ class FengchaoInvite(_PluginBase):
                         l1_user_match = "✅" if l1_status.get('username_match') else "❌"
                         l1_email_match = "✅" if l1_status.get('email_match') else "❌"
                         l1_level_ok = "✅" if l1_status.get('level_ok') else "❌"
-                        text_lines.append(f"  └─ 提取: 用户={l1_user}({l1_user_match}不符) | 邮箱={l1_email}({l1_email_match}不符) | 等级={l1_level}({l1_level_ok}不符)") # 修正文本
+                        text_lines.append(f"  └─ 提取: 用户={l1_user}({l1_user_match}{'匹配' if l1_status.get('username_match') else '不符'}) | "
+                                          f"邮箱={l1_email}({l1_email_match}{'匹配' if l1_status.get('email_match') else '不符'}) | "
+                                          f"等级={l1_level}({l1_level_ok}{'通过' if l1_status.get('level_ok') else '不符'})")
                 text_lines.append("") # 添加空行
 
                 # 链接2 详情
@@ -1332,7 +1334,9 @@ class FengchaoInvite(_PluginBase):
                         l2_user_match = "✅" if l2_status.get('username_match') else "❌"
                         l2_email_match = "✅" if l2_status.get('email_match') else "❌"
                         l2_level_ok = "✅" if l2_status.get('level_ok') else "❌"
-                        text_lines.append(f"  └─ 提取: 用户={l2_user}({l2_user_match}不符) | 邮箱={l2_email}({l2_email_match}不符) | 等级={l2_level}({l2_level_ok}不符)") # 修正文本
+                        text_lines.append(f"  └─ 提取: 用户={l2_user}({l2_user_match}{'匹配' if l2_status.get('username_match') else '不符'}) | "
+                                          f"邮箱={l2_email}({l2_email_match}{'匹配' if l2_status.get('email_match') else '不符'}) | "
+                                          f"等级={l2_level}({l2_level_ok}{'通过' if l2_status.get('level_ok') else '不符'})")
             
             text_lines.append("\n------------------------------")
             text_lines.append("\n请尽快处理。")
