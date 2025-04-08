@@ -23,7 +23,7 @@ class FengchaoSignin(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fengchao.png"
     # 插件版本
-    plugin_version = "1.0.6"
+    plugin_version = "1.0.7"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -61,82 +61,71 @@ class FengchaoSignin(_PluginBase):
     _scheduler: Optional[BackgroundScheduler] = None
 
     def init_plugin(self, config: dict = None):
+        """
+        插件初始化
+        """
+        # 接收参数
+        if config:
+            self._enabled = config.get("enabled", False)
+            self._notify = config.get("notify", False)
+            self._cron = config.get("cron", "30 8 * * *")
+            self._onlyonce = config.get("onlyonce", False)
+            self._cookie = config.get("cookie", "")
+            self._history_days = config.get("history_days", 30)
+            self._retry_count = int(config.get("retry_count", 0))
+            self._retry_interval = int(config.get("retry_interval", 2))
+            self._mp_push_enabled = config.get("mp_push_enabled", False)
+            self._mp_push_interval = int(config.get("mp_push_interval", 1))
+            self._use_proxy = config.get("use_proxy", True)
+            self._username = config.get("username", "")
+            self._password = config.get("password", "")
+            # 初始化最后推送时间
+            self._last_push_time = self.get_data('last_push_time')
+        
+        # 重置重试计数
+        self._current_retry = 0
+        
         # 停止现有任务
         self.stop_service()
-
-        if config:
-            self._enabled = config.get("enabled")
-            self._cron = config.get("cron")
-            self._cookie = config.get("cookie")
-            self._notify = config.get("notify")
-            self._onlyonce = config.get("onlyonce")
-            self._history_days = config.get("history_days") or 30
-            # 加载重试设置
-            self._retry_count = int(config.get("retry_count") or 0)
-            self._retry_interval = int(config.get("retry_interval") or 2)
-            # 加载MoviePilot数据推送设置
-            self._mp_push_enabled = config.get("mp_push_enabled")
-            self._mp_push_interval = int(config.get("mp_push_interval") or 1)
-            # 加载代理设置
-            self._use_proxy = config.get("use_proxy", True)
-            # 加载用户名密码
-            self._username = config.get("username")
-            self._password = config.get("password")
-            
-            # 加载上次推送时间
-            self._last_push_time = self.get_data('last_push_time')
-
-        # 重置当前重试次数
-        self._current_retry = 0
-
-        if self._enabled and (
-            self._cron or (self._onlyonce and not self._scheduler)
-        ):
-            # 定时服务
-            self._scheduler = BackgroundScheduler(timezone=settings.TZ)
-
-            # 如果是立即运行一次
-            if self._onlyonce:
-                logger.info(f"蜂巢签到服务启动，立即运行一次")
-                self._scheduler.add_job(func=self.__signin, trigger='date',
-                                        run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=3),
-                                        name="蜂巢签到")
+        
+        # 确保scheduler是新的
+        self._scheduler = BackgroundScheduler(timezone=settings.TZ)
+        
+        # 立即运行一次
+        if self._onlyonce:
+            logger.info(f"蜂巢签到服务启动，立即运行一次")
+            self._scheduler.add_job(func=self.__signin, trigger='date',
+                                run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=3),
+                                name="蜂巢签到")
             # 关闭一次性开关
-                self._onlyonce = False
-                self.update_config({
-                    "onlyonce": False,
-                    "cron": self._cron,
-                    "enabled": self._enabled,
-                    "cookie": self._cookie,
-                    "notify": self._notify,
-                    "history_days": self._history_days,
-                    "retry_count": self._retry_count,
-                    "retry_interval": self._retry_interval,
-                    "mp_push_enabled": self._mp_push_enabled,
-                    "mp_push_interval": self._mp_push_interval,
-                    "use_proxy": self._use_proxy,
-                    "username": self._username,
-                    "password": self._password
-                })
-            # 周期运行
-            elif self._cron:
-                logger.info(f"蜂巢签到服务启动，周期：{self._cron}")
-                self._scheduler.add_job(func=self.__signin,
-                                       trigger=CronTrigger.from_crontab(self._cron),
-                                       name="蜂巢签到")
-                
-                # 如果启用了MoviePilot数据推送，添加定时任务检查是否需要推送
-                if self._mp_push_enabled:
-                    logger.info(f"PT人生数据更新检查服务启动，每6小时检查一次")
-                    self._scheduler.add_job(func=self.__check_and_push_mp_stats,
-                                           trigger='interval',
-                                           hours=6,
-                                           name="PT人生数据更新检查")
+            self._onlyonce = False
+            self.update_config({
+                "onlyonce": False,
+                "cron": self._cron,
+                "enabled": self._enabled,
+                "notify": self._notify,
+                "history_days": self._history_days,
+                "retry_count": self._retry_count,
+                "retry_interval": self._retry_interval,
+                "mp_push_enabled": self._mp_push_enabled,
+                "mp_push_interval": self._mp_push_interval,
+                "use_proxy": self._use_proxy,
+                "username": self._username,
+                "password": self._password
+            })
+        # 周期运行
+        elif self._cron:
+            logger.info(f"蜂巢签到服务启动，周期：{self._cron}")
+            self._scheduler.add_job(func=self.__signin,
+                                   trigger=CronTrigger.from_crontab(self._cron),
+                                   name="蜂巢签到")
+            
+            # 移除定时更新PT人生数据的任务，只在签到时更新
 
-            # 启动任务
-            if self._scheduler.get_jobs():
-                self._scheduler.print_jobs()
-                self._scheduler.start()
+        # 启动任务
+        if self._scheduler.get_jobs():
+            self._scheduler.print_jobs()
+            self._scheduler.start()
 
     def _send_notification(self, title, text):
         """
@@ -199,364 +188,237 @@ class FengchaoSignin(_PluginBase):
         """
         蜂巢签到
         """
-        # 获取代理设置
-        proxies = self._get_proxies()
-        
-        # 连接失败处理
-        res = RequestUtils(cookies=self._cookie, proxies=proxies).get_res(url="https://pting.club")
-        if not res or res.status_code != 200:
-            logger.error("请求蜂巢错误")
-            
-            # 即时重试逻辑
-            if retry_count < max_retries:
-                retry_seconds = 10
-                retry_number = retry_count + 1
-                logger.info(f"连接失败，将在{retry_seconds}秒后进行第{retry_number}次重试...")
-                time.sleep(retry_seconds)
-                return self.__signin(retry_count=retry_number, max_retries=max_retries)
-            
-            # 如果配置了用户名密码，尝试自动登录获取cookie
-            if self._username and self._password:
-                logger.info(f"尝试使用用户名'{self._username}'自动登录获取Cookie...")
-                new_cookie = self._login_and_get_cookie(proxies)
-                if new_cookie:
-                    # 更新cookie并重新尝试签到
-                    logger.info(f"使用新获取的cookie重试签到...")
-                    self.update_cookie(new_cookie)
-                    return self.__signin()
-            
-            # 发送通知
-            if self._notify:
-                self._send_notification(
-                    title="【❌ 蜂巢签到失败】",
-                    text=(
-                        f"📢 执行结果\n"
-                        f"━━━━━━━━━━\n"
-                        f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                        f"❌ 状态：签到失败，无法连接到站点（已重试{retry_count}次）\n"
-                        f"━━━━━━━━━━\n"
-                        f"💡 可能的解决方法\n"
-                        f"• 检查Cookie是否过期\n"
-                        f"• 确认站点是否可访问\n"
-                        f"• 检查代理设置是否正确\n"
-                        f"• 尝试手动登录网站\n"
-                        f"━━━━━━━━━━"
-                    )
-                )
-            
-            # 记录历史
-            history = {
-                "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-                "status": f"签到失败：无法连接到站点（已重试{retry_count}次）",
-                "money": None,
-                "totalContinuousCheckIn": None,
-                "retry": {
-                    "enabled": self._retry_count > 0,
-                    "current": self._current_retry,
-                    "max": self._retry_count,
-                    "interval": self._retry_interval
-                }
-            }
-            self._save_history(history)
-            
-            # 判断是否需要重试
-            if self._retry_count > 0 and self._current_retry < self._retry_count:
-                self._current_retry += 1
-                # 安排下次重试 - 延长重试间隔，避免连续失败
-                retry_hours = self._retry_interval * (self._current_retry)
-                logger.info(f"安排第{self._current_retry}次重试，将在{retry_hours}小时后重试")
-                self._schedule_retry(hours=retry_hours)
-            else:
-                # 重置重试计数
-                self._current_retry = 0
-            
+        # 增加任务锁，防止重复执行
+        if hasattr(self, '_signing_in') and self._signing_in:
+            logger.info("已有签到任务在执行，跳过当前任务")
             return
-
-        # 获取csrfToken
-        pattern = r'"csrfToken":"(.*?)"'
-        csrfToken = re.findall(pattern, res.text)
-        if not csrfToken:
-            logger.error("请求csrfToken失败")
             
-            # 即时重试逻辑
-            if retry_count < max_retries:
-                retry_seconds = 10
-                retry_number = retry_count + 1
-                logger.info(f"获取CSRF令牌失败，将在{retry_seconds}秒后进行第{retry_number}次重试...")
-                time.sleep(retry_seconds)
-                return self.__signin(retry_count=retry_number, max_retries=max_retries)
-            
-            # 发送通知
-            if self._notify:
-                self._send_notification(
-                    title="【❌ 蜂巢签到失败】",
-                    text=(
-                        f"📢 执行结果\n"
-                        f"━━━━━━━━━━\n"
-                        f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                        f"❌ 状态：签到失败，无法获取CSRF令牌（已重试{retry_count}次）\n"
-                        f"━━━━━━━━━━\n"
-                        f"💡 可能的解决方法\n"
-                        f"• 检查Cookie是否过期\n"
-                        f"• 尝试手动登录网站\n"
-                        f"━━━━━━━━━━"
+        self._signing_in = True
+        try:
+            # 检查用户名密码是否配置
+            if not self._username or not self._password:
+                logger.error("未配置用户名密码，无法进行签到")
+                if self._notify:
+                    self._send_notification(
+                        title="【❌ 蜂巢签到失败】",
+                        text=(
+                            f"📢 执行结果\n"
+                            f"━━━━━━━━━━\n"
+                            f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                            f"❌ 状态：签到失败，未配置用户名密码\n"
+                            f"━━━━━━━━━━\n"
+                            f"💡 配置方法\n"
+                            f"• 在插件设置中填写蜂巢论坛用户名和密码\n"
+                            f"━━━━━━━━━━"
+                        )
                     )
-                )
-            
-            # 记录历史
-            history = {
-                "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-                "status": f"签到失败：无法获取CSRF令牌（已重试{retry_count}次）",
-                "money": None,
-                "totalContinuousCheckIn": None,
-                "retry": {
-                    "enabled": self._retry_count > 0,
-                    "current": self._current_retry,
-                    "max": self._retry_count,
-                    "interval": self._retry_interval
-                }
-            }
-            self._save_history(history)
-            
-            # 判断是否需要重试
-            if self._retry_count > 0 and self._current_retry < self._retry_count:
-                self._current_retry += 1
-                # 安排下次重试 - 延长重试间隔，避免连续失败
-                retry_hours = self._retry_interval * (self._current_retry)
-                logger.info(f"安排第{self._current_retry}次重试，将在{retry_hours}小时后重试")
-                self._schedule_retry(hours=retry_hours)
-            else:
-                # 重置重试计数
-                self._current_retry = 0
-            
-            return
-
-        csrfToken = csrfToken[0]
-        logger.info(f"获取csrfToken成功 {csrfToken}")
-
-        # 获取userid
-        pattern = r'"userId":(\d+)'
-        match = re.search(pattern, res.text)
-
-        if match and match.group(1) != "0":
-            userId = match.group(1)
-            logger.info(f"获取userid成功 {userId}")
-            
-            # 调试：无论是否需要推送，都获取并打印站点数据
-            logger.info("调试：开始获取站点数据")
-            debug_stats_data = self._get_site_statistics()
-            if debug_stats_data:
-                sites = debug_stats_data.get("sites", [])
-                sample_sites = [site.get("name") for site in sites[:3] if site.get("name")]
-                logger.info(f"调试：获取到 {len(sites)} 个站点数据，示例站点: {', '.join(sample_sites) if sample_sites else '无'}")
+                return False
                 
-                # 格式化并打印汇总数据
-                debug_formatted = self._format_stats_data(debug_stats_data)
-                if debug_formatted:
-                    summary = debug_formatted.get("summary", {})
-                    logger.info(f"调试：站点数据汇总 - 总上传: {round(summary.get('total_upload', 0)/1024/1024/1024, 2)} GB, "
-                             f"总下载: {round(summary.get('total_download', 0)/1024/1024/1024, 2)} GB, "
-                             f"总做种数: {summary.get('total_seed', 0)}, "
-                             f"总做种体积: {round(summary.get('total_seed_size', 0)/1024/1024/1024, 2)} GB")
-            else:
-                logger.info("调试：未获取到站点数据")
-            
-            # 如果开启了MoviePilot统计推送，尝试推送数据
-            if self._mp_push_enabled:
-                self.__push_mp_stats(user_id=userId, csrf_token=csrfToken)
-        else:
-            # 用户ID为0或未找到，可能未登录成功
-            logger.error("未找到有效的userId或userId为0，尝试重新登录")
-            
-            # 如果配置了用户名密码，尝试自动登录获取cookie
-            if self._username and self._password:
-                logger.info(f"尝试使用用户名密码自动登录获取Cookie...")
-                new_cookie = self._login_and_get_cookie(proxies)
-                if new_cookie:
-                    logger.info("获取Cookie成功，更新配置并重试签到...")
-                    self.update_cookie(new_cookie)
-                    # 立即重试
-                    return self.__signin()
-            
-            # 发送通知
-            if self._notify:
-                self._send_notification(
-                    title="【❌ 蜂巢签到失败】",
-                    text=(
-                        f"📢 执行结果\n"
-                        f"━━━━━━━━━━\n"
-                        f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                        f"❌ 状态：签到失败，无法获取用户ID\n"
-                        f"━━━━━━━━━━\n"
-                        f"💡 可能的解决方法\n"
-                        f"• 检查Cookie是否有效\n"
-                        f"• 尝试手动登录网站\n"
-                        f"━━━━━━━━━━"
-                    )
-                )
-            
-            # 记录历史
-            history = {
-                "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-                "status": "签到失败：无法获取用户ID",
-                "money": None,
-                "totalContinuousCheckIn": None,
-                "retry": {
-                    "enabled": self._retry_count > 0,
-                    "current": self._current_retry,
-                    "max": self._retry_count,
-                    "interval": self._retry_interval
-                }
-            }
-            self._save_history(history)
-            
-            # 判断是否需要重试
-            if self._retry_count > 0 and self._current_retry < self._retry_count:
-                self._current_retry += 1
-                # 安排下次重试 - 延长重试间隔，避免连续失败
-                retry_hours = self._retry_interval * (self._current_retry)
-                logger.info(f"安排第{self._current_retry}次重试，将在{retry_hours}小时后重试")
-                self._schedule_retry(hours=retry_hours)
-            else:
-                # 重置重试计数
-                self._current_retry = 0
-            
-            return
-
-        headers = {
-            "X-Csrf-Token": csrfToken,
-            "X-Http-Method-Override": "PATCH",
-            "Cookie": self._cookie
-        }
-
-        data = {
-            "data": {
-                "type": "users",
-                "attributes": {
-                    "canCheckin": False,
-                    "totalContinuousCheckIn": 2
-                },
-                "id": userId
-            }
-        }
-
-        # 开始签到
-        res = RequestUtils(headers=headers, proxies=proxies).post_res(url=f"https://pting.club/api/users/{userId}", json=data)
-
-        if not res or res.status_code != 200:
-            logger.error("蜂巢签到失败")
-
-            # 即时重试逻辑
-            if retry_count < max_retries:
-                retry_seconds = 10
-                retry_number = retry_count + 1
-                logger.info(f"签到请求失败，将在{retry_seconds}秒后进行第{retry_number}次重试...")
-                time.sleep(retry_seconds)
-                return self.__signin(retry_count=retry_number, max_retries=max_retries)
-
-            # 发送通知
-            if self._notify:
-                self._send_notification(
-                    title="【❌ 蜂巢签到失败】",
-                    text=(
-                        f"📢 执行结果\n"
-                        f"━━━━━━━━━━\n"
-                        f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                        f"❌ 状态：签到失败，API请求错误（已重试{retry_count}次）\n"
-                        f"━━━━━━━━━━\n"
-                        f"💡 可能的解决方法\n"
-                        f"• 检查Cookie是否有效\n"
-                        f"• 确认站点是否可访问\n"
-                        f"• 尝试手动登录网站\n"
-                        f"━━━━━━━━━━"
-                    )
-                )
-            
-            # 记录历史
-            history = {
-                "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-                "status": f"签到失败：API请求错误（已重试{retry_count}次）",
-                "money": None,
-                "totalContinuousCheckIn": None,
-                "retry": {
-                    "enabled": self._retry_count > 0,
-                    "current": self._current_retry,
-                    "max": self._retry_count,
-                    "interval": self._retry_interval
-                }
-            }
-            self._save_history(history)
-            
-            # 判断是否需要重试
-            if self._retry_count > 0 and self._current_retry < self._retry_count:
-                self._current_retry += 1
-                # 安排下次重试 - 延长重试间隔，避免连续失败
-                retry_hours = self._retry_interval * (self._current_retry)
-                logger.info(f"安排第{self._current_retry}次重试，将在{retry_hours}小时后重试")
-                self._schedule_retry(hours=retry_hours)
-            else:
-                # 重置重试计数
-                self._current_retry = 0
-            
-            return
-
-        sign_dict = json.loads(res.text)
-        
-        # 保存用户信息数据（用于个人信息卡）
-        self.save_data("user_info", sign_dict)
-        
-        money = sign_dict['data']['attributes']['money']
-        totalContinuousCheckIn = sign_dict['data']['attributes']['totalContinuousCheckIn']
-
-        # 检查是否已签到
-        if "canCheckin" in sign_dict['data']['attributes'] and not sign_dict['data']['attributes']['canCheckin']:
-            status_text = "已签到"
-            reward_text = "今日已领取奖励"
-            logger.info(f"蜂巢已签到，当前花粉: {money}，累计签到: {totalContinuousCheckIn}")
-        else:
-            status_text = "签到成功"
-            reward_text = "获得10花粉奖励"
-            logger.info(f"蜂巢签到成功，当前花粉: {money}，累计签到: {totalContinuousCheckIn}")
-
-        # 发送通知
-        if self._notify:
-            self._send_notification(
-                title=f"【✅ 蜂巢{status_text}】",
-                text=(
-                    f"📢 执行结果\n"
-                    f"━━━━━━━━━━\n"
-                    f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                    f"✨ 状态：{status_text}\n"
-                    f"🎁 奖励：{reward_text}\n"
-                    f"━━━━━━━━━━\n"
-                    f"📊 积分统计\n"
-                    f"🌸 花粉：{money}\n"
-                    f"📆 签到天数：{totalContinuousCheckIn}\n"
-                    f"━━━━━━━━━━"
-                )
-            )
-
-        # 读取历史记录
-        history = {
-            "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-            "status": status_text,
-            "money": money,
-            "totalContinuousCheckIn": totalContinuousCheckIn,
-            "retry": {
-                "enabled": self._retry_count > 0,
-                "current": self._current_retry,
-                "max": self._retry_count,
-                "interval": self._retry_interval
-            }
-        }
-        
-        # 保存签到历史
-        self._save_history(history)
-        
-        # 如果是重试后成功，重置重试计数
-        if self._current_retry > 0:
-            logger.info(f"蜂巢签到重试成功，重置重试计数")
-            self._current_retry = 0
+            # 使用循环而非递归实现重试
+            for attempt in range(max_retries + 1):
+                if attempt > 0:
+                    logger.info(f"正在进行第 {attempt}/{max_retries} 次重试...")
+                    time.sleep(3)  # 重试前等待3秒
+                    
+                try:
+                    # 获取代理设置
+                    proxies = self._get_proxies()
+                    
+                    # 每次都重新登录获取cookie
+                    logger.info(f"开始登录蜂巢论坛获取cookie...")
+                    cookie = self._login_and_get_cookie(proxies)
+                    if not cookie:
+                        logger.error(f"登录失败，无法获取cookie")
+                        if attempt < max_retries:
+                            continue
+                        self._send_signin_failure_notification("登录失败，无法获取cookie", attempt)
+                        return False
+                    
+                    logger.info(f"登录成功，成功获取cookie")
+                    
+                    # 使用获取的cookie访问蜂巢
+                    try:
+                        res = RequestUtils(cookies=cookie, proxies=proxies, timeout=30).get_res(url="https://pting.club")
+                    except Exception as e:
+                        logger.error(f"请求蜂巢出错: {str(e)}")
+                        if attempt < max_retries:
+                            continue
+                        self._send_signin_failure_notification("连接站点出错", attempt)
+                        return False
+                    
+                    if not res or res.status_code != 200:
+                        logger.error(f"请求蜂巢返回错误状态码: {res.status_code if res else '无响应'}")
+                        if attempt < max_retries:
+                            continue
+                        # 所有重试失败，发送通知
+                        self._send_signin_failure_notification("无法连接到站点", attempt)
+                        return False
+                    
+                    # 获取csrfToken
+                    pattern = r'"csrfToken":"(.*?)"'
+                    csrfToken = re.findall(pattern, res.text)
+                    if not csrfToken:
+                        logger.error("请求csrfToken失败")
+                        if attempt < max_retries:
+                            continue
+                        
+                        # 所有重试失败，发送通知
+                        self._send_signin_failure_notification("无法获取CSRF令牌", attempt)
+                        return False
+                    
+                    csrfToken = csrfToken[0]
+                    logger.info(f"获取csrfToken成功 {csrfToken}")
+                    
+                    # 获取userid
+                    pattern = r'"userId":(\d+)'
+                    match = re.search(pattern, res.text)
+                    
+                    if match and match.group(1) != "0":
+                        userId = match.group(1)
+                        logger.info(f"获取userid成功 {userId}")
+                        
+                        # 如果开启了蜂巢论坛PT人生数据更新，尝试更新数据
+                        if self._mp_push_enabled:
+                            self.__push_mp_stats(user_id=userId, csrf_token=csrfToken, cookie=cookie)
+                    else:
+                        logger.error("未找到userId")
+                        if attempt < max_retries:
+                            continue
+                            
+                        # 所有重试失败，发送通知
+                        self._send_signin_failure_notification("无法获取用户ID", attempt)
+                        return False
+                    
+                    # 准备签到请求
+                    headers = {
+                        "X-Csrf-Token": csrfToken,
+                        "X-Http-Method-Override": "PATCH",
+                        "Cookie": cookie
+                    }
+                    
+                    data = {
+                        "data": {
+                            "type": "users",
+                            "attributes": {
+                                "canCheckin": False,
+                                "totalContinuousCheckIn": 2
+                            },
+                            "id": userId
+                        }
+                    }
+                    
+                    # 开始签到
+                    try:
+                        res = RequestUtils(headers=headers, proxies=proxies, timeout=30).post_res(
+                            url=f"https://pting.club/api/users/{userId}", 
+                            json=data
+                        )
+                    except Exception as e:
+                        logger.error(f"签到请求出错: {str(e)}")
+                        if attempt < max_retries:
+                            continue
+                        # 所有重试失败，发送通知
+                        self._send_signin_failure_notification("签到请求异常", attempt)
+                        return False
+                    
+                    if not res or res.status_code != 200:
+                        logger.error(f"蜂巢签到失败，状态码: {res.status_code if res else '无响应'}")
+                        if attempt < max_retries:
+                            continue
+                            
+                        # 所有重试失败，发送通知
+                        self._send_signin_failure_notification("API请求错误", attempt)
+                        return False
+                    
+                    # 签到成功
+                    sign_dict = json.loads(res.text)
+                    
+                    # 保存用户信息数据（用于个人信息卡）
+                    self.save_data("user_info", sign_dict)
+                    
+                    money = sign_dict['data']['attributes']['money']
+                    totalContinuousCheckIn = sign_dict['data']['attributes']['totalContinuousCheckIn']
+                    # 获取签到奖励花粉数量
+                    lastCheckinMoney = sign_dict['data']['attributes'].get('lastCheckinMoney', 0)
+                    
+                    # 检查是否已签到
+                    if "canCheckin" in sign_dict['data']['attributes'] and not sign_dict['data']['attributes']['canCheckin']:
+                        status_text = "已签到"
+                        reward_text = "今日已领取奖励"
+                        logger.info(f"蜂巢已签到，当前花粉: {money}，累计签到: {totalContinuousCheckIn}")
+                    else:
+                        status_text = "签到成功"
+                        reward_text = f"获得{lastCheckinMoney}花粉奖励"
+                        logger.info(f"蜂巢签到成功，获得{lastCheckinMoney}花粉，当前花粉: {money}，累计签到: {totalContinuousCheckIn}")
+                    
+                    # 发送通知
+                    if self._notify:
+                        self._send_notification(
+                            title=f"【✅ 蜂巢{status_text}】",
+                            text=(
+                                f"📢 执行结果\n"
+                                f"━━━━━━━━━━\n"
+                                f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                                f"✨ 状态：{status_text}\n"
+                                f"🎁 奖励：{reward_text}\n"
+                                f"━━━━━━━━━━\n"
+                                f"📊 积分统计\n"
+                                f"🌸 花粉：{money}\n"
+                                f"📆 签到天数：{totalContinuousCheckIn}\n"
+                                f"━━━━━━━━━━"
+                            )
+                        )
+                    
+                    # 读取历史记录
+                    history = {
+                        "date": datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
+                        "status": status_text,
+                        "money": money,
+                        "totalContinuousCheckIn": totalContinuousCheckIn,
+                        "lastCheckinMoney": lastCheckinMoney,
+                        "retry": {
+                            "enabled": self._retry_count > 0,
+                            "current": self._current_retry,
+                            "max": self._retry_count,
+                            "interval": self._retry_interval
+                        }
+                    }
+                    
+                    # 保存签到历史
+                    self._save_history(history)
+                    
+                    # 如果是重试后成功，重置重试计数
+                    if self._current_retry > 0:
+                        logger.info(f"蜂巢签到重试成功，重置重试计数")
+                        self._current_retry = 0
+                    
+                    # 签到成功，退出循环
+                    return True
+                    
+                except Exception as e:
+                    logger.error(f"签到过程发生异常: {str(e)}")
+                    import traceback
+                    logger.error(f"错误详情: {traceback.format_exc()}")
+                    
+                    if attempt < max_retries:
+                        continue
+                    
+                    # 所有重试失败，发送通知并退出
+                    self._send_signin_failure_notification("未知错误", attempt)
+                    
+                    # 设置下次定时重试
+                    if self._retry_count > 0 and self._current_retry < self._retry_count:
+                        self._current_retry += 1
+                        retry_hours = self._retry_interval * self._current_retry
+                        logger.info(f"安排第{self._current_retry}次定时重试，将在{retry_hours}小时后重试")
+                        self._schedule_retry(hours=retry_hours)
+                    else:
+                        self._current_retry = 0
+                    
+                    return False
+        finally:
+            # 释放锁
+            self._signing_in = False
 
     def _save_history(self, record):
         """
@@ -625,7 +487,7 @@ class FengchaoSignin(_PluginBase):
         if self._enabled and self._mp_push_enabled:
             services.append({
                 "id": "MoviePilotStatsPush",
-                "name": "MoviePilot统计推送检查服务",
+                "name": "蜂巢论坛PT人生数据更新服务",
                 "trigger": "interval",
                 "func": self.__check_and_push_mp_stats,
                 "kwargs": {"hours": 6} # 每6小时检查一次是否需要推送
@@ -771,30 +633,6 @@ class FengchaoSignin(_PluginBase):
                                             }
                                         ]
                                     },
-                                    # Cookie输入
-                                    {
-                                        'component': 'VRow',
-                                        'content': [
-                                            {
-                                                'component': 'VCol',
-                                                'props': {
-                                                    'cols': 12
-                                                },
-                                                'content': [
-                                                    {
-                                                        'component': 'VTextarea',
-                                                        'props': {
-                                                            'model': 'cookie',
-                                                            'label': 'Cookie',
-                                                            'rows': 2,
-                                                            'placeholder': 'session=xxx; uid=xxx',
-                                                            'hint': '登录蜂巢获取Cookie，如已填写用户名密码，Cookie失效后将自动获取'
-                                                        }
-                                                    }
-                                                ]
-                                            }
-                                        ]
-                                    },
                                     # 签到周期和历史保留
                                     {
                                         'component': 'VRow',
@@ -904,7 +742,7 @@ class FengchaoSignin(_PluginBase):
                                             }
                                         ]
                                     },
-                                    # MoviePilot统计设置分隔线
+                                    # 蜂巢论坛PT人生数据设置分隔线
                                     {
                                         'component': 'VRow',
                                         'content': [
@@ -922,7 +760,7 @@ class FengchaoSignin(_PluginBase):
                                             }
                                         ]
                                     },
-                                    # MoviePilot统计标题
+                                    # 蜂巢论坛PT人生数据标题
                                     {
                                         'component': 'VRow',
                                         'content': [
@@ -957,7 +795,7 @@ class FengchaoSignin(_PluginBase):
                                             }
                                         ]
                                     },
-                                    # MoviePilot统计设置
+                                    # 蜂巢论坛PT人生数据设置
                                     {
                                         'component': 'VRow',
                                         'content': [
@@ -996,9 +834,7 @@ class FengchaoSignin(_PluginBase):
             "retry_interval": 2,
             "mp_push_enabled": False,
             "mp_push_interval": 1,
-            "use_proxy": True,
-            "username": "",
-            "password": ""
+            "use_proxy": True
         }
 
     def get_page(self) -> List[dict]:
@@ -1661,7 +1497,7 @@ class FengchaoSignin(_PluginBase):
                     'props': {
                         'type': 'info',
                         'variant': 'tonal',
-                        'text': '暂无签到记录，请先配置Cookie并启用插件',
+                        'text': '暂无签到记录，请先配置用户名和密码并启用插件',
                         'class': 'mb-2',
                         'prepend-icon': 'mdi-information'
                     }
@@ -1711,7 +1547,7 @@ class FengchaoSignin(_PluginBase):
                                         },
                                         {
                                             'component': 'span',
-                                            'text': '每日签到可获得10花粉奖励'
+                                            'text': '每日签到可获得随机花粉奖励'
                                         }
                                     ]
                                 },
@@ -1875,7 +1711,7 @@ class FengchaoSignin(_PluginBase):
                                     },
                                     {
                                         'component': 'span',
-                                        'text': '10花粉' if ("签到成功" in status_text or "已签到" in status_text) else '—'
+                                        'text': f"{record.get('lastCheckinMoney', 0)}花粉" if ("签到成功" in status_text or "已签到" in status_text) and record.get('lastCheckinMoney', 0) > 0 else '—'
                                     }
                                 ]
                             }
@@ -1935,7 +1771,7 @@ class FengchaoSignin(_PluginBase):
                                 },
                                 {
                                     'component': 'span',
-                                'text': '每日可得10花粉'
+                                'text': '每日可得花粉奖励'
                                 }
                             ]
                             }
@@ -2016,161 +1852,290 @@ class FengchaoSignin(_PluginBase):
             logger.error("退出插件失败：%s" % str(e)) 
 
     def __check_and_push_mp_stats(self):
-        """检查是否需要推送MoviePilot统计数据"""
-        if not self._mp_push_enabled or not self._cookie:
+        """检查是否需要更新蜂巢论坛PT人生数据"""
+        # 增加任务锁，防止重复执行
+        if hasattr(self, '_pushing_stats') and self._pushing_stats:
+            logger.info("已有更新PT人生数据任务在执行，跳过当前任务")
             return
             
-        # 获取代理设置
-        proxies = self._get_proxies()
-        
-        # 需要推送，首先获取用户信息
-        res = RequestUtils(cookies=self._cookie, proxies=proxies).get_res(url="https://pting.club")
-        if not res or res.status_code != 200:
-            logger.error("请求蜂巢失败，无法获取用户信息进行推送")
-            return
+        self._pushing_stats = True
+        try:
+            if not self._mp_push_enabled:
+                logger.info("蜂巢论坛PT人生数据更新未启用")
+                return
+                
+            if not self._username or not self._password:
+                logger.error("未配置用户名密码，无法更新PT人生数据")
+                return
+                
+            # 获取代理设置
+            proxies = self._get_proxies()
             
-        # 获取CSRF令牌
-        pattern = r'"csrfToken":"(.*?)"'
-        csrf_matches = re.findall(pattern, res.text)
-        if not csrf_matches:
-            logger.error("获取CSRF令牌失败，无法进行推送")
-            return
-        csrf_token = csrf_matches[0]
-        
-        # 获取用户ID
-        pattern = r'"userId":(\d+)'
-        user_matches = re.search(pattern, res.text)
-        if not user_matches:
-            logger.error("获取用户ID失败，无法进行推送")
-            return
-        user_id = user_matches.group(1)
-        
-        # 执行推送
-        self.__push_mp_stats(user_id=user_id, csrf_token=csrf_token)
+            # 获取当前时间
+            now = datetime.now()
+            
+            # 如果设置了最后推送时间，检查是否需要推送
+            if self._last_push_time:
+                last_push = datetime.strptime(self._last_push_time, '%Y-%m-%d %H:%M:%S')
+                # 计算与上次推送的时间差
+                delta = now - last_push
+                # 如果未到推送间隔，跳过
+                if delta.days < self._mp_push_interval:
+                    logger.info(f"距离上次更新PT人生数据时间不足{self._mp_push_interval}天，跳过更新")
+                    return
+            
+            logger.info(f"开始更新蜂巢论坛PT人生数据...")
+            
+            # 登录获取cookie
+            cookie = self._login_and_get_cookie(proxies)
+            if not cookie:
+                logger.error("登录失败，无法获取cookie进行PT人生数据更新")
+                return
+                
+            # 使用获取的cookie访问蜂巢获取必要信息
+            try:
+                res = RequestUtils(cookies=cookie, proxies=proxies, timeout=30).get_res(url="https://pting.club")
+            except Exception as e:
+                logger.error(f"请求蜂巢出错: {str(e)}")
+                return
+            
+            if not res or res.status_code != 200:
+                logger.error(f"请求蜂巢返回错误状态码: {res.status_code if res else '无响应'}")
+                return
+                
+            # 获取CSRF令牌
+            pattern = r'"csrfToken":"(.*?)"'
+            csrf_matches = re.findall(pattern, res.text)
+            if not csrf_matches:
+                logger.error("获取CSRF令牌失败，无法进行PT人生数据更新")
+                return
+            csrf_token = csrf_matches[0]
+            
+            # 获取用户ID
+            pattern = r'"userId":(\d+)'
+            user_matches = re.search(pattern, res.text)
+            if not user_matches:
+                logger.error("获取用户ID失败，无法进行PT人生数据更新")
+                return
+            user_id = user_matches.group(1)
+            
+            # 执行推送
+            self.__push_mp_stats(user_id=user_id, csrf_token=csrf_token, cookie=cookie)
+        finally:
+            # 释放锁
+            self._pushing_stats = False
 
-    def __push_mp_stats(self, user_id=None, csrf_token=None, retry_count=0, max_retries=3):
-        """推送MoviePilot统计数据到蜂巢论坛"""
+    def __push_mp_stats(self, user_id=None, csrf_token=None, cookie=None, retry_count=0, max_retries=3):
+        """更新蜂巢论坛PT人生数据"""
         # 检查是否启用推送
         if not self._mp_push_enabled:
             return
 
         # 如果没有传入user_id和csrf_token，直接返回
-        if not user_id or not csrf_token:
-            logger.error("用户ID或CSRF令牌为空，无法进行推送")
+        if not user_id or not csrf_token or not cookie:
+            logger.error("用户ID、CSRF令牌或Cookie为空，无法更新PT人生数据")
             return
         
-        now = datetime.now()
-        logger.info(f"开始获取站点统计数据以推送到蜂巢论坛 (用户ID: {user_id})")
+        # 使用循环而非递归实现重试
+        for attempt in range(retry_count, max_retries + 1):
+            if attempt > retry_count:
+                logger.info(f"更新失败，正在进行第 {attempt - retry_count}/{max_retries - retry_count} 次重试...")
+                time.sleep(3)  # 重试前等待3秒
             
-        # 获取站点统计数据
-        stats_data = self._get_site_statistics()
-        if not stats_data:
-            logger.error("获取站点统计数据失败，无法进行推送")
-            return
-            
-        # 格式化数据
-        formatted_stats = self._format_stats_data(stats_data)
-        if not formatted_stats:
-            logger.error("格式化站点统计数据失败，无法进行推送")
-            return
-        
-        # 记录第一个站点的数据以便确认所有字段是否都被正确传递
-        if formatted_stats.get("sites") and len(formatted_stats.get("sites")) > 0:
-            first_site = formatted_stats.get("sites")[0]
-            logger.info(f"推送数据示例：站点={first_site.get('name')}, 用户名={first_site.get('username')}, 等级={first_site.get('user_level')}, "
-                        f"上传={first_site.get('upload')}, 下载={first_site.get('download')}, 分享率={first_site.get('ratio')}, "
-                        f"魔力值={first_site.get('bonus')}, 做种数={first_site.get('seeding')}, 做种体积={first_site.get('seeding_size')}")
-            
-        # 准备请求头和请求体
-        headers = {
-            "X-Csrf-Token": csrf_token,
-            "X-Http-Method-Override": "PATCH",  # 关键：使用PATCH方法覆盖
-            "Content-Type": "application/json",
-            "Cookie": self._cookie
-        }
-        
-        # 创建请求数据
-        data = {
-            "data": {
-                "type": "users",  # 注意：类型是users不是moviepilot-stats
-                "attributes": {
-                    "mpStatsSummary": json.dumps(formatted_stats.get("summary", {})),
-                    "mpStatsSites": json.dumps(formatted_stats.get("sites", []))
-                },
-                "id": user_id
-            }
-        }
-        
-        # 输出JSON数据片段以便确认
-        json_data = json.dumps(formatted_stats.get("sites", []))
-        if len(json_data) > 500:
-            logger.info(f"推送的JSON数据片段: {json_data[:500]}...")
-        else:
-            logger.info(f"推送的JSON数据: {json_data}")
-        
-        # 获取代理设置
-        proxies = self._get_proxies()
-        
-        # 发送请求
-        url = f"https://pting.club/api/users/{user_id}"
-        logger.info(f"准备推送站点统计数据到蜂巢论坛: {len(formatted_stats.get('sites', []))} 个站点")
-        res = RequestUtils(headers=headers, proxies=proxies).post_res(url=url, json=data)
-        
-        if res and res.status_code == 200:
-            logger.info(f"成功推送MoviePilot统计数据到蜂巢论坛: 总上传 {round(formatted_stats['summary']['total_upload']/1024/1024/1024, 2)} GB, 总下载 {round(formatted_stats['summary']['total_download']/1024/1024/1024, 2)} GB")
-            # 更新最后推送时间
-            self._last_push_time = now.strftime('%Y-%m-%d %H:%M:%S')
-            self.save_data('last_push_time', self._last_push_time)
-            
-            if self._notify:
-                self._send_notification(
-                    title="【✅ 更新PT人生数据成功】",
-                    text=(
-                        f"📢 执行结果\n"
-                        f"━━━━━━━━━━\n"
-                        f"🕐 时间：{now.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                        f"✨ 状态：成功更新PT人生数据\n"
-                        f"📊 站点数：{len(formatted_stats.get('sites', []))} 个\n"
-                        f"━━━━━━━━━━"
+            try:
+                now = datetime.now()
+                logger.info(f"开始获取站点统计数据以更新蜂巢论坛PT人生数据 (用户ID: {user_id})")
+                
+                # 获取站点统计数据，使用类成员变量缓存，避免重复获取
+                if not hasattr(self, '_cached_stats_data') or self._cached_stats_data is None or \
+                   not hasattr(self, '_cached_stats_time') or \
+                   (now - self._cached_stats_time).total_seconds() > 3600:  # 缓存1小时
+                    self._cached_stats_data = self._get_site_statistics()
+                    self._cached_stats_time = now
+                    logger.info("获取最新站点统计数据")
+                else:
+                    logger.info(f"使用缓存的站点统计数据（缓存时间：{self._cached_stats_time.strftime('%Y-%m-%d %H:%M:%S')}）")
+                
+                stats_data = self._cached_stats_data
+                if not stats_data:
+                    logger.error("获取站点统计数据失败，无法更新PT人生数据")
+                    if attempt < max_retries:
+                        continue
+                    return
+                    
+                # 格式化数据，使用类成员变量缓存，避免重复格式化
+                if not hasattr(self, '_cached_formatted_stats') or self._cached_formatted_stats is None or \
+                   not hasattr(self, '_cached_stats_time') or \
+                   (now - self._cached_stats_time).total_seconds() > 3600:  # 缓存1小时
+                    self._cached_formatted_stats = self._format_stats_data(stats_data)
+                    logger.info("格式化最新站点统计数据")
+                else:
+                    logger.info("使用缓存的已格式化站点统计数据")
+                
+                formatted_stats = self._cached_formatted_stats
+                if not formatted_stats:
+                    logger.error("格式化站点统计数据失败，无法更新PT人生数据")
+                    if attempt < max_retries:
+                        continue
+                    return
+                
+                # 记录第一个站点的数据以便确认所有字段是否都被正确传递
+                if formatted_stats.get("sites") and len(formatted_stats.get("sites")) > 0:
+                    first_site = formatted_stats.get("sites")[0]
+                    logger.info(f"推送数据示例：站点={first_site.get('name')}, 用户名={first_site.get('username')}, 等级={first_site.get('user_level')}, "
+                                f"上传={first_site.get('upload')}, 下载={first_site.get('download')}, 分享率={first_site.get('ratio')}, "
+                                f"魔力值={first_site.get('bonus')}, 做种数={first_site.get('seeding')}, 做种体积={first_site.get('seeding_size')}")
+                
+                # 检查数据大小，站点数量过多可能导致请求失败
+                sites = formatted_stats.get("sites", [])
+                if len(sites) > 50:
+                    # 如果站点数量太多，只保留做种数最多的前50个
+                    logger.warning(f"站点数据过多({len(sites)}个)，将只推送做种数最多的前50个站点")
+                    sites.sort(key=lambda x: x.get("seeding", 0), reverse=True)
+                    formatted_stats["sites"] = sites[:50]
+                    
+                # 准备请求头和请求体
+                headers = {
+                    "X-Csrf-Token": csrf_token,
+                    "X-Http-Method-Override": "PATCH",  # 关键：使用PATCH方法覆盖
+                    "Content-Type": "application/json",
+                    "Cookie": cookie
+                }
+                
+                # 创建请求数据
+                data = {
+                    "data": {
+                        "type": "users",  # 注意：类型是users不是moviepilot-stats
+                        "attributes": {
+                            "mpStatsSummary": json.dumps(formatted_stats.get("summary", {})),
+                            "mpStatsSites": json.dumps(formatted_stats.get("sites", []))
+                        },
+                        "id": user_id
+                    }
+                }
+                
+                # 输出JSON数据片段以便确认
+                json_data = json.dumps(formatted_stats.get("sites", []))
+                if len(json_data) > 500:
+                    logger.info(f"推送的JSON数据片段: {json_data[:500]}...")
+                    logger.info(f"推送数据大小约为: {len(json_data)/1024:.2f} KB")
+                else:
+                    logger.info(f"推送的JSON数据: {json_data}")
+                    logger.info(f"推送数据大小约为: {len(json_data)/1024:.2f} KB")
+                
+                # 获取代理设置
+                proxies = self._get_proxies()
+                
+                # 发送请求
+                url = f"https://pting.club/api/users/{user_id}"
+                logger.info(f"准备更新蜂巢论坛PT人生数据: {len(formatted_stats.get('sites', []))} 个站点")
+                
+                try:
+                    res = RequestUtils(headers=headers, proxies=proxies, timeout=60).post_res(url=url, json=data)
+                except Exception as e:
+                    logger.error(f"更新请求出错: {str(e)}")
+                    if attempt < max_retries:
+                        continue
+                    # 所有重试都失败
+                    logger.error("所有重试都失败，放弃更新")
+                    return
+                
+                if res and res.status_code == 200:
+                    logger.info(f"成功更新蜂巢论坛PT人生数据: 总上传 {round(formatted_stats['summary']['total_upload']/1024/1024/1024, 2)} GB, 总下载 {round(formatted_stats['summary']['total_download']/1024/1024/1024, 2)} GB")
+                    # 更新最后推送时间
+                    self._last_push_time = now.strftime('%Y-%m-%d %H:%M:%S')
+                    self.save_data('last_push_time', self._last_push_time)
+                    
+                    # 清除缓存，确保下次获取新数据
+                    if hasattr(self, '_cached_stats_data'):
+                        self._cached_stats_data = None
+                    if hasattr(self, '_cached_formatted_stats'):
+                        self._cached_formatted_stats = None
+                    if hasattr(self, '_cached_stats_time'):
+                        delattr(self, '_cached_stats_time')
+                    logger.info("已清除站点数据缓存，下次将获取最新数据")
+                    
+                    if self._notify:
+                        self._send_notification(
+                            title="【✅ 蜂巢论坛PT人生数据更新成功】",
+                            text=(
+                                f"📢 执行结果\n"
+                                f"━━━━━━━━━━\n"
+                                f"🕐 时间：{now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                                f"✨ 状态：成功更新蜂巢论坛PT人生数据\n"
+                                f"📊 站点数：{len(formatted_stats.get('sites', []))} 个\n"
+                                f"━━━━━━━━━━"
+                            )
+                        )
+                    return True
+                else:
+                    logger.error(f"更新蜂巢论坛PT人生数据失败：{res.status_code if res else '请求失败'}, 响应: {res.text[:100] if res and hasattr(res, 'text') else '无响应内容'}")
+                    if attempt < max_retries:
+                        continue
+                        
+                    # 所有重试都失败，发送通知
+                    if self._notify:
+                        self._send_notification(
+                            title="【❌ 蜂巢论坛PT人生数据更新失败】",
+                            text=(
+                                f"📢 执行结果\n"
+                                f"━━━━━━━━━━\n"
+                                f"🕐 时间：{now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                                f"❌ 状态：更新蜂巢论坛PT人生数据失败（已重试{attempt - retry_count}次）\n"
+                                f"━━━━━━━━━━\n"
+                                f"💡 可能的解决方法\n"
+                                f"• 检查Cookie是否有效\n"
+                                f"• 确认站点是否可访问\n"
+                                f"• 尝试手动登录网站\n"
+                                f"━━━━━━━━━━"
+                            )
+                        )
+                    return False
+                
+            except Exception as e:
+                logger.error(f"更新过程发生异常: {str(e)}")
+                import traceback
+                logger.error(f"错误详情: {traceback.format_exc()}")
+                
+                if attempt < max_retries:
+                    continue
+                
+                # 所有重试都失败
+                if self._notify:
+                    self._send_notification(
+                        title="【❌ 蜂巢论坛PT人生数据更新失败】",
+                        text=(
+                            f"📢 执行结果\n"
+                            f"━━━━━━━━━━\n"
+                            f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                            f"❌ 状态：更新蜂巢论坛PT人生数据失败（已重试{attempt - retry_count}次）\n"
+                            f"━━━━━━━━━━\n"
+                            f"💡 可能的解决方法\n"
+                            f"• 检查系统网络连接\n"
+                            f"• 确认站点是否可访问\n"
+                            f"• 检查代码是否有错误\n"
+                            f"━━━━━━━━━━"
+                        )
                     )
-                )
-        else:
-            logger.error(f"推送MoviePilot统计数据失败：{res.status_code if res else '请求失败'}, 响应: {res.text[:100] if res and hasattr(res, 'text') else '无响应内容'}")
-            
-            # 即时重试逻辑
-            if retry_count < max_retries:
-                retry_seconds = 10
-                retry_number = retry_count + 1
-                logger.info(f"推送失败，将在{retry_seconds}秒后进行第{retry_number}次重试...")
-                time.sleep(retry_seconds)
-                return self.__push_mp_stats(user_id=user_id, csrf_token=csrf_token, retry_count=retry_number, max_retries=max_retries)
-            
-            if self._notify:
-                self._send_notification(
-                    title="【❌ 更新PT人生数据失败】",
-                    text=(
-                        f"📢 执行结果\n"
-                        f"━━━━━━━━━━\n"
-                        f"🕐 时间：{now.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                        f"❌ 状态：更新PT人生数据失败（已重试{retry_count}次）\n"
-                        f"━━━━━━━━━━\n"
-                        f"💡 可能的解决方法\n"
-                        f"• 检查Cookie是否有效\n"
-                        f"• 确认站点是否可访问\n"
-                        f"• 尝试手动登录网站\n"
-                        f"━━━━━━━━━━"
-                    )
-                )
 
     def _get_site_statistics(self):
         """获取站点统计数据（参考站点统计插件实现）"""
         try:
-            # 导入SiteOper类
+            # 导入SiteOper类和SitesHelper
             from app.db.site_oper import SiteOper
+            from app.helper.sites import SitesHelper
             from app.db.models.siteuserdata import SiteUserData
             
             # 初始化SiteOper
             site_oper = SiteOper()
+            # 初始化SitesHelper
+            sites_helper = SitesHelper()
+            
+            # 获取所有管理中的站点
+            managed_sites = sites_helper.get_indexers()
+            managed_site_names = [site.get("name") for site in managed_sites if site.get("name")]
+            
+            logger.info(f"MoviePilot管理中的站点: {len(managed_site_names)}个")
             
             # 获取站点数据 - 使用get_userdata()方法
             raw_data_list = site_oper.get_userdata()
@@ -2198,12 +2163,13 @@ class FengchaoSignin(_PluginBase):
             # 按日期倒序排序
             data_list.sort(key=lambda x: x.updated_day, reverse=True)
             
-            # 获取每个站点的最新数据
+            # 获取每个站点的最新数据，并只保留MoviePilot管理中的站点
             site_names = set()
             latest_site_data = []
             
             for data in data_list:
-                if data.name not in site_names:
+                # 过滤出MoviePilot管理中的站点
+                if data.name not in site_names and data.name in managed_site_names:
                     site_names.add(data.name)
                     latest_site_data.append(data)
             
@@ -2237,6 +2203,18 @@ class FengchaoSignin(_PluginBase):
     def _get_site_statistics_via_api(self):
         """通过API获取站点统计数据（备用方法）"""
         try:
+            # 导入SitesHelper
+            from app.helper.sites import SitesHelper
+            
+            # 初始化SitesHelper
+            sites_helper = SitesHelper()
+            
+            # 获取所有管理中的站点
+            managed_sites = sites_helper.get_indexers()
+            managed_site_names = [site.get("name") for site in managed_sites if site.get("name")]
+            
+            logger.info(f"MoviePilot管理中的站点: {len(managed_site_names)}个")
+            
             # 使用正确的API URL
             api_url = f"{settings.HOST}/api/v1/site/statistics"
             
@@ -2250,8 +2228,16 @@ class FengchaoSignin(_PluginBase):
             res = RequestUtils(headers=headers).get_res(url=api_url)
             if res and res.status_code == 200:
                 data = res.json()
-                sites = data.get("sites", [])
-                logger.info(f"通过API成功获取 {len(sites)} 个站点数据")
+                all_sites = data.get("sites", [])
+                
+                # 过滤只保留MoviePilot管理中的站点
+                sites = [site for site in all_sites if site.get("name") in managed_site_names]
+                
+                logger.info(f"通过API成功获取 {len(all_sites)} 个站点数据，过滤后保留 {len(sites)} 个站点")
+                
+                # 更新数据中的sites字段
+                data["sites"] = sites
+                
                 return data
             else:
                 logger.error(f"获取站点统计数据失败: {res.status_code if res else '连接失败'}")
@@ -2552,23 +2538,3 @@ class FengchaoSignin(_PluginBase):
         except Exception as e:
             logger.error(f"验证cookie过程出错 (使用{proxy_info}): {str(e)}")
             return None
-
-    def update_cookie(self, new_cookie):
-        """
-        仅更新cookie，不影响其他配置
-        """
-        logger.info("仅更新cookie，保留其他配置...")
-        
-        # 先获取当前的所有配置
-        current_config = self.get_config()
-        
-        # 只修改cookie项
-        current_config["cookie"] = new_cookie
-        
-        # 调用插件基类的update_config方法保存配置
-        self.update_config(current_config)
-        
-        # 更新实例变量
-        self._cookie = new_cookie
-        
-        logger.info("cookie更新成功，其他配置保持不变")
