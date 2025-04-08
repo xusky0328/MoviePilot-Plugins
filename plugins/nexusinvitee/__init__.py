@@ -29,6 +29,58 @@ from plugins.nexusinvitee.data import DataManager
 from plugins.nexusinvitee.utils import NotificationHelper, SiteHelper
 from plugins.nexusinvitee.module_loader import ModuleLoader
 
+class Prescription():
+    def __init__(self):
+        self._cache = {}
+    
+    def _tag(self,site_name,key,value):
+        if site_name not in self._cache:
+            self._cache[site_name] = {}
+        self._cache[site_name][key] = value
+    def setP(self,site_name,value):
+        self._tag(site_name,"p",value)
+    def setT(self,site_name,value):
+        self._tag(site_name,"t",value)
+    def setCBP(self,site_name,value):
+        self._tag(site_name,"cbp",value)
+    def setCBT(self,site_name,value):
+        self._tag(site_name,"cbt",value)
+    def setCanInvite(self,site_name,value):
+        self._tag(site_name,"can_invite",value)
+
+    def _export(self):
+        med_list = ""
+        for k in self._cache:
+            site_name = k
+            site_remain = self._cache[k]['p']+self._cache[k]['t']
+            site_can_buy = 0 if 'cbp' not in self._cache[k] else self._cache[k]["cbp"]+self._cache[k]["cbt"]
+            if site_remain+site_can_buy>0 and 'can_invite' in self._cache[k] and self._cache[k]['can_invite']:
+                site_content = "站点[{}]: 剩余[{}]个. 可购买[{}]个\r\n".format(site_name,site_remain,site_can_buy)
+                # logger.info(site_content)
+                med_list+=site_content
+        return med_list
+    
+    def getComponent(self):
+        return {
+                "component": "VAlert",
+                "props": {
+                    "type": "info",
+                    "text": f"药单生成:",
+                    "variant": "tonal",
+                    "class": "mb-4",
+                },
+                "content": [
+                    {
+                        "component": "a",
+                        "text": f"点我复制",
+                        "props":{
+                            "href":"javascript:void(0)",
+                            "onclick":"(async ()=>{var med = `"+self._export()+"`; await navigator.clipboard.writeText(med); alert(\"药单已生成\");})()"
+                        }
+                    }
+                ]
+            }
+
 def get_nested_value(data_dict: dict, key_path: List[str], default: Any = None) -> Any:
     """
     递归获取嵌套字典中的值
@@ -90,12 +142,15 @@ class nexusinvitee(_PluginBase):
     # 定时器
     _scheduler: Optional[BackgroundScheduler] = None
 
+    presc : Prescription = None
+
     def init_plugin(self, config=None):
         """
         插件初始化
         """        
         self.sites = SitesHelper()
         self.siteoper = SiteOper()
+        self.presc = Prescription()
         
         # 获取数据目录
         data_path = self.get_data_path()
@@ -777,6 +832,7 @@ class nexusinvitee(_PluginBase):
         """
         import re  # 在函数内部也导入re模块，确保可用
         
+        
         try:
             # 从data_manager获取站点数据
             cached_data = {}
@@ -1130,7 +1186,9 @@ class nexusinvitee(_PluginBase):
                 # 统计邀请数量
                 total_perm_invites += invite_status.get("permanent_count", 0)
                 total_temp_invites += invite_status.get("temporary_count", 0)
-
+                # 向药单打标临药永药
+                self.presc.setP(site_name,invite_status.get("permanent_count", 0))
+                self.presc.setT(site_name,invite_status.get("temporary_count", 0))
             # 记录总计算结果
             logger.info(f"仪表盘总统计结果: 总站点数={total_sites}, 总后宫成员={total_invitees}, 低分享率={total_low_ratio}, 已禁用={total_banned}, 无数据={total_no_data}")
 
@@ -1760,6 +1818,8 @@ class nexusinvitee(_PluginBase):
                     invite_status_for_check = invite_status  # 使用上面已获取的invite_status
                     
                     can_invite = invite_status_for_check.get("can_invite", False)
+                    # 向药单打标发药权限
+                    self.presc.setCanInvite(site_name,can_invite)
                     reason = invite_status_for_check.get("reason", "")
 
                     # 确保能正确显示不可邀请原因
@@ -2063,7 +2123,9 @@ class nexusinvitee(_PluginBase):
                         
                         if temporary_invite_price > 0:
                             can_buy_temporary = int(bonus / temporary_invite_price)
-                        
+                        # 向药单打标可购买临药永药数量
+                        self.presc.setCBP(site_name,can_buy_permanent)
+                        self.presc.setCBT(site_name,can_buy_temporary)
                         # 计算购买邀请后剩余魔力
                         remaining_bonus = bonus
                         if can_buy_permanent > 0 and permanent_invite_price > 0:
@@ -2802,7 +2864,8 @@ class nexusinvitee(_PluginBase):
                         "class": "mt-4"
                     }
                 })
-
+            # 向UI插入药单导出
+            page_content.insert(0,self.presc.getComponent())
             return page_content
             
         except Exception as e:
