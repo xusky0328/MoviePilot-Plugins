@@ -36,7 +36,7 @@ class FengchaoInviteTest(_PluginBase):
     # 作者主页
     author_url = "https://github.com/JhouXerox/MoviePilot-Plugins"
     # 插件配置项ID前缀
-    plugin_config_prefix = "fengchaoinvite_"
+    plugin_config_prefix = "fengchaoinvitetest_"
     # 加载顺序
     plugin_order = 31
     # 可使用的用户级别
