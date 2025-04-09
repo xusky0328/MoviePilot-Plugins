@@ -292,21 +292,27 @@ class NexusPhpHandler(_ISiteHandler):
                     send_can_invite = send_page_result["invite_status"].get("can_invite")
                     # (logic to update status based on send_page_result kept exactly as before) ...
                     if send_reason:
-                         if "数量不足" in send_reason:
-                             if not result["invite_status"]["reason"] or "可以发送" in result["invite_status"]["reason"]:
-                                  result["invite_status"]["can_invite"] = True
-                                  result["invite_status"]["reason"] = send_reason
-                                  logger.debug(f"站点 {site_name} 从发送页面确认邀请状态: {send_reason}")
-                         elif not send_can_invite:
-                             result["invite_status"]["can_invite"] = False
-                             result["invite_status"]["reason"] = send_reason
-                             logger.debug(f"站点 {site_name} 从发送页面更新了邀请状态: {send_reason}")
+                        if "数量不足" in send_reason:
+                            # 特殊处理："数量不足"说明可以发药但当前没有名额
+                            result["invite_status"]["can_invite"] = True
+                            result["invite_status"]["reason"] = send_reason
+                            logger.debug(f"站点 {site_name} 从发送页面确认邀请状态: {send_reason}")
+                        elif send_can_invite:
+                            # 有原因且可邀请的情况（如"存在可用邀请表单"）
+                            result["invite_status"]["can_invite"] = True
+                            result["invite_status"]["reason"] = send_reason
+                            logger.debug(f"站点 {site_name} 从发送页面更新了邀请状态: {send_reason}")
+                        elif not send_can_invite:
+                            # 有原因且不可邀请的情况
+                            result["invite_status"]["can_invite"] = False
+                            result["invite_status"]["reason"] = send_reason
+                            logger.debug(f"站点 {site_name} 从发送页面更新了邀请状态: {send_reason}")
                     elif send_can_invite:
-                         if not result["invite_status"]["reason"] or "可以发送" in result["invite_status"]["reason"]:
-                              result["invite_status"]["can_invite"] = True
-                              if not result["invite_status"]["reason"]:
-                                  result["invite_status"]["reason"] = "可以发送邀请"
-                              logger.debug(f"站点 {site_name} 从发送页面确认可以发送邀请")
+                        # 无原因但可邀请的情况
+                        result["invite_status"]["can_invite"] = True
+                        if not result["invite_status"]["reason"]:
+                            result["invite_status"]["reason"] = "可以发送邀请"
+                        logger.debug(f"站点 {site_name} 从发送页面确认可以发送邀请")
                 except requests.exceptions.RequestException as e:
                     logger.warning(f"访问站点发送邀请页面失败: {str(e)}")
 
@@ -509,14 +515,15 @@ class NexusPhpHandler(_ISiteHandler):
             
             # 2. 如果不存在可用邀请表单，检查disabled的submit按钮，通常包含不可邀请的具体原因
             if not can_invite:
-                disabled_submit = soup.select('input[type="submit"][disabled]')
-                if disabled_submit:
-                    for btn in disabled_submit:
-                        disabled_text = btn.get('value', '').strip()
-                        if disabled_text:
-                            invite_reason = disabled_text
-                            logger.debug(f"站点 {site_name} 发现不可用邀请原因(disabled submit): {invite_reason}")
-                            break
+                # 在表单中查找禁用的提交按钮
+                disabled_submit = soup.select('form[action*="takeinvite.php"] input[type="submit"][disabled]')
+                # 如果没找到，再检查是否有邀请页面特有的错误信息
+                if not disabled_submit:
+                    # 检查是否有"你没有剩余邀请名额"这样的文本
+                    no_invite_text = soup.find(text=lambda t: t and ('没有剩余邀请名额' in t or '邀请数量不足' in t))
+                    if no_invite_text:
+                        invite_reason = "没有剩余邀请名额"
+                        logger.debug(f"站点 {site_name} 发现不可用邀请原因: {invite_reason}")
             
             # 3. 检查页面中的"对不起"错误提示信息
             if not invite_reason:
@@ -739,22 +746,32 @@ class NexusPhpHandler(_ISiteHandler):
             if not invite_reason and not can_invite:
                 invite_reason = "无法发送邀请，请手动查看原因"
                 logger.warning(f"站点 {site_name} 无法找到具体的不可邀请原因")
-            
-            # 更新结果
+
+            # 更新结果 - 简化逻辑，明确区分"表单存在"和"限制存在"
             if can_invite:
-                if not result["invite_status"]["can_invite"]:
-                    result["invite_status"]["can_invite"] = True
-                    if not result["invite_status"]["reason"]:
-                        if "不足" in invite_reason:
-                            result["invite_status"]["reason"] = invite_reason
-                        else:
-                            result["invite_status"]["reason"] = "可以发送邀请"
+                # 如果可以邀请（有表单、有数量、明确说明数量不足）
+                result["invite_status"]["can_invite"] = True
+                
+                # 设置原因
+                if "表单" in invite_reason:
+                    # 如果是由于表单存在
+                    result["invite_status"]["reason"] = invite_reason
+                elif result["invite_status"]["permanent_count"] > 0 or result["invite_status"]["temporary_count"] > 0:
+                    # 如果有邀请数量
+                    result["invite_status"]["reason"] = f"可用邀请数: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}"
+                elif invite_reason and "不足" in invite_reason:
+                    # 如果是数量不足
+                    result["invite_status"]["reason"] = invite_reason
+                else:
+                    # 其他可邀请情况
+                    result["invite_status"]["reason"] = "可以发送邀请"
+                    
+                logger.debug(f"站点 {site_name} 从发送页面更新了邀请状态: {result['invite_status']['reason']}")
             else:
+                # 不能邀请
                 result["invite_status"]["can_invite"] = False
                 result["invite_status"]["reason"] = invite_reason
                 logger.info(f"站点 {site_name} 最终不可邀请原因: {invite_reason}")
-                
-            # 在成功解析到邀请数量时，会覆盖上面的reason，保持当前逻辑
         
         # 优先查找带有border属性的表格，这通常是用户列表表格
         invitee_tables = soup.select('table[border="1"]')
