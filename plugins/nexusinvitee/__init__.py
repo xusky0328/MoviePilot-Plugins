@@ -344,7 +344,7 @@ class nexusinvitee(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png"
     # 插件版本
-    plugin_version = "1.2.0"
+    plugin_version = "1.2.1"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -384,7 +384,10 @@ class nexusinvitee(_PluginBase):
     def init_plugin(self, config=None):
         """
         插件初始化
-        """        
+        """
+        # 动态重载模块
+        self.__reload_modules()
+        
         self.sites = SitesHelper()
         self.siteoper = SiteOper()
         self.presc = Prescription()
@@ -447,7 +450,7 @@ class nexusinvitee(_PluginBase):
             try:
                 # 定时服务
                 self._scheduler = BackgroundScheduler(timezone=settings.TZ)
-                logger.info("立即运行一次开关已开启，将在3秒后执行刷新")
+                logger.debug("立即运行一次开关已开启，将在3秒后执行刷新")
                 self._scheduler.add_job(func=self.refresh_all_sites, trigger='date',
                                       run_date=datetime.now(pytz.timezone(settings.TZ)) + timedelta(seconds=3),
                                       name="后宫管理系统")
@@ -463,6 +466,50 @@ class nexusinvitee(_PluginBase):
                     self._scheduler.start()
             except Exception as e:
                 logger.error(f"启动一次性任务失败: {str(e)}")
+
+    def __reload_modules(self):
+        """
+        动态重载所有模块，确保更新时能加载最新代码
+        """
+        try:
+            import sys
+            import importlib
+            
+            # 记录开始重载
+            logger.debug("后宫管理系统开始动态重载模块...")
+            
+            # 1. 清理模块缓存 - 从sys.modules中删除相关模块
+            modules_to_reload = []
+            for module_name in list(sys.modules.keys()):
+                if module_name.startswith('plugins.nexusinvitee.') and module_name != 'plugins.nexusinvitee':
+                    modules_to_reload.append(module_name)
+                    # 从sys.modules中删除模块以强制重新导入
+                    del sys.modules[module_name]
+                    logger.info(f"从缓存中移除模块: {module_name}")
+            
+            # 2. 重新导入核心模块
+            logger.debug("重新导入核心模块...")
+            importlib.import_module('plugins.nexusinvitee.data')
+            importlib.import_module('plugins.nexusinvitee.utils')
+            importlib.import_module('plugins.nexusinvitee.module_loader')
+            
+            # 3. 更新全局引用以确保使用的是最新版本
+            logger.debug("更新全局模块引用...")
+            global DataManager, NotificationHelper, ModuleLoader
+            try:
+                from plugins.nexusinvitee.data import DataManager
+                from plugins.nexusinvitee.utils import NotificationHelper
+                from plugins.nexusinvitee.module_loader import ModuleLoader
+                logger.debug("核心模块引用更新成功")
+            except Exception as e:
+                logger.error(f"更新核心模块引用失败: {str(e)}")
+            
+            # 记录完成信息
+            logger.info(f"后宫管理系统成功重载 {len(modules_to_reload)} 个模块")
+        except Exception as e:
+            logger.error(f"动态重载模块失败: {str(e)}")
+            import traceback
+            logger.error(f"错误详情: {traceback.format_exc()}")
 
     def __update_config(self):
         """
@@ -2304,7 +2351,7 @@ class nexusinvitee(_PluginBase):
                                                     "variant": "text",
                                                     "density": "compact",
                                                     "color": "primary",
-                                                    "href": site_url_lower + "/mybonus",
+                                                    "href": site_url_lower + "mybonus",
                                                     "target": "_blank",
                                                     "size": "small"
                                                 },
@@ -2543,7 +2590,7 @@ class nexusinvitee(_PluginBase):
                                                     "variant": "text",
                                                     "density": "compact",
                                                     "color": "primary",
-                                                    "href": site_url_lower + "/mybonus.php",
+                                                    "href": site_url_lower + "mybonus.php",
                                                     "target": "_blank",
                                                     "size": "small"
                                                 },
@@ -3513,8 +3560,6 @@ class nexusinvitee(_PluginBase):
             # 记录刷新开始 - 说明是增量更新模式
             logger.info("开始增量刷新站点数据，只更新选择的站点，失败时保留旧数据")
             
-
-            
             # 重新加载站点处理器
             self._site_handlers = ModuleLoader.load_site_handlers()
             logger.info(f"加载了 {len(self._site_handlers)} 个站点处理器")
@@ -3542,7 +3587,7 @@ class nexusinvitee(_PluginBase):
                         logger.debug(f"匹配到站点: {site.get('name')} (ID: {site_id})")
             
             if selected_sites:
-                logger.info(f"将刷新 {len(selected_sites)} 个站点的数据: {', '.join([site.get('name', '') for site in selected_sites])}")
+                logger.debug(f"将刷新 {len(selected_sites)} 个站点的数据: {', '.join([site.get('name', '') for site in selected_sites])}")
             else:
                 logger.warning("没有发现可供刷新的站点，请检查站点选择配置")
                 logger.debug(f"所有站点ID: {[site.get('id') for site in all_sites]}")
@@ -3561,16 +3606,51 @@ class nexusinvitee(_PluginBase):
             for site in selected_sites:
                 site_name = site.get("name", "")
                 
-                logger.info(f"开始获取站点 {site_name} 的后宫数据...")
+                logger.debug(f"开始获取站点 {site_name} 的后宫数据...")
                 
                 site_data = self._get_site_invite_data(site_name)
+                
+                # --- 修改开始: 增强失败判断逻辑 ---
+                is_successful = True
+                error_msg = ""
+                
                 if "error" in site_data:
+                    # 情况1: _get_site_invite_data 内部捕获到异常
+                    is_successful = False
                     error_msg = site_data.get('error', '未知错误')
+                else:
+                    # 情况2: 检查 parse_invite_page 返回的 reason 是否表明失败
+                    invite_status = site_data.get("invite_status", {})
+                    reason = invite_status.get("reason", "")
+                    
+                    # 定义表明失败的关键字或模式 (即使没有异常)
+                    # 使用 r 前缀确保是原始字符串，避免反斜杠转义问题
+                    failure_indicators = [
+                        r"访问邀请页面失败",
+                        r"无法获取用户ID",
+                        r"未登录或Cookie已失效",
+                        r"初始化失败",
+                        r"网络错误",
+                        r"发生错误",
+                        r"解析站点.*时发生意外错误",
+                        r"站点信息不完整", # 加入对站点信息不完整的检查
+                    ]
+                    
+                    # 使用正则表达式匹配，因为 "解析站点..." 包含变量
+                    if reason and any(re.search(indicator, reason, re.IGNORECASE) for indicator in failure_indicators):
+                        is_successful = False
+                        error_msg = reason # 使用 handler 返回的具体原因作为错误消息
+                        
+                # --- 修改结束 ---
+                        
+                if not is_successful:
+                    if not error_msg: # 确保总有一个错误消息
+                        error_msg = "未知原因导致刷新失败"
                     logger.error(f"站点 {site_name} 数据刷新失败: {error_msg}")
                     error_count += 1
-                    error_details.append({"site_name":site_name,"msg":error_msg});
+                    error_details.append({"site_name": site_name, "msg": error_msg})
                     
-                    # 检查是否有旧数据
+                    # 保留旧数据逻辑 (保持不变)
                     old_data = existing_data.get(site_name, {}).get("data", {})
                     if old_data:
                         old_invitees = old_data.get("invitees", [])
@@ -3581,20 +3661,30 @@ class nexusinvitee(_PluginBase):
                     else:
                         logger.info(f"站点 {site_name} 无旧数据可保留")
                 else:
-                    # 输出关键数据，帮助调试
+                    # 成功逻辑 (保持不变)
                     invite_status = site_data.get("invite_status", {})
                     invitees = site_data.get("invitees", [])
                     perm_count = invite_status.get("permanent_count", 0)
                     temp_count = invite_status.get("temporary_count", 0)
+                    can_invite = invite_status.get("can_invite", False)
+                    reason = invite_status.get("reason", "")
+                    
                     logger.info(f"站点 {site_name} 数据刷新成功，已邀请 {len(invitees)} 人，永久邀请 {perm_count} 个，临时邀请 {temp_count} 个")
                     
-                    # 保存站点数据
+                    # 在成功时也记录一下原因（例如 可购买邀请、具体原因）
+                    if reason:
+                        if can_invite:
+                            logger.info(f"站点 {site_name} 可邀请原因: {reason}")
+                        else:
+                            logger.info(f"站点 {site_name} 不可邀请原因: {reason}")
+
+                    # 保存站点数据 (保持不变)
                     self.data_manager.update_site_data(site_name, site_data)
                     success_count += 1
             
             # 发送通知
             if self._notify:
-                self._send_refresh_notification(success_count, error_count,error_details)
+                self._send_refresh_notification(success_count, error_count, error_details)
             
             logger.info(f"增量刷新完成: 成功 {success_count} 个站点, 失败 {error_count} 个站点")
             
@@ -3655,15 +3745,20 @@ class nexusinvitee(_PluginBase):
             
             title = "后宫管理系统 - 增量刷新结果"
             if success_count > 0 or error_count > 0:
-                text = f"增量刷新完成: 成功 {success_count} 个站点，失败 {error_count} 个站点\n"
+                # --- 修改开始: 添加图标美化通知文本 ---
+                text = f"刷新完成: ✅ 成功 {success_count} 个，❌ 失败 {error_count} 个站点\n"
                 if error_details is not None and len(error_details) > 0:
-                    for i,item in enumerate(error_details):
-                        text += f" - 失败站点{i+1}[{item['site_name']}]:{item['msg']}\n"
+                    text += "\n🔻失败详情🔻:\n"
+                    for item in error_details:
+                        # 使用 🔻 标记失败项
+                        text += f"🔻 [{item['site_name']}]: {item['msg']}\n"
                     text += "\n"
+                # 保持原有统计信息的图标
                 text += f"👨‍👩‍👧‍👦 总邀请人数: {total_invitees}人\n"
                 text += f"⚠️ 分享率低于1.0: {total_low_ratio}人\n"
                 text += f"🚫 已禁用用户: {total_banned}人\n"
                 text += f"🔄 无数据用户: {total_no_data}人\n\n"
+                # --- 修改结束 ---
                 
                 # 添加刷新时间
                 text += f"🕙 {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
@@ -3749,7 +3844,7 @@ class nexusinvitee(_PluginBase):
                         self.stop_service()  # 先停止已有服务
                     
                     self._scheduler = BackgroundScheduler(timezone=settings.TZ)
-                    logger.info("立即运行一次开关被打开，将在3秒后执行刷新")
+                    logger.debug("立即运行一次开关被打开，将在3秒后执行刷新")
                     self._scheduler.add_job(func=self.refresh_all_sites, trigger='date',
                                           run_date=datetime.now(pytz.timezone(settings.TZ)) + timedelta(seconds=3),
                                           name="后宫管理系统")

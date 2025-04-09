@@ -231,14 +231,14 @@ class ButterflyHandler(_ISiteHandler):
                         invite_result["invite_status"]["can_invite"] = send_page_result["invite_status"]["can_invite"]
                         invite_result["invite_status"]["reason"] = send_page_result["invite_status"]["reason"]
                     
-                    logger.info(f"站点 {site_name} 从发送页面更新了邀请状态: {invite_result['invite_status']['reason']}")
+                    logger.debug(f"站点 {site_name} 从发送页面更新了邀请状态: {invite_result['invite_status']['reason']}")
                 
             except Exception as e:
                 logger.warning(f"站点 {site_name} 访问发送邀请页面失败: {str(e)}")
             
             # 如果成功解析到后宫成员，记录总数
             if invite_result["invitees"]:
-                logger.info(f"站点 {site_name} 共解析到 {len(invite_result['invitees'])} 个后宫成员")
+                logger.debug(f"站点 {site_name} 共解析到 {len(invite_result['invitees'])} 个后宫成员")
             
             return invite_result
             
@@ -285,7 +285,7 @@ class ButterflyHandler(_ISiteHandler):
             info_block = soup.select_one('#info_block')
             if info_block:
                 info_text = info_block.get_text()
-                logger.info(f"站点 {site_name} 获取到info_block信息")
+                logger.debug(f"站点 {site_name} 获取到info_block信息")
                 
                 # 识别邀请数量 - 查找邀请链接并获取数量
                 invite_link = info_block.select_one('a[href*="invite.php"]')
@@ -309,7 +309,7 @@ class ButterflyHandler(_ISiteHandler):
                         if len(invite_match.groups()) > 1 and invite_match.group(2):
                             result["invite_status"]["temporary_count"] = int(invite_match.group(2))
                         
-                        logger.info(f"站点 {site_name} 解析到邀请数量: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}")
+                        logger.debug(f"站点 {site_name} 解析到邀请数量: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}")
                         
                         # 如果有邀请名额，初步判断为可邀请
                         if result["invite_status"]["permanent_count"] > 0 or result["invite_status"]["temporary_count"] > 0:
@@ -340,7 +340,7 @@ class ButterflyHandler(_ISiteHandler):
                                 if len(after_match.groups()) > 1 and after_match.group(2):
                                     result["invite_status"]["temporary_count"] = int(after_match.group(2))
                                 
-                                logger.info(f"站点 {site_name} 从后续文本解析到邀请数量: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}")
+                                logger.debug(f"站点 {site_name} 从后续文本解析到邀请数量: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}")
                                 
                                 # 如果有邀请名额，初步判断为可邀请
                                 if result["invite_status"]["permanent_count"] > 0 or result["invite_status"]["temporary_count"] > 0:
@@ -353,7 +353,7 @@ class ButterflyHandler(_ISiteHandler):
                 disabled_text = form_disabled.get('value', '')
                 result["invite_status"]["can_invite"] = False
                 result["invite_status"]["reason"] = disabled_text
-                logger.info(f"站点 {site_name} 邀请按钮被禁用: {disabled_text}")
+                logger.debug(f"站点 {site_name} 邀请按钮被禁用: {disabled_text}")
             
             # 检查"对不起"消息 - 处理"邀请数量不足"等情况
             sorry_title = soup.find('h2', text=lambda t: t and ('對不起' in t or '对不起' in t or 'Sorry' in t))
@@ -369,19 +369,19 @@ class ButterflyHandler(_ISiteHandler):
                 
                 if text_td:
                     error_text = text_td.get_text(strip=True)
-                    logger.info(f"站点 {site_name} 发现对不起消息: {error_text}")
+                    logger.debug(f"站点 {site_name} 发现对不起消息: {error_text}")
                     
                     # 特殊处理：邀请数量不足 - 使用繁体字匹配
                     if '邀請數量不足' in error_text:
                         result["invite_status"]["can_invite"] = True
                         # 保留原始错误消息文本，不要翻译
                         result["invite_status"]["reason"] = error_text
-                        logger.info(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足")
+                        logger.debug(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足")
                     else:
                         # 其他限制情况
                         result["invite_status"]["can_invite"] = False
                         result["invite_status"]["reason"] = error_text
-                        logger.info(f"站点 {site_name} 不可发送邀请，原因: {error_text}")
+                        logger.debug(f"站点 {site_name} 不可发送邀请，原因: {error_text}")
                     
             # 检查是否是发送邀请页面 - 如果能找到takeinvite.php表单，说明可以发送邀请
             invite_form = soup.select_one('form[action*="takeinvite.php"]')
@@ -392,7 +392,7 @@ class ButterflyHandler(_ISiteHandler):
                     result["invite_status"]["can_invite"] = True
                     if not result["invite_status"]["reason"]:
                         result["invite_status"]["reason"] = "可以发送邀请"
-                    logger.info(f"站点 {site_name} 可以发送邀请，确认有takeinvite表单")
+                    logger.debug(f"站点 {site_name} 可以发送邀请，确认有takeinvite表单")
         
         # 特殊处理发送邀请页面
         if is_send_page:
@@ -417,19 +417,19 @@ class ButterflyHandler(_ISiteHandler):
                 
                 if text_cell:
                     error_msg = text_cell.get_text(strip=True)
-                    logger.info(f"站点 {site_name} 发送页面发现对不起消息: {error_msg}")
+                    logger.debug(f"站点 {site_name} 发送页面发现对不起消息: {error_msg}")
                     
                     # 特殊处理：邀请数量不足情况 - 使用繁体字匹配
                     if '邀請數量不足' in error_msg:
                         result["invite_status"]["can_invite"] = True
                         # 保留原始错误消息
                         result["invite_status"]["reason"] = error_msg
-                        logger.info(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足")
+                        logger.debug(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足")
                     else:
                         # 其他限制情况
                         result["invite_status"]["can_invite"] = False
                         result["invite_status"]["reason"] = error_msg
-                        logger.info(f"站点 {site_name} 不可发送邀请，原因: {error_msg}")
+                        logger.debug(f"站点 {site_name} 不可发送邀请，原因: {error_msg}")
                     break
             
             # 如果没有对不起消息，检查是否有表单
@@ -438,13 +438,13 @@ class ButterflyHandler(_ISiteHandler):
                 if invite_form:
                     result["invite_status"]["can_invite"] = True
                     result["invite_status"]["reason"] = "可以发送邀请"
-                    logger.info(f"站点 {site_name} 发送页面可以发送邀请")
+                    logger.debug(f"站点 {site_name} 发送页面可以发送邀请")
                 else:
                     # 如果既没有对不起消息也没有表单，可能是其他限制
                     if not result["invite_status"]["reason"]:
                         result["invite_status"]["can_invite"] = False
                         result["invite_status"]["reason"] = "无法发送邀请，请查看页面了解原因"
-                        logger.info(f"站点 {site_name} 发送页面无法找到表单或错误消息")
+                        logger.debug(f"站点 {site_name} 发送页面无法找到表单或错误消息")
         
         # 蝶粉站点特殊处理
         # 直接查找border="1"的表格，这通常是用户列表表格
@@ -461,9 +461,9 @@ class ButterflyHandler(_ISiteHandler):
                 headers = [cell.get_text(strip=True).lower() for cell in header_cells]
                 
                 if is_next_page:
-                    logger.info(f"站点 {site_name} 翻页中找到用户表格，表头: {headers}")
+                    logger.debug(f"站点 {site_name} 翻页中找到用户表格，表头: {headers}")
                 else:
-                    logger.info(f"站点 {site_name} 首页找到用户表格，表头: {headers}")
+                    logger.debug(f"站点 {site_name} 首页找到用户表格，表头: {headers}")
                 
                 # 找到所有数据行（跳过表头行）
                 data_rows = table.select('tr.rowfollow')
@@ -682,9 +682,9 @@ class ButterflyHandler(_ISiteHandler):
                 # 记录解析结果
                 if result["invitees"]:
                     if is_next_page:
-                        logger.info(f"站点 {site_name} 从翻页中解析到 {len(result['invitees'])} 个后宫成员")
+                        logger.debug(f"站点 {site_name} 从翻页中解析到 {len(result['invitees'])} 个后宫成员")
                     else:
-                        logger.info(f"站点 {site_name} 从首页解析到 {len(result['invitees'])} 个后宫成员")
+                        logger.debug(f"站点 {site_name} 从首页解析到 {len(result['invitees'])} 个后宫成员")
 
         return result
 
@@ -727,7 +727,7 @@ class ButterflyHandler(_ISiteHandler):
                     bonus_str = bonus_match.group(1).replace(',', '')
                     try:
                         result["bonus"] = float(bonus_str)
-                        logger.info(f"站点 {site_name} 魔力值: {result['bonus']}")
+                        logger.debug(f"站点 {site_name} 魔力值: {result['bonus']}")
                         break
                     except ValueError:
                         continue
@@ -785,10 +785,10 @@ class ButterflyHandler(_ISiteHandler):
                                         # 判断是永久邀请还是临时邀请
                                         if '临时' in row_text or '臨時' in row_text or 'temporary' in row_text:
                                             result["temporary_invite_price"] = price
-                                            logger.info(f"站点 {site_name} 临时邀请价格: {price}")
+                                            logger.debug(f"站点 {site_name} 临时邀请价格: {price}")
                                         else:
                                             result["permanent_invite_price"] = price
-                                            logger.info(f"站点 {site_name} 永久邀请价格: {price}")
+                                            logger.debug(f"站点 {site_name} 永久邀请价格: {price}")
                                 except ValueError:
                                     continue
             

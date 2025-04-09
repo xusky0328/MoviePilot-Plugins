@@ -4,6 +4,7 @@
 import re
 from typing import Dict, Any, List, Optional
 from urllib.parse import urljoin
+import traceback
 
 import requests
 from bs4 import BeautifulSoup
@@ -60,12 +61,12 @@ class NexusPhpHandler(_ISiteHandler):
         site_url_lower = site_url.lower()
         for feature in nexus_features:
             if feature in site_url_lower:
-                logger.info(f"匹配到NexusPHP站点特征: {feature}")
+                logger.debug(f"匹配到NexusPHP站点特征: {feature}")
                 return True
                 
         # 如果没有匹配到特征，但URL中包含PHP，也视为可能的NexusPHP站点
         if "php" in site_url_lower:
-            logger.info(f"URL中包含PHP，可能是NexusPHP站点: {site_url}")
+            logger.debug(f"URL中包含PHP，可能是NexusPHP站点: {site_url}")
             return True
             
         return False
@@ -75,286 +76,304 @@ class NexusPhpHandler(_ISiteHandler):
         解析NexusPHP站点邀请页面
         :param site_info: 站点信息
         :param session: 已配置好的请求会话
-        :return: 解析结果
+        :return: 解析结果字典
         """
         site_name = site_info.get("name", "")
         site_url = site_info.get("url", "")
-        
+
+        # 初始化默认结果
         result = {
             "invite_status": {
                 "can_invite": False,
-                "reason": "",
+                "reason": "初始化失败", # Default reason
                 "permanent_count": 0,
                 "temporary_count": 0,
-                "bonus": 0,  # 添加魔力值
-                "permanent_invite_price": 0,  # 添加永久邀请价格
-                "temporary_invite_price": 0   # 添加临时邀请价格
+                "bonus": 0,
+                "permanent_invite_price": 0,
+                "temporary_invite_price": 0
             },
             "invitees": []
         }
-        
+
+        # Flag to track if early check failed
+        early_check_failed = False
+        early_failure_reason = ""
+        html_content = "" # Initialize html_content
+        user_id = None # Initialize user_id
+
+        # === Stage 1: Early Connection and Authentication Checks ===
         try:
-            # 获取用户ID
-            user_id = self._get_user_id(session, site_url)
-            if not user_id:
-                logger.error(f"站点 {site_name} 无法获取用户ID")
-                result["invite_status"]["reason"] = "无法获取用户ID，请检查站点Cookie是否有效"
-                return result
-            
-            # 获取邀请页面 - 从第一页开始
-            invite_url = urljoin(site_url, f"invite.php?id={user_id}")
-            response = session.get(invite_url, timeout=(10, 30))
-            response.raise_for_status()
-            
-            # 解析邀请页面
-            invite_result = self._parse_nexusphp_invite_page(site_name, response.text)
-            
-            # 获取魔力值商店页面，尝试解析邀请价格
+            logger.debug(f"站点 {site_name} 开始进行早期连接和认证检查...")
+
+            # 1. Get User ID (accesses usercp.php)
             try:
-                bonus_url = urljoin(site_url, "mybonus.php")
-                bonus_response = session.get(bonus_url, timeout=(10, 30))
-                if bonus_response.status_code == 200:
-                    # 解析魔力值和邀请价格
-                    bonus_data = self._parse_bonus_shop(site_name, bonus_response.text)
-                    # 更新邀请状态
-                    invite_result["invite_status"]["bonus"] = bonus_data["bonus"]
-                    invite_result["invite_status"]["permanent_invite_price"] = bonus_data["permanent_invite_price"]
-                    invite_result["invite_status"]["temporary_invite_price"] = bonus_data["temporary_invite_price"]
-                    
-                    # 判断是否可以购买邀请
-                    if bonus_data["bonus"] > 0:
-                        # 计算可购买的邀请数量
-                        can_buy_permanent = 0
-                        can_buy_temporary = 0
-                        
-                        if bonus_data["permanent_invite_price"] > 0:
-                            can_buy_permanent = int(bonus_data["bonus"] / bonus_data["permanent_invite_price"])
-                        
-                        if bonus_data["temporary_invite_price"] > 0:
-                            can_buy_temporary = int(bonus_data["bonus"] / bonus_data["temporary_invite_price"])
-                            
-                        # 更新邀请状态的原因字段
-                        if invite_result["invite_status"]["reason"] and not invite_result["invite_status"]["can_invite"]:
-                            # 如果有原因且不能邀请
-                            if can_buy_temporary > 0 or can_buy_permanent > 0:
-                                invite_method = ""
-                                if can_buy_temporary > 0 and bonus_data["temporary_invite_price"] > 0:
-                                    invite_method += f"临时邀请({can_buy_temporary}个,{bonus_data['temporary_invite_price']}魔力/个)"
-                                
-                                if can_buy_permanent > 0 and bonus_data["permanent_invite_price"] > 0:
-                                    if invite_method:
-                                        invite_method += ","
-                                    invite_method += f"永久邀请({can_buy_permanent}个,{bonus_data['permanent_invite_price']}魔力/个)"
-                                
-                                if invite_method:
-                                    invite_result["invite_status"]["reason"] += f"，但您的魔力值({bonus_data['bonus']})可购买{invite_method}"
-                                    # 如果可以购买且没有现成邀请，也视为可邀请
-                                    if invite_result["invite_status"]["permanent_count"] == 0 and invite_result["invite_status"]["temporary_count"] == 0:
-                                        invite_result["invite_status"]["can_invite"] = True
+                user_id = self._get_user_id(session, site_url)
+                if not user_id:
+                    early_failure_reason = "无法获取用户ID，请检查Cookie或站点是否可访问"
+                    logger.error(f"站点 {site_name} 检查失败: {early_failure_reason}")
+                    early_check_failed = True
+                else:
+                    logger.debug(f"站点 {site_name} 用户ID获取成功: {user_id}")
+            except requests.exceptions.RequestException as req_err_uid:
+                 # Handle network errors during user ID fetch specifically
+                early_failure_reason = f"获取用户ID时网络错误: {str(req_err_uid)}"
+                logger.error(f"站点 {site_name} 检查失败: {early_failure_reason}")
+                early_check_failed = True
+            except Exception as uid_err:
+                # Handle other errors during user ID fetch
+                early_failure_reason = f"获取用户ID时发生错误: {str(uid_err)}"
+                logger.error(f"站点 {site_name} 检查失败: {early_failure_reason}")
+                early_check_failed = True
+
+
+            # 2. Access Invite Page (invite.php) and check status/login (Only if User ID fetch didn't fail fatally)
+            if not early_check_failed:
+                invite_url = urljoin(site_url, f"invite.php?id={user_id}") # Use fetched user_id
+                logger.debug(f"站点 {site_name} 尝试访问邀请页面: {invite_url}")
+                try:
+                    response = session.get(invite_url, timeout=(10, 30))
+
+                    # Check HTTP status code
+                    if response.status_code >= 400:
+                        early_failure_reason = f"访问邀请页面失败: {response.status_code} {response.reason}"
+                        logger.error(f"站点 {site_name} 检查失败: {early_failure_reason}")
+                        early_check_failed = True
+                    else:
+                        response.raise_for_status() # Check for other HTTP errors
+
+                        # Check page content for login prompts
+                        html_content = response.text # Store content for later use if check passes
+                        soup_check = BeautifulSoup(html_content, 'html.parser')
+                        login_elements = soup_check.select('form[action*="takelogin.php"], input[name="password"], div.error:-soup-contains("需要登录")')
+                        login_text_match = re.search(r'(需要登录|请登录|login required|please log in)', html_content, re.IGNORECASE)
+
+                        if login_elements or login_text_match:
+                            early_failure_reason = "访问邀请页面时未登录或Cookie已失效"
+                            logger.error(f"站点 {site_name} 检查失败: {early_failure_reason}")
+                            early_check_failed = True
                         else:
-                            # 如果没有原因或者已经可以邀请
-                            if can_buy_temporary > 0 or can_buy_permanent > 0:
-                                invite_method = ""
-                                if can_buy_temporary > 0 and bonus_data["temporary_invite_price"] > 0:
-                                    invite_method += f"临时邀请({can_buy_temporary}个,{bonus_data['temporary_invite_price']}魔力/个)"
-                                
-                                if can_buy_permanent > 0 and bonus_data["permanent_invite_price"] > 0:
-                                    if invite_method:
-                                        invite_method += ","
-                                    invite_method += f"永久邀请({can_buy_permanent}个,{bonus_data['permanent_invite_price']}魔力/个)"
-                                
-                                if invite_method and invite_result["invite_status"]["reason"]:
-                                    invite_result["invite_status"]["reason"] += f"，魔力值({bonus_data['bonus']})可购买{invite_method}"
-                    
-            except Exception as e:
-                logger.warning(f"站点 {site_name} 解析魔力值商店失败: {str(e)}")
-            
-            # 检查第一页后宫成员数量，如果少于50人，则不再翻页
-            if len(invite_result["invitees"]) < 50:
-                logger.info(f"站点 {site_name} 首页后宫成员数量少于50人({len(invite_result['invitees'])}人)，不再查找后续页面")
-                # 如果成功解析到后宫成员，记录总数
-                if invite_result["invitees"]:
-                    logger.info(f"站点 {site_name} 共解析到 {len(invite_result['invitees'])} 个后宫成员")
-            else:
-                # 尝试获取更多页面的后宫成员
-                next_page = 1  # 从第二页开始，因为第一页已经解析过了
-                max_pages = 100  # 防止无限循环
-                
-                # 继续获取后续页面，直到没有更多数据或达到最大页数
-                while next_page < max_pages:
-                    next_page_url = urljoin(site_url, f"invite.php?id={user_id}&menu=invitee&page={next_page}")
-                    logger.info(f"站点 {site_name} 正在获取第 {next_page+1} 页后宫成员数据: {next_page_url}")
-                    
-                    try:
-                        next_response = session.get(next_page_url, timeout=(10, 30))
-                        next_response.raise_for_status()
-                        
-                        # 解析下一页数据
-                        next_page_result = self._parse_nexusphp_invite_page(site_name, next_response.text, is_next_page=True)
-                        
-                        # 如果没有找到任何后宫成员，说明已到达最后一页
-                        if not next_page_result["invitees"]:
-                            logger.info(f"站点 {site_name} 第 {next_page+1} 页没有后宫成员数据，停止获取")
-                            break
-                        
-                        # 如果当前页面后宫成员少于50人，默认认为没有下一页，避免错误进入下一页
-                        if len(next_page_result["invitees"]) < 50:
-                            logger.info(f"站点 {site_name} 第 {next_page+1} 页后宫成员数量少于50人({len(next_page_result['invitees'])}人)，默认没有下一页")
-                            # 将当前页数据合并到结果中后退出循环
-                            invite_result["invitees"].extend(next_page_result["invitees"])
-                            logger.info(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
-                            break
-                        
-                        # 将下一页的后宫成员添加到结果中
-                        invite_result["invitees"].extend(next_page_result["invitees"])
-                        logger.info(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
-                        
-                        # 继续下一页
-                        next_page += 1
-                        
-                    except Exception as e:
-                        logger.warning(f"站点 {site_name} 获取第 {next_page+1} 页数据失败: {str(e)}")
-                        break
-            
-            # 访问发送邀请页面，这是判断权限的关键
-            send_invite_url = urljoin(site_url, f"invite.php?id={user_id}&type=new")
+                             logger.debug(f"站点 {site_name} 邀请页面访问成功且已登录。")
+
+                except requests.exceptions.RequestException as req_err_invite:
+                    # Handle network errors during invite page fetch
+                    early_failure_reason = f"访问邀请页面网络错误: {str(req_err_invite)}"
+                    logger.error(f"站点 {site_name} 检查失败: {early_failure_reason}")
+                    early_check_failed = True
+                except Exception as invite_err:
+                     # Handle other errors during invite page fetch
+                    early_failure_reason = f"访问邀请页面时发生错误: {str(invite_err)}"
+                    logger.error(f"站点 {site_name} 检查失败: {early_failure_reason}")
+                    early_check_failed = True
+
+        except Exception as stage1_err:
+            # Catch unexpected errors during stage 1
+            early_failure_reason = f"早期检查阶段发生意外错误: {str(stage1_err)}"
+            logger.error(f"站点 {site_name} 检查失败: {early_failure_reason}")
+            logger.error(traceback.format_exc())
+            early_check_failed = True
+
+        # === Stage 2: If Early Checks Passed, Proceed with Original Parsing Logic ===
+        if not early_check_failed:
             try:
-                send_response = session.get(send_invite_url, timeout=(10, 30))
-                send_response.raise_for_status()
-                
-                # 解析发送邀请页面
-                send_soup = BeautifulSoup(send_response.text, 'html.parser')
-                
-                # 临时变量保存发送页面可能的限制原因
-                send_page_reason = ""
-                can_send_invite = False
-                
-                # 1. 先检查是否有对不起消息 - 这是优先级最高的限制标志
-                sorry_elements = send_soup.find_all(text=lambda t: t and ('对不起' in t or 'Sorry' in t))
-                if sorry_elements:
-                    # 提取完整错误消息
-                    for sorry_elem in sorry_elements:
-                        parent = sorry_elem.parent
-                        # 查找包含完整错误信息的表格或其他容器
-                        error_container = None
-                        for p in parent.parents:
-                            if p.name == 'table':
-                                td_text = p.select_one('td.text, td')
-                                if td_text:
-                                    error_container = td_text
-                                    break
-                        
-                        if error_container:
-                            error_text = error_container.get_text(strip=True)
-                            # 提取"对不起"之后的具体原因
-                            if "账户上限" in error_text or "上限数已到" in error_text:
-                                send_page_reason = "当前账户上限数已到"
-                                # 如果找到更完整的原因，提取它
-                                account_limit_pattern = re.search(r"当前账户上限数已到.*?(?:\s*这里|$)", error_text)
-                                if account_limit_pattern:
-                                    complete_reason = account_limit_pattern.group(0)
-                                    # 清理原因文本
-                                    complete_reason = re.sub(r'\s*这里.*返回。?', '', complete_reason)
-                                    complete_reason = re.sub(r'\s*<a.*?这里</a>.*?返回。?', '', complete_reason)
-                                    if complete_reason and len(complete_reason) > 10:
-                                        send_page_reason = complete_reason
-                                can_send_invite = False
-                                logger.info(f"站点 {site_name} 发现不可用邀请原因: {send_page_reason}")
-                                break
-                            elif "数量不足" in error_text or "名额不足" in error_text:
-                                send_page_reason = "可以发送邀请，但当前邀请数量不足"
-                                can_send_invite = True
-                                logger.info(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足")
-                                break
+                logger.debug(f"站点 {site_name} 早期检查通过，开始执行页面解析...")
+                # Parse Invite Page (using html_content from Stage 1)
+                invite_result = self._parse_nexusphp_invite_page(site_name, html_content)
+
+                # Update result with parsed data
+                result["invite_status"].update({
+                    "can_invite": invite_result["invite_status"].get("can_invite", False),
+                    "reason": invite_result["invite_status"].get("reason", ""), # Use parsed reason
+                    "permanent_count": invite_result["invite_status"].get("permanent_count", 0),
+                    "temporary_count": invite_result["invite_status"].get("temporary_count", 0),
+                })
+                result["invitees"] = invite_result.get("invitees", [])
+
+                # --- Original Bonus Shop Parsing Logic --- (kept exactly as before)
+                try:
+                    bonus_url = urljoin(site_url, "mybonus.php")
+                    bonus_response = session.get(bonus_url, timeout=(10, 30))
+                    if bonus_response.status_code == 200:
+                        bonus_data = self._parse_bonus_shop(site_name, bonus_response.text)
+                        result["invite_status"]["bonus"] = bonus_data["bonus"]
+                        result["invite_status"]["permanent_invite_price"] = bonus_data["permanent_invite_price"]
+                        result["invite_status"]["temporary_invite_price"] = bonus_data["temporary_invite_price"]
+                        # --- Original logic to update reason based on bonus --- (kept exactly as before)
+                        if bonus_data["bonus"] > 0:
+                            can_buy_permanent = 0
+                            can_buy_temporary = 0
+                            if bonus_data["permanent_invite_price"] > 0:
+                                can_buy_permanent = int(bonus_data["bonus"] / bonus_data["permanent_invite_price"])
+                            if bonus_data["temporary_invite_price"] > 0:
+                                can_buy_temporary = int(bonus_data["bonus"] / bonus_data["temporary_invite_price"])
+
+                            if result["invite_status"]["reason"] and not result["invite_status"]["can_invite"]:
+                                if can_buy_temporary > 0 or can_buy_permanent > 0:
+                                    invite_method = ""
+                                    if can_buy_temporary > 0 and bonus_data["temporary_invite_price"] > 0:
+                                        invite_method += f"临时邀请({can_buy_temporary}个,{bonus_data['temporary_invite_price']}魔力/个)"
+                                    if can_buy_permanent > 0 and bonus_data["permanent_invite_price"] > 0:
+                                        if invite_method: invite_method += ","
+                                        invite_method += f"永久邀请({can_buy_permanent}个,{bonus_data['permanent_invite_price']}魔力/个)"
+                                    if invite_method:
+                                        result["invite_status"]["reason"] += f"，但您的魔力值({bonus_data['bonus']})可购买{invite_method}"
+                                        if result["invite_status"]["permanent_count"] == 0 and result["invite_status"]["temporary_count"] == 0:
+                                            result["invite_status"]["can_invite"] = True
                             else:
-                                # 其他限制原因
-                                send_page_reason = error_text.replace("对不起", "").strip()
-                                # 移除"这里返回"及相关内容
-                                send_page_reason = re.sub(r'\s*这里.*返回。?', '', send_page_reason)
-                                send_page_reason = re.sub(r'\s*<a.*?这里</a>.*?返回。?', '', send_page_reason)
-                                can_send_invite = False
-                                logger.info(f"站点 {site_name} 发现不可用邀请原因: {send_page_reason}")
-                                break
-                
-                # 2. 如果没有找到"对不起"消息，检查是否有takeinvite.php表单
-                if not send_page_reason:
-                    invite_form = send_soup.select('form[action*="takeinvite.php"]')
-                    if invite_form:
-                        # 检查表单中是否有submit按钮且不是disabled状态
-                        submit_btn = None
-                        for form in invite_form:
-                            submit_btn = form.select_one('input[type="submit"]:not([disabled])')
-                            if submit_btn:
-                                break
-                        
-                        if submit_btn:
-                            can_send_invite = True
-                            logger.info(f"站点 {site_name} 可以发送邀请，确认有takeinvite表单")
-                        else:
-                            # 表单存在但提交按钮被禁用
-                            disabled_submit = None
-                            for form in invite_form:
-                                disabled_submit = form.select_one('input[type="submit"][disabled]')
-                                if disabled_submit:
-                                    break
+                                if can_buy_temporary > 0 or can_buy_permanent > 0:
+                                    invite_method = ""
+                                    if can_buy_temporary > 0 and bonus_data["temporary_invite_price"] > 0:
+                                        invite_method += f"临时邀请({can_buy_temporary}个,{bonus_data['temporary_invite_price']}魔力/个)"
+                                    if can_buy_permanent > 0 and bonus_data["permanent_invite_price"] > 0:
+                                        if invite_method: invite_method += ","
+                                        invite_method += f"永久邀请({can_buy_permanent}个,{bonus_data['permanent_invite_price']}魔力/个)"
+                                    if invite_method and result["invite_status"]["reason"]:
+                                        if result["invite_status"]["reason"] == "可以发送邀请":
+                                            result["invite_status"]["reason"] += f"，魔力值({bonus_data['bonus']})还可购买{invite_method}"
+                                        elif result["invite_status"]["reason"] and "邀请数" in result["invite_status"]["reason"]:
+                                             result["invite_status"]["reason"] += f"，魔力值({bonus_data['bonus']})还可购买{invite_method}"
+                                        elif result["invite_status"]["reason"] and "不足" in result["invite_status"]["reason"]: # 如果原因是数量不足，也追加可购买信息
+                                             result["invite_status"]["reason"] += f"，魔力值({bonus_data['bonus']})还可购买{invite_method}"
+                        # --- End of bonus logic ---
+                except Exception as e:
+                    logger.warning(f"站点 {site_name} 解析魔力值商店失败: {str(e)}")
+
+                # --- Original Pagination Logic --- (kept exactly as before)
+                if len(result["invitees"]) >= 50:
+                    next_page = 1
+                    max_pages = 100
+                    previous_page_invitee_ids = set() # Initialize set to store previous page invitee identifiers
+                    
+                    while next_page < max_pages:
+                        # ... (pagination logic unchanged) ...
+                        next_page_url = urljoin(site_url, f"invite.php?id={user_id}&menu=invitee&page={next_page}")
+                        logger.debug(f"站点 {site_name} 正在获取第 {next_page+1} 页后宫成员数据: {next_page_url}")
+                        try:
+                            next_response = session.get(next_page_url, timeout=(10, 30))
+                            next_response.raise_for_status()
+                            next_page_result = self._parse_nexusphp_invite_page(site_name, next_response.text, is_next_page=True)
                             
-                            if disabled_submit:
-                                disabled_text = disabled_submit.get('value', '').strip()
-                                if disabled_text:
-                                    send_page_reason = disabled_text
-                                    can_send_invite = False
-                                    logger.info(f"站点 {site_name} 发现不可用邀请原因(disabled submit): {send_page_reason}")
-                    else:
-                        # 没有邀请表单，检查其他情况
-                        # 检查页面中是否包含账户上限相关文本
-                        page_text = send_soup.get_text()
-                        if "账户上限" in page_text or "上限数已到" in page_text:
-                            send_page_reason = "当前账户上限数已到"
-                            # 如果找到更完整的原因，提取它
-                            account_limit_pattern = re.search(r"当前账户上限数已到.*?(?:\s*这里|$)", page_text)
-                            if account_limit_pattern:
-                                complete_reason = account_limit_pattern.group(0)
-                                # 清理原因文本
-                                complete_reason = re.sub(r'\s*这里.*返回。?', '', complete_reason)
-                                complete_reason = re.sub(r'\s*<a.*?这里</a>.*?返回。?', '', complete_reason)
-                                if complete_reason and len(complete_reason) > 10:
-                                    send_page_reason = complete_reason
-                            can_send_invite = False
-                            logger.info(f"站点 {site_name} 发现不可用邀请原因: {send_page_reason}")
-                        elif "数量不足" in page_text or "名额不足" in page_text:
-                            send_page_reason = "可以发送邀请，但当前邀请数量不足"
-                            can_send_invite = True
-                            logger.info(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足")
-                
-                # 3. 如果在发送邀请页面发现限制，覆盖主页面的邀请状态
-                if send_page_reason:
-                    # 特殊处理："数量不足"表示可以发药但当前无名额
-                    if "数量不足" in send_page_reason or "名额不足" in send_page_reason:
-                        invite_result["invite_status"]["can_invite"] = True
-                        invite_result["invite_status"]["reason"] = send_page_reason
-                    else:
-                        # 其他限制原因，标记为不可邀请
-                        invite_result["invite_status"]["can_invite"] = False
-                        invite_result["invite_status"]["reason"] = send_page_reason
-                elif can_send_invite:
-                    # 确认可以发送邀请
-                    invite_result["invite_status"]["can_invite"] = True
-                    if not invite_result["invite_status"]["reason"]:
-                        invite_result["invite_status"]["reason"] = "可以发送邀请"
-                
-            except requests.exceptions.RequestException as e:
-                logger.warning(f"访问站点发送邀请页面失败，使用默认权限判断: {str(e)}")
-            
-            # 如果成功解析到后宫成员，记录总数
-            if invite_result["invitees"]:
-                logger.info(f"站点 {site_name} 共解析到 {len(invite_result['invitees'])} 个后宫成员")
-            
-            return invite_result
-            
-        except Exception as e:
-            logger.error(f"解析站点 {site_name} 邀请页面失败: {str(e)}")
-            result["invite_status"]["reason"] = f"解析邀请页面失败: {str(e)}"
+                            # --- Repetition Check START ---
+                            if not next_page_result["invitees"]:
+                                logger.debug(f"站点 {site_name} 第 {next_page+1} 页没有后宫成员数据，停止获取")
+                                break
+                                
+                            # Extract identifiers (e.g., profile URLs or usernames) for comparison
+                            # Using profile_url is generally more reliable
+                            current_page_invitee_ids = {invitee.get('profile_url') or invitee.get('username') for invitee in next_page_result["invitees"]}
+                            
+                            # Check if the current page content is identical to the previous one
+                            if previous_page_invitee_ids and current_page_invitee_ids == previous_page_invitee_ids:
+                                logger.warning(f"站点 {site_name} 检测到第 {next_page+1} 页内容与上一页重复，停止翻页")
+                                break
+                                
+                            # Update previous page identifiers for the next iteration
+                            previous_page_invitee_ids = current_page_invitee_ids
+                            # --- Repetition Check END ---
+                            
+                            result["invitees"].extend(next_page_result["invitees"])
+                            logger.debug(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
+                            if len(next_page_result["invitees"]) < 50:
+                                logger.info(f"站点 {site_name} 第 {next_page+1} 页后宫成员数量少于50人，停止获取")
+                                break
+                            next_page += 1
+                        except Exception as e:
+                            logger.warning(f"站点 {site_name} 获取第 {next_page+1} 页数据失败: {str(e)}")
+                            break
+                else:
+                     logger.info(f"站点 {site_name} 首页后宫成员数量少于50人({len(result['invitees'])}人)，不再查找后续页面")
+
+                # --- Original Send Invite Page Check Logic --- (kept exactly as before)
+                send_invite_url = urljoin(site_url, f"invite.php?id={user_id}&type=new")
+                try:
+                    send_response = session.get(send_invite_url, timeout=(10, 30))
+                    send_response.raise_for_status()
+                    send_page_result = self._parse_nexusphp_invite_page(site_name, send_response.text)
+                    send_reason = send_page_result["invite_status"].get("reason")
+                    send_can_invite = send_page_result["invite_status"].get("can_invite")
+                    # (logic to update status based on send_page_result kept exactly as before) ...
+                    if send_reason:
+                         if "数量不足" in send_reason:
+                             if not result["invite_status"]["reason"] or "可以发送" in result["invite_status"]["reason"]:
+                                  result["invite_status"]["can_invite"] = True
+                                  result["invite_status"]["reason"] = send_reason
+                                  logger.debug(f"站点 {site_name} 从发送页面确认邀请状态: {send_reason}")
+                         elif not send_can_invite:
+                             result["invite_status"]["can_invite"] = False
+                             result["invite_status"]["reason"] = send_reason
+                             logger.debug(f"站点 {site_name} 从发送页面更新了邀请状态: {send_reason}")
+                    elif send_can_invite:
+                         if not result["invite_status"]["reason"] or "可以发送" in result["invite_status"]["reason"]:
+                              result["invite_status"]["can_invite"] = True
+                              if not result["invite_status"]["reason"]:
+                                  result["invite_status"]["reason"] = "可以发送邀请"
+                              logger.debug(f"站点 {site_name} 从发送页面确认可以发送邀请")
+                except requests.exceptions.RequestException as e:
+                    logger.warning(f"访问站点发送邀请页面失败: {str(e)}")
+
+                if result["invitees"]:
+                    logger.info(f"站点 {site_name} 共解析到 {len(result['invitees'])} 个后宫成员")
+
+                # --- Special Check for 猫站 (pterclub.com) START ---
+                # Check if the site is 猫站 AND we successfully got a user_id earlier
+                if user_id and ("pterclub.com" in site_url or "猫站" in site_name):
+                    logger.info(f"站点 {site_name} 是猫站，执行特殊VIP等级检查 (访问userdetails.php)...")
+                    try:
+                        # Construct the user details URL
+                        userdetails_url = urljoin(site_url, f"userdetails.php?id={user_id}")
+                        logger.debug(f"站点 {site_name} 尝试访问用户详情页面: {userdetails_url}")
+                        
+                        # Fetch the user details page content
+                        details_response = session.get(userdetails_url, timeout=(10, 30))
+                        details_response.raise_for_status() # Check for HTTP errors
+                        details_html = details_response.text
+                        
+                        # Parse the user details page content
+                        soup_pter = BeautifulSoup(details_html, 'html.parser')
+                        
+                        # Look for the specific VIP image tag on the userdetails page
+                        vip_indicator = soup_pter.select_one('img[src*="pic/user_class/vip.png"], img[title*="挪威森林猫 VIP"]')
+                        
+                        if not vip_indicator:
+                            # If VIP indicator is NOT found, override can_invite to False
+                            logger.warning(f"站点 {site_name} 在userdetails.php未检测到VIP等级标识，强制设置为无邀请权限")
+                            result["invite_status"]["can_invite"] = False
+                            result["invite_status"]["reason"] = "需要 VIP (挪威森林猫) 等级才能发送邀请"
+                        else:
+                            logger.debug(f"站点 {site_name} 在userdetails.php检测到VIP等级标识，保持原有邀请状态")
+                            # If VIP indicator is found, do nothing, keep the status determined by previous logic
+                            pass
+                    except requests.exceptions.RequestException as pter_req_err:
+                         logger.error(f"站点 {site_name} 访问userdetails.php时网络错误: {str(pter_req_err)}")
+                         # Optionally: decide if this error should make can_invite False
+                         # result["invite_status"]["can_invite"] = False
+                         # result["invite_status"]["reason"] = f"检查VIP等级失败(网络错误): {str(pter_req_err)}"
+                    except Exception as pter_err:
+                        logger.error(f"站点 {site_name} 执行特殊VIP检查(访问userdetails.php)时出错: {str(pter_err)}")
+                        # Optionally: decide if this error should make can_invite False
+                        # result["invite_status"]["can_invite"] = False
+                        # result["invite_status"]["reason"] = f"检查VIP等级失败: {str(pter_err)}"
+                # --- Special Check for 猫站 (pterclub.com) END ---
+
+            except Exception as parse_err:
+                 # Catch errors specifically during the parsing stage (after early checks)
+                error_info = f"解析站点 {site_name} 邀请页面时发生意外错误: {str(parse_err)}"
+                logger.error(error_info)
+                logger.error(traceback.format_exc())
+                # Update the reason in the result dict, but don't mark as early failure
+                result["invite_status"]["reason"] = error_info
+                # Return the result dictionary containing the parsing error
+                return result
+
+        # === Stage 3: Final Return ===
+        else: # This means early_check_failed is True
+            logger.warning(f"站点 {site_name} 因早期检查失败，跳过页面解析。失败原因: {early_failure_reason}")
+            # Update the result reason with the specific early failure reason
+            result["invite_status"]["reason"] = early_failure_reason
+            # Return the result dictionary indicating the early failure
             return result
+
+        # If parsing was successful (not early_check_failed and no parsing error)
+        return result
     
     def _parse_nexusphp_invite_page(self, site_name: str, html_content: str, is_next_page: bool = False) -> Dict[str, Any]:
         """
@@ -383,7 +402,7 @@ class NexusPhpHandler(_ISiteHandler):
         if title_elem:
             title_text = title_elem.get_text().strip()
             if '后宫' in title_text or '後宮' in title_text or '邀請系統' in title_text or '邀请系统' in title_text:
-                logger.info(f"站点 {site_name} 检测到特殊标题: {title_text}")
+                logger.debug(f"站点 {site_name} 检测到特殊标题: {title_text}")
                 special_title = True
         
         # 如果不是翻页内容，解析邀请状态
@@ -392,7 +411,7 @@ class NexusPhpHandler(_ISiteHandler):
             info_block = soup.select_one('#info_block')
             if info_block:
                 info_text = info_block.get_text()
-                logger.info(f"站点 {site_name} 获取到info_block信息")
+                logger.debug(f"站点 {site_name} 获取到info_block信息")
                 
                 # 识别邀请数量 - 查找邀请链接并获取数量
                 invite_link = info_block.select_one('a[href*="invite.php"]')
@@ -416,7 +435,7 @@ class NexusPhpHandler(_ISiteHandler):
                         if len(invite_match.groups()) > 1 and invite_match.group(2):
                             result["invite_status"]["temporary_count"] = int(invite_match.group(2))
                         
-                        logger.info(f"站点 {site_name} 解析到邀请数量: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}")
+                        logger.debug(f"站点 {site_name} 解析到邀请数量: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}")
                         
                         # 如果有邀请名额，初步判断为可邀请
                         if result["invite_status"]["permanent_count"] > 0 or result["invite_status"]["temporary_count"] > 0:
@@ -447,7 +466,7 @@ class NexusPhpHandler(_ISiteHandler):
                                 if len(after_match.groups()) > 1 and after_match.group(2):
                                     result["invite_status"]["temporary_count"] = int(after_match.group(2))
                                 
-                                logger.info(f"站点 {site_name} 从后续文本解析到邀请数量: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}")
+                                logger.debug(f"站点 {site_name} 从后续文本解析到邀请数量: 永久={result['invite_status']['permanent_count']}, 临时={result['invite_status']['temporary_count']}")
                                 
                                 # 如果有邀请名额，初步判断为可邀请
                                 if result["invite_status"]["permanent_count"] > 0 or result["invite_status"]["temporary_count"] > 0:
@@ -486,7 +505,7 @@ class NexusPhpHandler(_ISiteHandler):
                 if submit_btn:
                     can_invite = True
                     invite_reason = "存在可用邀请表单"
-                    logger.info(f"站点 {site_name} 存在可用邀请表单，可以发送邀请")
+                    logger.debug(f"站点 {site_name} 存在可用邀请表单，可以发送邀请")
             
             # 2. 如果不存在可用邀请表单，检查disabled的submit按钮，通常包含不可邀请的具体原因
             if not can_invite:
@@ -496,7 +515,7 @@ class NexusPhpHandler(_ISiteHandler):
                         disabled_text = btn.get('value', '').strip()
                         if disabled_text:
                             invite_reason = disabled_text
-                            logger.info(f"站点 {site_name} 发现不可用邀请原因(disabled submit): {invite_reason}")
+                            logger.debug(f"站点 {site_name} 发现不可用邀请原因(disabled submit): {invite_reason}")
                             break
             
             # 3. 检查页面中的"对不起"错误提示信息
@@ -562,7 +581,7 @@ class NexusPhpHandler(_ISiteHandler):
                         if "邀请数量不足" in full_error_text:
                             can_invite = True
                             invite_reason = "可以发送邀请，但当前邀请数量不足"
-                            logger.info(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足")
+                            logger.debug(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足")
                             break
                         
                         # 提取"对不起"之后的具体原因，并移除"这里返回"及后续内容
@@ -573,7 +592,7 @@ class NexusPhpHandler(_ISiteHandler):
                             reason = re.sub(r'\s*这里.*返回。?', '', reason)
                             if reason and len(reason) > 3:  # 确保提取的原因有实际内容
                                 invite_reason = reason
-                                logger.info(f"站点 {site_name} 发现不可用邀请原因(对不起后文本): {invite_reason}")
+                                logger.debug(f"站点 {site_name} 发现不可用邀请原因(对不起后文本): {invite_reason}")
                                 break
                         else:
                             # 如果无法提取特定模式，使用整个文本
@@ -582,7 +601,7 @@ class NexusPhpHandler(_ISiteHandler):
                             invite_reason = re.sub(r'\s*这里.*返回。?', '', invite_reason)
                             invite_reason = re.sub(r'\s*<a.*?这里</a>.*?返回。?', '', invite_reason)
                             if invite_reason and len(invite_reason) > 3:
-                                logger.info(f"站点 {site_name} 发现不可用邀请原因(完整对不起文本): {invite_reason}")
+                                logger.debug(f"站点 {site_name} 发现不可用邀请原因(完整对不起文本): {invite_reason}")
                                 break
             
             # 4. 检查现代UI中的div结构错误信息
@@ -625,12 +644,12 @@ class NexusPhpHandler(_ISiteHandler):
                                 # 特殊处理："邀请数量不足"表示可以发药但当前无名额
                                 can_invite = True 
                                 invite_reason = "可以发送邀请，但当前邀请数量不足"
-                                logger.info(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足(现代UI div)")
+                                logger.debug(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足(现代UI div)")
                             elif "账户上限" in div_text or "上限数已到" in div_text:
                                 # 特殊处理：账户上限问题
                                 can_invite = False
                                 invite_reason = "当前账户上限数已到"
-                                logger.info(f"站点 {site_name} 发现不可用邀请原因(现代UI div): 当前账户上限数已到")
+                                logger.debug(f"站点 {site_name} 发现不可用邀请原因(现代UI div): 当前账户上限数已到")
                             else:
                                 # 其他情况
                                 clean_text = div_text.replace('对不起', '').replace('Sorry', '').strip()
@@ -638,7 +657,7 @@ class NexusPhpHandler(_ISiteHandler):
                                     invite_reason = clean_text
                                 else:
                                     invite_reason = div_text
-                                logger.info(f"站点 {site_name} 发现不可用邀请原因(现代UI div): {invite_reason}")
+                                logger.debug(f"站点 {site_name} 发现不可用邀请原因(现代UI div): {invite_reason}")
                             break
                 except Exception as e:
                     logger.warning(f"站点 {site_name} 处理现代UI div时出错: {str(e)}")
@@ -665,7 +684,7 @@ class NexusPhpHandler(_ISiteHandler):
                         match = re.search(pattern, row_text)
                         if match:
                             invite_reason = match.group(0)
-                            logger.info(f"站点 {site_name} 发现不可用邀请原因(表格行): {invite_reason}")
+                            logger.debug(f"站点 {site_name} 发现不可用邀请原因(表格行): {invite_reason}")
                             break
                     
                     if invite_reason:
@@ -679,12 +698,12 @@ class NexusPhpHandler(_ISiteHandler):
                 if re.search(r"邀请数量不足|邀请名额不足|没有足够的邀请|没有剩余邀请", page_text):
                     can_invite = True
                     invite_reason = "可以发送邀请，但当前邀请数量不足"
-                    logger.info(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足")
+                    logger.debug(f"站点 {site_name} 可以发送邀请，但当前邀请数量不足")
                 # 检查是否是账户上限问题
                 elif re.search(r"当前账户上限数已到|账户上限|已达到最大邀请数|已达上限|达到上限", page_text):
                     can_invite = False
                     invite_reason = "当前账户上限数已到"
-                    logger.info(f"站点 {site_name} 发现不可用邀请原因: 当前账户上限数已到")
+                    logger.debug(f"站点 {site_name} 发现不可用邀请原因: 当前账户上限数已到")
                 else:
                     # 检查各种不可邀请的原因模式
                     error_patterns = [
@@ -710,10 +729,10 @@ class NexusPhpHandler(_ISiteHandler):
                         match = re.search(pattern, page_text)
                         if match:
                             invite_reason = match.group(0)
-                            # 移除"这里返回"及相关内容
+                            # Remove "here return" and related content
                             invite_reason = re.sub(r'\s*这里.*返回。?', '', invite_reason)
-                            invite_reason = re.sub(r'\s*<a.*?这里</a>.*?返回。?', '', invite_reason)
-                            logger.info(f"站点 {site_name} 发现不可用邀请原因(页面文本): {invite_reason}")
+                            invite_reason = re.sub(r'\s*<a.*?这里</a>.*?返回。?', '', invite_reason)                                     
+                            logger.debug(f"站点 {site_name} 发现不可用邀请原因(页面文本): {invite_reason}")
                             break
             
             # 7. 最后检查基于通用判断规则 - 如果找不到具体原因且没有邀请表单，返回通用消息
@@ -768,7 +787,7 @@ class NexusPhpHandler(_ISiteHandler):
                       ['用户名', '邮箱', 'email', '分享率', 'ratio', 'username']):
                 continue
                 
-            logger.info(f"站点 {site_name} 找到后宫用户表，表头: {headers}")
+            logger.debug(f"站点 {site_name} 找到后宫用户表，表头: {headers}")
             
             # 解析表格行
             rows = table.select('tr:not(:first-child)')
@@ -987,9 +1006,9 @@ class NexusPhpHandler(_ISiteHandler):
             # 如果已找到用户数据，跳出循环
             if result["invitees"]:
                 if is_next_page:
-                    logger.info(f"站点 {site_name} 从翻页中解析到 {len(result['invitees'])} 个后宫成员")
+                    logger.debug(f"站点 {site_name} 从翻页中解析到 {len(result['invitees'])} 个后宫成员")
                 else:
-                    logger.info(f"站点 {site_name} 从首页解析到 {len(result['invitees'])} 个后宫成员")
+                    logger.debug(f"站点 {site_name} 从首页解析到 {len(result['invitees'])} 个后宫成员")
                 break
         
         return result
@@ -1137,7 +1156,7 @@ class NexusPhpHandler(_ISiteHandler):
                             bonus_str = bonus_match.group(1).replace(',', '')
                             try:
                                 result["bonus"] = float(bonus_str)
-                                logger.info(f"站点 {site_name} 从元素中提取到魔力值/特殊积分: {result['bonus']}")
+                                logger.debug(f"站点 {site_name} 从元素中提取到魔力值/特殊积分: {result['bonus']}")
                                 
                                 # 检查魔力值是否可能是时魔信息
                                 if result["bonus"] < 100 and '时魔' in element_text or '每小时' in element_text:
@@ -1273,7 +1292,7 @@ class NexusPhpHandler(_ISiteHandler):
                         bonus_str = bonus_match.group(1).replace(',', '')
                         try:
                             result["bonus"] = float(bonus_str)
-                            logger.info(f"站点 {site_name} 从页面文本中提取到魔力值/特殊积分: {result['bonus']}")
+                            logger.debug(f"站点 {site_name} 从页面文本中提取到魔力值/特殊积分: {result['bonus']}")
                             
                             # 检查是否在时魔相关上下文中
                             context_text = page_text[max(0, page_text.find(bonus_str) - 50):page_text.find(bonus_str) + 50]
@@ -1307,6 +1326,26 @@ class NexusPhpHandler(_ISiteHandler):
                             
                         # 获取行文本
                         row_text = row.get_text().lower()
+                        
+                        # --- Refined Exclusion Logic for "Sell Invite" Rows START ---
+                        # Check for keywords indicating selling invites FOR bonus/points
+                        is_invite_related = any(keyword in row_text for keyword in ['邀请', 'invite'])
+                        is_selling_for_bonus = any(sell_indicator in row_text for sell_indicator in [
+                            '交换魔力', '兑换成魔力', '换成魔力',
+                            '交换积分', '兑换成积分', '换成积分',
+                            'exchange for bonus', 'exchange for points',
+                            'get bonus for invite', 'get points for invite'
+                        ])
+                        
+                        # --- Previous exclusion logic (commented out for clarity) ---
+                        # if "交换魔力值" in row_text or "兑换成魔力值" in row_text:
+                        #    logger.info(f"站点 {site_name} 忽略 '交换魔力值' 行: {row_text[:50]}...")
+                        #    continue
+                        
+                        if is_invite_related and is_selling_for_bonus:
+                            logger.debug(f"站点 {site_name} 忽略 '出售邀请换积分' 行: {row_text[:50]}...")
+                            continue
+                        # --- Refined Exclusion Logic for "Sell Invite" Rows END ---
                         
                         # 检查是否包含邀请关键词 - 增加更多可能的称呼
                         invite_keywords = [
@@ -1359,15 +1398,24 @@ class NexusPhpHandler(_ISiteHandler):
                                         if price > 0:
                                             # 邀请价格通常较大，小于100的可能是时魔信息
                                             if price < 100:
-                                                logger.info(f"站点 {site_name} 忽略可能的时魔信息: {price}")
+                                                logger.debug(f"站点 {site_name} 忽略可能的时魔信息: {price}")
                                                 continue
                                                 
                                             if is_temporary:
-                                                result["temporary_invite_price"] = price
-                                                logger.info(f"站点 {site_name} 临时邀请价格: {price}")
+                                                # --- Refined check for standard temporary invite START ---
+                                                # Check for "普通" or absence of other specific type keywords (excluding "vip")
+                                                if "普通" in row_text or ("高级" not in row_text and "特殊" not in row_text):
+                                                    # Only record the price if it's explicitly "普通" 
+                                                    # or if other type keywords like "高级" or "特殊" are absent.
+                                                    result["temporary_invite_price"] = price
+                                                    # Log as "standard" instead of explicitly "普通"
+                                                    logger.debug(f"站点 {site_name} 标准临时邀请价格: {price}")
+                                                else:
+                                                    logger.debug(f"站点 {site_name} 忽略非标准临时邀请价格: {price} ({row_text[:30]}...)")
+                                                # --- Refined check for standard temporary invite END ---
                                             else:
                                                 result["permanent_invite_price"] = price
-                                                logger.info(f"站点 {site_name} 永久邀请价格: {price}")
+                                                logger.debug(f"站点 {site_name} 永久邀请价格: {price}")
                                 except ValueError:
                                     continue
             

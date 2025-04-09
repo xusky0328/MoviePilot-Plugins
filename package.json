@@ -45,13 +45,13 @@
     "name": "后宫管理系统",
     "description": "管理添加到MP站点的邀请系统，包括邀请名额、已邀请用户状态等",
     "labels": "PT,后宫,邀请",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png",
     "author": "madrays",
     "level": 2,
     "v2": true,
     "history": {
-      "v1.2.0": "适配MT新API，新增药单显示及导出功能，by@JhouXerox"
+      "v1.2.1": "新增失败站点通知功能，by@JhouXerox；修复插件无法正确更新的问题；修复各项bug；尝试修复无限翻页问题"
     }
   },
   "nodeseeksign": {
