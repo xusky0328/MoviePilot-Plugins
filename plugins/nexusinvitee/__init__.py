@@ -3552,6 +3552,7 @@ class nexusinvitee(_PluginBase):
             # 统计成功/失败站点数
             success_count = 0
             error_count = 0
+            error_details = []
             
             # 获取现有数据
             existing_data = self.data_manager.get_site_data()
@@ -3567,6 +3568,7 @@ class nexusinvitee(_PluginBase):
                     error_msg = site_data.get('error', '未知错误')
                     logger.error(f"站点 {site_name} 数据刷新失败: {error_msg}")
                     error_count += 1
+                    error_details.append({"site_name":site_name,"msg":error_msg});
                     
                     # 检查是否有旧数据
                     old_data = existing_data.get(site_name, {}).get("data", {})
@@ -3592,7 +3594,7 @@ class nexusinvitee(_PluginBase):
             
             # 发送通知
             if self._notify:
-                self._send_refresh_notification(success_count, error_count)
+                self._send_refresh_notification(success_count, error_count,error_details)
             
             logger.info(f"增量刷新完成: 成功 {success_count} 个站点, 失败 {error_count} 个站点")
             
@@ -3602,7 +3604,7 @@ class nexusinvitee(_PluginBase):
             # 清除刷新标志
             self._refreshing = False
     
-    def _send_refresh_notification(self, success_count, error_count):
+    def _send_refresh_notification(self, success_count, error_count,error_details:List=None):
         """
         发送刷新结果通知
         """
@@ -3653,7 +3655,11 @@ class nexusinvitee(_PluginBase):
             
             title = "后宫管理系统 - 增量刷新结果"
             if success_count > 0 or error_count > 0:
-                text = f"增量刷新完成: 成功 {success_count} 个站点，失败 {error_count} 个站点\n\n"
+                text = f"增量刷新完成: 成功 {success_count} 个站点，失败 {error_count} 个站点\n"
+                if error_details is not None and len(error_details) > 0:
+                    for i,item in enumerate(error_details):
+                        text += f" - 失败站点{i+1}[{item['site_name']}]:{item['msg']}\n"
+                    text += "\n"
                 text += f"👨‍👩‍👧‍👦 总邀请人数: {total_invitees}人\n"
                 text += f"⚠️ 分享率低于1.0: {total_low_ratio}人\n"
                 text += f"🚫 已禁用用户: {total_banned}人\n"
