@@ -173,7 +173,8 @@ class ButterflyHandler(_ISiteHandler):
                         break
                     
                     # 构建下一页URL并请求
-                    next_page_url = urljoin(site_url, next_page_link)
+                    # 使用正确的URL模板
+                    next_page_url = urljoin(site_url, f"invite.php?id={user_id}&menu=invitee&page={current_page+1}")
                     logger.info(f"站点 {site_name} 正在获取第 {current_page+2} 页后宫成员数据: {next_page_url}")
                     
                     try:
