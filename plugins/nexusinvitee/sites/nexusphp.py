@@ -243,6 +243,12 @@ class NexusPhpHandler(_ISiteHandler):
                     max_pages = 100
                     previous_page_invitee_ids = set() # Initialize set to store previous page invitee identifiers
                     
+                    # 从第一页数据中提取用户ID用于检测重复
+                    if result["invitees"]:
+                        first_page_invitee_ids = {invitee.get('profile_url') or invitee.get('username') for invitee in result["invitees"]}
+                        previous_page_invitee_ids = first_page_invitee_ids
+                        logger.debug(f"站点 {site_name} 首页收集到 {len(previous_page_invitee_ids)} 个用户ID用于重复检测")
+                    
                     while next_page < max_pages:
                         # ... (pagination logic unchanged) ...
                         next_page_url = urljoin(site_url, f"invite.php?id={user_id}&menu=invitee&page={next_page}")
@@ -266,12 +272,14 @@ class NexusPhpHandler(_ISiteHandler):
                                 logger.warning(f"站点 {site_name} 检测到第 {next_page+1} 页内容与上一页重复，停止翻页")
                                 break
                                 
+                            # 只有在内容不重复时，才添加到结果中
+                            result["invitees"].extend(next_page_result["invitees"])
+                            logger.debug(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
+                            
                             # Update previous page identifiers for the next iteration
                             previous_page_invitee_ids = current_page_invitee_ids
                             # --- Repetition Check END ---
                             
-                            result["invitees"].extend(next_page_result["invitees"])
-                            logger.debug(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
                             if len(next_page_result["invitees"]) < 50:
                                 logger.info(f"站点 {site_name} 第 {next_page+1} 页后宫成员数量少于50人，停止获取")
                                 break
