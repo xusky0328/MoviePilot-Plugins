@@ -54,7 +54,6 @@ class HHClubHandler(_ISiteHandler):
         site_url = site_info.get("url", "")
         site_id = site_info.get("id")
         
-        # 记录站点信息
         logger.info(f"开始解析站点 {site_name} 邀请页面，站点ID: {site_id}, URL: {site_url}")
         
         result = {
@@ -78,140 +77,125 @@ class HHClubHandler(_ISiteHandler):
                 result["invite_status"]["reason"] = "无法获取用户ID，请检查站点Cookie是否有效"
                 return result
             
-            # 从主页中获取邀请数量
-            index_url = urljoin(site_url, "index.php")
-            logger.info(f"站点 {site_name} 正在从主页获取邀请数量: {index_url}")
-            
+            # --- 获取邀请数量和权限 ---
             try:
+                index_url = urljoin(site_url, "index.php")
+                logger.info(f"站点 {site_name} 正在从主页获取邀请数量: {index_url}")
                 index_response = session.get(index_url, timeout=(10, 30))
                 index_response.raise_for_status()
-                
-                # 解析主页，获取邀请数量
                 invite_counts = self._parse_hhclub_homepage(site_name, index_response.text)
-                
-                # 更新邀请状态
                 result["invite_status"]["permanent_count"] = invite_counts["permanent_count"]
-                # 憨憨站点只有永久邀请，没有临时邀请
-                result["invite_status"]["temporary_count"] = 0
-                
+                result["invite_status"]["temporary_count"] = 0 # 憨憨无临时
                 logger.info(f"站点 {site_name} 从主页获取到邀请数量: 永久={invite_counts['permanent_count']}, 临时=0")
             except Exception as e:
                 logger.error(f"站点 {site_name} 从主页获取邀请数量失败: {str(e)}")
-            
-            # 获取邀请页面，检查邀请权限
-            invite_url = urljoin(site_url, f"invite.php?id={user_id}")
-            response = session.get(invite_url, timeout=(10, 30))
-            response.raise_for_status()
-            
-            # 检查邀请权限
-            invite_button_info = self._check_hhclub_invite_permission(site_name, response.text)
-            
-            # 设置邀请状态
-            result["invite_status"]["can_invite"] = invite_button_info["can_invite"]
-            
-            # 如果可以邀请，设置原因
-            if result["invite_status"]["can_invite"]:
-                if result["invite_status"]["permanent_count"] > 0:
-                    result["invite_status"]["reason"] = f"可用邀请数: 永久={result['invite_status']['permanent_count']}"
+
+            try:
+                invite_url = urljoin(site_url, f"invite.php?id={user_id}")
+                response = session.get(invite_url, timeout=(10, 30))
+                response.raise_for_status()
+                invite_button_info = self._check_hhclub_invite_permission(site_name, response.text)
+                result["invite_status"]["can_invite"] = invite_button_info["can_invite"]
+                if result["invite_status"]["can_invite"]:
+                    if result["invite_status"]["permanent_count"] > 0:
+                        result["invite_status"]["reason"] = f"可用邀请数: 永久={result['invite_status']['permanent_count']}"
+                    else:
+                        result["invite_status"]["reason"] = "可以邀请其他人" # 或者基于按钮文本判断
                 else:
-                    result["invite_status"]["reason"] = "可以邀请其他人"
-            else:
-                # 如果不能邀请，设置原因
-                result["invite_status"]["reason"] = invite_button_info["reason"]
-            
-            # 获取被邀请人详细列表页面 - 从第一页开始
+                    result["invite_status"]["reason"] = invite_button_info["reason"]
+            except Exception as e:
+                 logger.error(f"站点 {site_name} 获取或检查邀请权限页面失败: {str(e)}")
+                 result["invite_status"]["reason"] = f"检查邀请权限失败: {str(e)}"
+            # --- 邀请数量和权限获取结束 ---
+
+            # --- 解析后宫列表，包含翻页和防重逻辑 ---
+            logger.info(f"站点 {site_name} 开始获取后宫列表...")
             invitee_url = urljoin(site_url, f"invite.php?id={user_id}&menu=invitee")
-            invitee_response = session.get(invitee_url, timeout=(10, 30))
-            invitee_response.raise_for_status()
-            
-            # 解析第一页被邀请人列表
-            invitee_result = self._parse_hhclub_invitee_page(site_name, site_url, invitee_response.text)
-            result["invitees"] = invitee_result["invitees"]
-            
-            # 检查第一页后宫成员数量，如果少于50人，则不再翻页
-            if len(result["invitees"]) < 50:
-                logger.info(f"站点 {site_name} 首页后宫成员数量少于50人({len(result['invitees'])}人)，不再查找后续页面")
-                # 如果成功解析到后宫成员，记录总数
-                if result["invitees"]:
-                    logger.info(f"站点 {site_name} 共解析到 {len(result['invitees'])} 个后宫成员")
-            else:
-                # 尝试获取更多页面的后宫成员
-                next_page = 1  # 从第二页开始，因为第一页已经解析过了
-                max_pages = 100  # 防止无限循环
-                
-                # 继续获取后续页面，直到没有更多数据或达到最大页数
+            first_page_response = session.get(invitee_url, timeout=(10, 30))
+            first_page_response.raise_for_status()
+
+            first_page_result = self._parse_hhclub_invitee_page(site_name, site_url, first_page_response.text)
+            result["invitees"] = first_page_result["invitees"]
+
+            previous_page_invitee_ids = set()
+            if result["invitees"]:
+                first_page_invitee_ids = {invitee.get('profile_url') or invitee.get('username') for invitee in result["invitees"]}
+                previous_page_invitee_ids = first_page_invitee_ids
+                logger.debug(f"站点 {site_name} 首页收集到 {len(previous_page_invitee_ids)} 个后宫ID用于重复检测")
+
+            if len(result["invitees"]) >= 50:
+                logger.info(f"站点 {site_name} 首页后宫成员数量达到50人，尝试获取后续页面...")
+                next_page = 1
+                max_pages = 100
+
                 while next_page < max_pages:
                     next_page_url = urljoin(site_url, f"invite.php?id={user_id}&menu=invitee&page={next_page}")
                     logger.info(f"站点 {site_name} 正在获取第 {next_page+1} 页后宫成员数据: {next_page_url}")
-                    
+
                     try:
                         next_response = session.get(next_page_url, timeout=(10, 30))
                         next_response.raise_for_status()
-                        
-                        # 解析下一页数据
                         next_page_result = self._parse_hhclub_invitee_page(site_name, site_url, next_response.text)
-                        
-                        # 如果没有找到任何后宫成员，说明已到达最后一页
+
                         if not next_page_result["invitees"]:
                             logger.info(f"站点 {site_name} 第 {next_page+1} 页没有后宫成员数据，停止获取")
                             break
-                        
-                        # 如果当前页面后宫成员少于50人，默认认为没有下一页
-                        if len(next_page_result["invitees"]) < 50:
-                            logger.info(f"站点 {site_name} 第 {next_page+1} 页后宫成员数量少于50人({len(next_page_result['invitees'])}人)，默认没有下一页")
-                            # 将当前页数据合并到结果中后退出循环
-                            result["invitees"].extend(next_page_result["invitees"])
-                            logger.info(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
+
+                        current_page_invitee_ids = {invitee.get('profile_url') or invitee.get('username') for invitee in next_page_result["invitees"]}
+
+                        if previous_page_invitee_ids and current_page_invitee_ids == previous_page_invitee_ids:
+                            logger.warning(f"站点 {site_name} 检测到第 {next_page+1} 页内容与上一页重复，停止翻页")
                             break
-                        
-                        # 将下一页的后宫成员添加到结果中
+
                         result["invitees"].extend(next_page_result["invitees"])
                         logger.info(f"站点 {site_name} 第 {next_page+1} 页解析到 {len(next_page_result['invitees'])} 个后宫成员")
-                        
-                        # 继续下一页
+
+                        previous_page_invitee_ids = current_page_invitee_ids
+
+                        if len(next_page_result["invitees"]) < 50:
+                            logger.info(f"站点 {site_name} 第 {next_page+1} 页后宫成员数量少于50人({len(next_page_result['invitees'])}人)，停止获取")
+                            break
+
                         next_page += 1
-                        
+
                     except Exception as e:
                         logger.warning(f"站点 {site_name} 获取第 {next_page+1} 页数据失败: {str(e)}")
                         break
-            
-            # 获取魔力值和邀请价格
+            else:
+                logger.info(f"站点 {site_name} 首页后宫成员数量少于50人({len(result['invitees'])}人)，不再查找后续页面")
+            # --- 后宫列表解析结束 ---
+
+            # --- 获取魔力值和邀请价格 ---
             try:
                 bonus_url = urljoin(site_url, "mybonus.php")
                 bonus_response = session.get(bonus_url, timeout=(10, 30))
                 if bonus_response.status_code == 200:
-                    # 解析魔力值和邀请价格
                     bonus_data = self._parse_hhclub_bonus_shop(site_name, bonus_response.text)
-                    
-                    # 更新魔力值和邀请价格
                     result["invite_status"]["bonus"] = bonus_data["bonus"]
                     result["invite_status"]["permanent_invite_price"] = bonus_data["permanent_invite_price"]
-                    result["invite_status"]["temporary_invite_price"] = 0  # 憨憨站点无临时邀请
-                    
-                    # 判断是否可以购买邀请
+                    result["invite_status"]["temporary_invite_price"] = 0
+
                     if result["invite_status"]["bonus"] > 0 and result["invite_status"]["permanent_invite_price"] > 0:
-                        # 计算可购买的邀请数量
                         can_buy_permanent = int(result["invite_status"]["bonus"] / result["invite_status"]["permanent_invite_price"])
-                        
-                        # 更新邀请状态的原因字段
                         if result["invite_status"]["reason"] and not result["invite_status"]["can_invite"]:
-                            # 如果有原因且不能邀请
                             if can_buy_permanent > 0:
-                                result["invite_status"]["reason"] += f"，但您的憨豆({result['invite_status']['bonus']})可购买永久邀请({can_buy_permanent}个,{result['invite_status']['permanent_invite_price']}魔力/个)"
-                                # 如果可以购买且没有现成邀请，也视为可邀请
+                                result["invite_status"]["reason"] += f"，但您的憨豆({result['invite_status']['bonus']})可购买永久邀请({can_buy_permanent}个,{result['invite_status']['permanent_invite_price']}憨豆/个)"
                                 if result["invite_status"]["permanent_count"] == 0:
                                     result["invite_status"]["can_invite"] = True
-                        else:
-                            # 如果没有原因或者已经可以邀请
-                            if can_buy_permanent > 0 and result["invite_status"]["reason"]:
-                                result["invite_status"]["reason"] += f"，憨豆({result['invite_status']['bonus']})可购买永久邀请({can_buy_permanent}个,{result['invite_status']['permanent_invite_price']}魔力/个)"
+                        elif result["invite_status"]["reason"]:
+                            if can_buy_permanent > 0:
+                                result["invite_status"]["reason"] += f"，憨豆({result['invite_status']['bonus']})还可购买永久邀请({can_buy_permanent}个,{result['invite_status']['permanent_invite_price']}憨豆/个)"
             except Exception as e:
                 logger.warning(f"站点 {site_name} 解析魔力值商店失败: {str(e)}")
-            
+            # --- 魔力值解析结束 ---
+
+            if result["invitees"]:
+                 logger.info(f"站点 {site_name} 共解析到 {len(result['invitees'])} 个后宫成员")
+
             return result
-            
+
         except Exception as e:
-            logger.error(f"解析站点 {site_name} 邀请页面失败: {str(e)}")
+            logger.error(f"解析站点 {site_name} 邀请页面时发生严重错误: {str(e)}")
             result["invite_status"]["reason"] = f"解析邀请页面失败: {str(e)}"
             return result
     
@@ -431,90 +415,107 @@ class HHClubHandler(_ISiteHandler):
         result = {
             "invitees": []
         }
-        
+
         # 初始化BeautifulSoup对象
         soup = BeautifulSoup(html_content, 'html.parser')
-        
+
         # 检查是否有"没有被邀者"的提示信息
         no_invitee_div = soup.select_one('div:-soup-contains("没有被邀者")')
         if no_invitee_div:
             logger.info(f"站点 {site_name} 没有后宫成员")
             return result
-        
-        # 查找后宫用户表格 - 根据憨憨站点的特殊结构查找
-        # 尝试多种可能的表格选择器
-        grid_div = soup.select_one('.grid-cols-\\[8\\%_auto_5\\%_5\\%_10\\%_10\\%_10\\%_10\\%_10\\%_5\\%_5\\%\\]')
-        
-        # 如果未找到，尝试其他可能的格式
-        if not grid_div:
-            grid_div = soup.select_one('div[class*="grid-cols"]')
-            
-        if not grid_div:
-            logger.warning(f"站点 {site_name} 未找到后宫表格结构")
+
+        # === 修复开始 ===
+        # 1. 查找表头行 - 通常具有背景色
+        # 尝试查找具有特定背景类的 grid 行
+        header_row = soup.select_one('div[class*="grid-cols-"][class*="bg-"]')
+
+        if not header_row:
+            # 如果找不到带背景的，尝试查找第一个 grid-cols-* 行作为表头
+            all_grid_rows = soup.select('div[class*="grid-cols-"]')
+            if all_grid_rows:
+                header_row = all_grid_rows[0]
+            else:
+                logger.warning(f"站点 {site_name} 未找到任何 grid-cols-* 行，无法解析后宫列表")
+                return result
+
+        # 2. 获取父容器
+        parent_container = header_row.parent
+        if not parent_container:
+            logger.warning(f"站点 {site_name} 无法找到表头行的父容器")
             return result
-        
-        # 获取表头 - 表头在grid_div中直接获取
+
+        # 3. 从父容器中获取所有 grid 行 (表头+数据)
+        all_rows = parent_container.select(':scope > div[class*="grid-cols-"]')
+
+        if not all_rows:
+            logger.warning(f"站点 {site_name} 在父容器中未找到任何 grid-cols-* 行")
+            return result
+
+        # 4. 分离表头和数据行
+        headers_divs = all_rows[0].select(':scope > div') # 表头单元格
+        data_rows = all_rows[1:] # 数据行
+
+        if not headers_divs:
+            logger.warning(f"站点 {site_name} 表头行为空")
+            return result
+
+        # 提取表头文本
         headers_text = []
-        for div in grid_div.select('div'):
+        for div in headers_divs:
             header_text = div.get_text(strip=True).lower()
             if header_text:
                 headers_text.append(header_text)
-        
+
         if not headers_text:
-            logger.warning(f"站点 {site_name} 未找到表头文本")
+            logger.warning(f"站点 {site_name} 未能提取到表头文本")
             return result
-        
+
         logger.info(f"站点 {site_name} 找到用户表格，表头: {headers_text}")
-        
-        # 查找数据行，通常是表格后面的行
-        data_rows = []
-        # 在表头后面查找所有可能的数据行结构
-        next_element = grid_div.find_next_sibling()
-        while next_element:
-            if 'grid-cols-' in str(next_element.get('class', [])):
-                data_rows.append(next_element)
-            next_element = next_element.find_next_sibling()
-        
+
         if not data_rows:
-            logger.warning(f"站点 {site_name} 未找到数据行")
+            logger.info(f"站点 {site_name} 未找到数据行 (或只有表头)")
             return result
-        
+        # === 修复结束 ===
+
         # 处理每一个数据行
         for row in data_rows:
-            cells = row.select('div')
+            # 数据行内的单元格也是 div
+            cells = row.select(':scope > div')
             if len(cells) < len(headers_text):
+                logger.debug(f"站点 {site_name} 数据行单元格数量 ({len(cells)}) 少于表头数量 ({len(headers_text)})，跳过")
                 continue
-            
+
             invitee = {}
             username = ""
             is_banned = False
-            
+
             # 逐列解析数据
             for idx, header in enumerate(headers_text):
                 if idx >= len(cells):
                     break
-                
+
                 cell = cells[idx]
                 cell_text = cell.get_text(strip=True)
-                
+
                 # 用户名列
                 if idx == 0 or any(kw in header for kw in ['用户名']):
                     username_link = cell.select_one('a')
                     if username_link:
                         username = username_link.get_text(strip=True)
                         invitee["username"] = username
-                        
+
                         # 获取用户个人页链接
                         href = username_link.get('href', '')
                         invitee["profile_url"] = urljoin(site_url, href) if href else ""
                     else:
                         username = cell_text
                         invitee["username"] = username
-                
+
                 # 邮箱列
                 elif any(kw in header for kw in ['邮箱', 'email']):
                     invitee["email"] = cell_text
-                
+
                 # 启用状态列
                 elif any(kw in header for kw in ['启用', 'enabled']):
                     status_text = cell_text.lower()
@@ -523,19 +524,19 @@ class HHClubHandler(_ISiteHandler):
                         is_banned = True
                     else:
                         invitee["enabled"] = "Yes"
-                
+
                 # 上传量列
                 elif any(kw in header for kw in ['上传', 'uploaded']):
                     invitee["uploaded"] = cell_text
-                
+
                 # 下载量列
                 elif any(kw in header for kw in ['下载', 'downloaded']):
                     invitee["downloaded"] = cell_text
-                
+
                 # 分享率列
                 elif any(kw in header for kw in ['分享率', 'ratio']):
                     ratio_text = cell_text
-                    
+
                     # 处理特殊分享率表示
                     if ratio_text.lower() in ['inf.', 'inf', '∞', 'infinite']:
                         invitee["ratio"] = "∞"
@@ -545,7 +546,7 @@ class HHClubHandler(_ISiteHandler):
                         invitee["ratio_value"] = 0
                     else:
                         invitee["ratio"] = ratio_text
-                        
+
                         # 尝试解析为浮点数
                         try:
                             normalized_ratio = ratio_text.replace(',', '')
@@ -553,63 +554,63 @@ class HHClubHandler(_ISiteHandler):
                         except (ValueError, TypeError):
                             logger.warning(f"无法解析分享率: {ratio_text}")
                             invitee["ratio_value"] = 0
-                
+
                 # 做种数列
                 elif any(kw in header for kw in ['做种数', 'seeding']):
                     invitee["seeding"] = cell_text
-                
+
                 # 做种体积列
                 elif any(kw in header for kw in ['做种体积', 'seeding size']):
                     invitee["seeding_size"] = cell_text
-                
+
                 # 当前纯做种时魔列
                 elif any(kw in header for kw in ['纯做种时魔', 'seed magic']):
                     invitee["seed_magic"] = cell_text
-                
+
                 # 后宫加成列
                 elif any(kw in header for kw in ['后宫加成', 'bonus']):
                     invitee["seed_bonus"] = cell_text
-                
+
                 # 最后做种汇报时间列
                 elif any(kw in header for kw in ['最后做种汇报时间', 'last seed']):
                     invitee["last_seed_report"] = cell_text
-                
+
                 # 状态列
                 elif any(kw in header for kw in ['状态', 'status']):
                     invitee["status"] = cell_text
-                    
+
                     # 根据状态判断是否禁用
                     status_lower = cell_text.lower()
                     if any(ban_word in status_lower for ban_word in ['banned', 'disabled', '禁止', '禁用', '封禁']):
                         is_banned = True
-            
+
             # 检查行类和禁用标记
             row_classes = row.get('class', [])
-            is_banned = is_banned or any(cls in ['rowbanned', 'banned', 'disabled'] 
+            is_banned = is_banned or any(cls in ['rowbanned', 'banned', 'disabled']
                           for cls in row_classes)
-            
+
             # 查找禁用图标
             disabled_img = row.select_one('img.disabled, img[alt="Disabled"]')
             if disabled_img:
                 is_banned = True
-            
+
             # 如果用户名不为空
             if username:
                 # 设置启用状态（如果尚未设置）
                 if "enabled" not in invitee:
                     invitee["enabled"] = "No" if is_banned else "Yes"
-                
+
                 # 设置状态（如果尚未设置）
                 if "status" not in invitee:
                     invitee["status"] = "已禁用" if is_banned else "已确认"
-                
+
                 # 计算分享率健康状态
                 if "ratio_value" in invitee:
                     # 检查是否是无数据情况（上传下载都是0）
                     uploaded = invitee.get("uploaded", "0")
                     downloaded = invitee.get("downloaded", "0")
                     is_no_data = False
-                    
+
                     # 检查是否无数据
                     if isinstance(uploaded, str) and isinstance(downloaded, str):
                         # 转换为小写进行比较
@@ -619,11 +620,11 @@ class HHClubHandler(_ISiteHandler):
                         zero_values = ['0', '', '0b', '0.00 kb', '0.00 b', '0.0 kb', '0kb', '0b', '0.00', '0.0']
                         is_no_data = any(uploaded_lower == val for val in zero_values) and \
                                    any(downloaded_lower == val for val in zero_values)
-                    
+
                     # 设置数据状态
                     if is_no_data:
                         invitee["data_status"] = "无数据"
-                    
+
                     # 设置分享率健康状态
                     if is_no_data:
                         invitee["ratio_health"] = "neutral"
@@ -648,10 +649,10 @@ class HHClubHandler(_ISiteHandler):
                     else:
                         invitee["ratio_health"] = "unknown"
                         invitee["ratio_label"] = ["未知", "grey"]
-                
+
                 # 添加用户到结果中
                 result["invitees"].append(invitee)
-        
+
         logger.info(f"站点 {site_name} 解析到 {len(result['invitees'])} 个后宫成员")
         return result
     
