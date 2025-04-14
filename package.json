@@ -45,12 +45,13 @@
     "name": "后宫管理系统",
     "description": "管理添加到MP站点的邀请系统，包括邀请名额、已邀请用户状态等",
     "labels": "PT,后宫,邀请",
-    "version": "1.2.4",
+    "version": "1.2.5",
     "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/nexusinvitee.png",
     "author": "madrays",
     "level": 2,
     "v2": true,
     "history": {
+      "v1.2.5": "适配麒麟",
       "v1.2.4": "修复通用翻页逻辑",
       "v1.2.3": "修复蝶粉翻页逻辑",
       "v1.2.2": "新增失败站点通知功能，by@JhouXerox；修复插件无法正确更新的问题；修复各项bug；尝试修复无限翻页问题，修复1.2.1"
@@ -86,13 +87,13 @@
     "name": "蜂巢论坛邀请监控",
     "description": "蜂巢论坛管理组定制专用",
     "labels": "邀请,蜂巢,论坛",
-    "version": "1.1.1",
+    "version": "1.1.2",
     "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fengchao.png",
     "author": "madrays",
     "level": 2,
     "v2": true,
     "history": {
-      "v1.1.1": "修复通知描述错误问题"
+      "v1.1.2": "自动审核通过"
     }
   }
 } 

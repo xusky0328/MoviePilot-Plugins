@@ -204,9 +204,6 @@ class XiangdaoHandler(_ISiteHandler):
                                 
                                 if invite_method:
                                     result["invite_status"]["reason"] += f"，但您的魔力值({bonus_data['bonus']})可购买{invite_method}"
-                                    # 如果可以购买且没有现成邀请，也视为可邀请
-                                    if result["invite_status"]["permanent_count"] == 0 and result["invite_status"]["temporary_count"] == 0:
-                                        result["invite_status"]["can_invite"] = True
                         else:
                             # 如果没有原因或者已经可以邀请
                             if can_buy_temporary > 0 or can_buy_permanent > 0:
