@@ -31,7 +31,7 @@ class smarthardlink(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/hardlink.png"
     # 插件版本
-    plugin_version = "1.0.3"
+    plugin_version = "1.0.5"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -59,6 +59,7 @@ class smarthardlink(_PluginBase):
     _process_count = 0  # 处理的文件计数
     _hardlink_count = 0  # 创建的硬链接计数
     _saved_space = 0  # 节省的空间统计，单位字节
+    _skipped_hardlinks_count = 0 # 新增：跳过的已存在硬链接计数
 
     # 退出事件
     _event = threading.Event()
@@ -67,17 +68,37 @@ class smarthardlink(_PluginBase):
         """
         插件初始化
         """
+        # --- 添加日志: 打印接收到的配置 ---
+        logger.info(f"SmartHardlink init_plugin received config: {config}")
+        # --- 日志结束 ---
+
         # 读取配置
         if config:
             self._enabled = config.get("enabled")
             self._onlyonce = config.get("onlyonce")
             self._cron = config.get("cron")
             self._scan_dirs = config.get("scan_dirs") or ""
-            self._min_size = int(config.get("min_size") or 1024)
+            # --- 加固 min_size 加载逻辑 ---
+            min_size_val = config.get("min_size")
+            try:
+                # 尝试转换为整数，如果值存在且非空
+                self._min_size = int(min_size_val) if min_size_val else 1024
+            except (ValueError, TypeError):
+                # 如果转换失败或类型错误，使用默认值
+                logger.warning(f"无法将配置中的 min_size '{min_size_val}' 解析为整数，使用默认值 1024")
+                self._min_size = 1024
+            # --- 加固结束 ---
             self._exclude_dirs = config.get("exclude_dirs") or ""
             self._exclude_extensions = config.get("exclude_extensions") or ""
             self._exclude_keywords = config.get("exclude_keywords") or ""
-            self._hash_buffer_size = int(config.get("hash_buffer_size") or 65536)
+            # --- 加固 hash_buffer_size 加载逻辑 (类似处理) ---
+            hash_buffer_size_val = config.get("hash_buffer_size")
+            try:
+                self._hash_buffer_size = int(hash_buffer_size_val) if hash_buffer_size_val else 65536
+            except (ValueError, TypeError):
+                logger.warning(f"无法将配置中的 hash_buffer_size '{hash_buffer_size_val}' 解析为整数，使用默认值 65536")
+                self._hash_buffer_size = 65536
+            # --- 加固结束 ---
             self._dry_run = bool(config.get("dry_run"))
 
         # 停止现有任务
@@ -142,13 +163,13 @@ class smarthardlink(_PluginBase):
             )
         
         # 记录开始时间
-        start_time = datetime.now()
+        start_time = datetime.datetime.now()
         
         # 执行扫描和处理
         self.scan_and_process()
         
         # 计算耗时
-        elapsed_time = datetime.now() - start_time
+        elapsed_time = datetime.datetime.now() - start_time
         elapsed_seconds = elapsed_time.total_seconds()
         elapsed_formatted = self._format_time(elapsed_seconds)
         
@@ -158,7 +179,7 @@ class smarthardlink(_PluginBase):
             text = (
                 f"📢 执行结果\n"
                 f"━━━━━━━━━━\n"
-                f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"🕐 时间：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
                 f"⏱️ 耗时：{elapsed_formatted}\n"
                 f"📁 文件数：{self._process_count} 个\n"
                 f"🔗 硬链接：{self._hardlink_count} 个\n"
@@ -255,22 +276,62 @@ class smarthardlink(_PluginBase):
 
         return False
 
+    def _save_link_history(self, summary: Dict[str, Any]):
+        """
+        保存硬链接操作历史记录
+        :param summary: 包含本次运行摘要信息的字典
+        """
+        try:
+            # 读取现有历史，最多保留最近 100 条
+            history = self.get_data('link_history') or []
+            history.append(summary)
+            # 保留最新的 N 条记录 (例如 100)
+            max_history = 100
+            if len(history) > max_history:
+                history = history[-max_history:]
+            self.save_data(key="link_history", value=history)
+            logger.info(f"保存硬链接历史记录，当前共有 {len(history)} 条记录")
+        except Exception as e:
+            logger.error(f"保存硬链接历史记录失败: {str(e)}", exc_info=True)
+
     def scan_and_process(self):
         """
         扫描目录并处理重复文件
         """
+        run_start_time = datetime.datetime.now() # Record start time for duration
+        run_status = "失败" # Default status
+        error_message = ""
         try:
             # 重置计数器
             self._process_count = 0
             self._hardlink_count = 0
             self._saved_space = 0
             self._hash_cache = {}
+            self._skipped_hardlinks_count = 0 # 重置跳过计数
             
             logger.info("开始扫描目录并处理重复文件 ...")
             logger.warning("提醒：本插件仍处于开发试验阶段，请确保数据安全")
             
             if not self._scan_dirs:
                 logger.error("未配置扫描目录，无法执行")
+                run_status = "失败 (未配置目录)"
+                error_message = "未配置扫描目录"
+                # --- 在此处也保存历史记录 ---
+                run_end_time = datetime.datetime.now()
+                self._save_link_history({
+                    "start_time": run_start_time.strftime('%Y-%m-%d %H:%M:%S'),
+                    "end_time": run_end_time.strftime('%Y-%m-%d %H:%M:%S'),
+                    "duration": self._format_time((run_end_time - run_start_time).total_seconds()),
+                    "status": run_status,
+                    "processed_files": self._process_count,
+                    "hardlinks_created": self._hardlink_count,
+                    "skipped_hardlinks": self._skipped_hardlinks_count,
+                    "space_saved": self._saved_space,
+                    "space_saved_formatted": self._format_size(self._saved_space),
+                    "mode": "试运行" if self._dry_run else "实际运行",
+                    "error": error_message
+                })
+                # --- 历史保存结束 ---
                 return
             
             scan_dirs = self._scan_dirs.split("\n")
@@ -354,20 +415,20 @@ class smarthardlink(_PluginBase):
             duplicate_count = sum(len(files) - 1 for files in file_hashes.values() if len(files) > 1)
             logger.info(f"发现 {duplicate_count} 个重复文件")
             
-            # 没有重复文件时发送通知
+            # 没有重复文件时发送通知 and save history
             if duplicate_count == 0:
                 logger.info("没有发现重复文件")
-                self._send_notify_message(
-                    title="【✅ 智能硬链接扫描完成】",
-                    text=(
-                        f"📢 执行结果\n"
-                        f"━━━━━━━━━━\n"
-                        f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                        f"📁 已扫描：{self._process_count} 个文件\n"
-                        f"🔍 结果：未发现重复文件\n"
-                        f"━━━━━━━━━━"
-                    )
+                run_status = "完成 (无重复)"
+                notification_title = "【✅ 智能硬链接扫描完成】"
+                notification_text = (
+                    f"📢 执行结果\\n"
+                    f"━━━━━━━━━━\\n"
+                    f"🕐 时间：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\\n"
+                    f"📁 已扫描：{self._process_count} 个文件\\n"
+                    f"🔍 结果：未发现重复文件\\n"
+                    f"━━━━━━━━━━"
                 )
+                self._send_notify_message(notification_title, notification_text)
                 return
             
             # 第二步：处理重复文件
@@ -387,9 +448,31 @@ class smarthardlink(_PluginBase):
                 logger.info(f"发现重复文件组 (SHA1: {file_hash}):")
                 logger.info(f"  保留源文件: {source_file}")
                 
+                # --- 获取源文件的 inode 和设备号 ---
+                try:
+                    source_stat = os.stat(source_file)
+                    source_inode = source_stat.st_ino
+                    source_dev = source_stat.st_dev
+                except OSError as e:
+                    logger.error(f"  无法获取源文件 {source_file} 的状态信息: {e}，跳过此组")
+                    continue
+                # --- 获取结束 ---
+                
                 # 处理重复文件
                 for dup_file, dup_size in files[1:]:
-                    logger.info(f"  重复文件: {dup_file}")
+                    logger.info(f"  检查重复文件: {dup_file}")
+                    
+                    # --- 检查是否已是硬链接 ---
+                    try:
+                        dup_stat = os.stat(dup_file)
+                        # 必须在同一设备上且 inode 相同
+                        if dup_stat.st_dev == source_dev and dup_stat.st_ino == source_inode:
+                            logger.info(f"  文件 {dup_file} 已是源文件的硬链接，跳过")
+                            self._skipped_hardlinks_count += 1
+                            continue # 跳过此文件，处理下一个重复文件
+                    except OSError as e:
+                        logger.warning(f"  无法获取重复文件 {dup_file} 的状态信息: {e}，继续尝试硬链接")
+                    # --- 检查结束 ---
                     
                     if self._dry_run:
                         logger.info(f"  试运行模式：将创建从 {source_file} 到 {dup_file} 的硬链接")
@@ -417,7 +500,13 @@ class smarthardlink(_PluginBase):
                             if 'temp_file' in locals() and os.path.exists(temp_file):
                                 try:
                                     if os.path.exists(dup_file):
-                                        os.remove(dup_file)
+                                        # 如果硬链接意外创建成功但后续步骤失败，先删除错误的硬链接
+                                        try:
+                                            dup_stat_after_link = os.stat(dup_file)
+                                            if dup_stat_after_link.st_dev == source_dev and dup_stat_after_link.st_ino == source_inode:
+                                                os.remove(dup_file)
+                                        except OSError:
+                                            pass # 如果获取状态或删除失败，继续尝试恢复
                                     os.rename(temp_file, dup_file)
                                     logger.error(f"  创建硬链接失败，已恢复原文件: {str(e)}")
                                 except Exception as recover_err:
@@ -425,23 +514,25 @@ class smarthardlink(_PluginBase):
                             else:
                                 logger.error(f"  创建硬链接失败: {str(e)}")
             
-            mode_str = "试运行模式" if self._dry_run else "实际运行模式"
-            logger.info(f"处理完成！({mode_str}) 共处理文件 {self._process_count} 个，创建硬链接 {self._hardlink_count} 个，节省空间 {self._format_size(self._saved_space)}")
-            
+            mode_str = "试运行" if self._dry_run else "实际运行"
+            logger.info(f"处理完成！({mode_str}模式) 共处理文件 {self._process_count} 个，创建硬链接 {self._hardlink_count} 个，节省空间 {self._format_size(self._saved_space)}")
+            run_status = f"完成 ({mode_str})"
+
             # 发送通知
             self._send_completion_notification()
             
         except Exception as e:
-            logger.error(f"扫描处理失败: {str(e)}\n{traceback.format_exc()}")
-            
+            run_status = "失败"
+            error_message = str(e)
+            logger.error(f"扫描处理失败: {error_message}\n{traceback.format_exc()}")
             # 发送错误通知
             self._send_notify_message(
                 title="【❌ 智能硬链接处理失败】",
                 text=(
                     f"📢 执行结果\n"
                     f"━━━━━━━━━━\n"
-                    f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                    f"❌ 错误：{str(e)}\n"
+                    f"🕐 时间：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    f"❌ 错误：{error_message}\n"
                     f"━━━━━━━━━━\n"
                     f"💡 可能的解决方法\n"
                     f"• 检查目录权限\n"
@@ -449,6 +540,23 @@ class smarthardlink(_PluginBase):
                     f"• 查看日志获取详细错误信息"
                 )
             )
+        finally:
+            # --- 统一保存历史记录 (无论成功或失败) ---
+            run_end_time = datetime.datetime.now()
+            self._save_link_history({
+                "start_time": run_start_time.strftime('%Y-%m-%d %H:%M:%S'),
+                "end_time": run_end_time.strftime('%Y-%m-%d %H:%M:%S'),
+                "duration": self._format_time((run_end_time - run_start_time).total_seconds()),
+                "status": run_status,
+                "processed_files": self._process_count,
+                "hardlinks_created": self._hardlink_count, # Record count even in dry run
+                "skipped_hardlinks": self._skipped_hardlinks_count, # 添加跳过计数
+                "space_saved": self._saved_space,
+                "space_saved_formatted": self._format_size(self._saved_space), # Record saved space even in dry run
+                "mode": "试运行" if self._dry_run else "实际运行",
+                "error": error_message
+            })
+            # --- 历史保存结束 ---
 
     def _send_completion_notification(self):
         """
@@ -460,26 +568,26 @@ class smarthardlink(_PluginBase):
             text = (
                 f"📢 执行结果（试运行模式）\n"
                 f"━━━━━━━━━━\n"
-                f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"🕐 时间：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
                 f"📁 扫描文件：{self._process_count} 个\n"
                 f"🔍 重复文件：{self._hardlink_count} 个\n"
+                f"⏭️ 已跳过链接：{self._skipped_hardlinks_count} 个\n"
                 f"💾 可节省空间：{self._format_size(self._saved_space)}\n"
                 f"━━━━━━━━━━\n"
                 f"⚠️ 这是试运行模式，没有创建实际硬链接\n"
-                f"💡 在设置中关闭试运行模式可实际执行硬链接操作\n"
-                f"⚠️ 注意：本插件仍处于开发试验阶段，请注意数据安全"
+                f"💡 在设置中关闭试运行模式可实际执行硬链接操作"
             )
         else:
             title = "【✅ 智能硬链接处理完成】"
             text = (
                 f"📢 执行结果\n"
                 f"━━━━━━━━━━\n"
-                f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"🕐 时间：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
                 f"📁 扫描文件：{self._process_count} 个\n"
                 f"🔗 已创建硬链接：{self._hardlink_count} 个\n"
+                f"⏭️ 已跳过链接：{self._skipped_hardlinks_count} 个\n"
                 f"💾 已节省空间：{self._format_size(self._saved_space)}\n"
-                f"━━━━━━━━━━\n"
-                f"⚠️ 注意：本插件仍处于开发试验阶段，请注意数据安全"
+                f"━━━━━━━━━━"
             )
         
         self._send_notify_message(title, text)
@@ -556,228 +664,339 @@ class smarthardlink(_PluginBase):
         })
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
+        # --- Reverting Switch style and making Alerts more compact --- 
         return [
+            # --- Alerts with reduced margin ---
             {
-                "component": "VForm",
-                "content": [
+                'component': 'VRow',
+                'content': [
                     {
-                        "component": "VRow",
-                        "content": [
+                        'component': 'VCol',
+                        'props': {'cols': 12},
+                        'content': [
                             {
-                                "component": "VCol",
-                                "props": {
-                                    "cols": 12,
+                                'component': 'VAlert',
+                                'props': {
+                                    'type': 'info',
+                                    'variant': 'tonal',
+                                    'class': 'mb-2', # Reduced margin
+                                    'density': 'compact', # Make alert denser
+                                    'icon': 'mdi-information',
+                                    'text': "硬链接要求源文件和目标文件必须在同一个文件系统/分区上，否则会创建失败。本插件硬链接过程会保持文件名不变，以防止做种报错。⚠️插件运行时间根据扫描文件体积大小而增长，会很久很久，不要着急"
                                 },
-                                "content": [
-                                    {
-                                        "component": "VAlert",
-                                        "props": {
-                                            "type": "warning",
-                                            "variant": "tonal",
-                                            "text": "⚠️ 免责声明：本插件仍处于开发试验阶段，不排除与其他监控类、硬链接类插件冲突，使用前请务必考虑好数据安全，如有损失，本插件概不负责。强烈建议先在不重要的目录进行测试。",
-                                            "class": "mb-4",
-                                        },
-                                    }
-                                ],
                             }
                         ],
-                    },
-                    {
-                        "component": "VRow",
-                        "content": [
-                            {
-                                "component": "VCol",
-                                "props": {"cols": 12, "md": 4},
-                                "content": [
-                                    {
-                                        "component": "VSwitch",
-                                        "props": {
-                                            "model": "enabled",
-                                            "label": "启用插件",
-                                        },
-                                    }
-                                ],
-                            },
-                            {
-                                "component": "VCol",
-                                "props": {"cols": 12, "md": 4},
-                                "content": [
-                                    {
-                                        "component": "VSwitch",
-                                        "props": {
-                                            "model": "onlyonce",
-                                            "label": "立即运行一次",
-                                        },
-                                    }
-                                ],
-                            },
-                            {
-                                "component": "VCol",
-                                "props": {"cols": 12, "md": 4},
-                                "content": [
-                                    {
-                                        "component": "VSwitch",
-                                        "props": {
-                                            "model": "dry_run",
-                                            "label": "试运行模式",
-                                        },
-                                    }
-                                ],
-                            },
-                        ],
-                    },
-                    {
-                        "component": "VRow",
-                        "content": [
-                            {
-                                "component": "VCol",
-                                "props": {"cols": 12, "md": 6},
-                                "content": [
-                                    {
-                                        "component": "VCronField",
-                                        "props": {
-                                            "model": "cron",
-                                            "label": "定时扫描周期",
-                                            "placeholder": "5位cron表达式，留空关闭",
-                                        },
-                                    }
-                                ],
-                            },
-                            {
-                                "component": "VCol",
-                                "props": {"cols": 12, "md": 6},
-                                "content": [
-                                    {
-                                        "component": "VTextField",
-                                        "props": {
-                                            "model": "min_size",
-                                            "label": "最小文件大小（KB）",
-                                            "placeholder": "1024",
-                                        },
-                                    }
-                                ],
-                            },
-                        ],
-                    },
-                    {
-                        "component": "VRow",
-                        "content": [
-                            {
-                                "component": "VCol",
-                                "props": {"cols": 12},
-                                "content": [
-                                    {
-                                        "component": "VTextarea",
-                                        "props": {
-                                            "model": "scan_dirs",
-                                            "label": "扫描目录",
-                                            "rows": 5,
-                                            "placeholder": "每行一个目录路径",
-                                        },
-                                    }
-                                ],
-                            }
-                        ],
-                    },
-                    {
-                        "component": "VRow",
-                        "content": [
-                            {
-                                "component": "VCol",
-                                "props": {"cols": 12},
-                                "content": [
-                                    {
-                                        "component": "VTextarea",
-                                        "props": {
-                                            "model": "exclude_dirs",
-                                            "label": "排除目录",
-                                            "rows": 3,
-                                            "placeholder": "每行一个目录路径",
-                                        },
-                                    }
-                                ],
-                            }
-                        ],
-                    },
-                    {
-                        "component": "VRow",
-                        "content": [
-                            {
-                                "component": "VCol",
-                                "props": {"cols": 12, "md": 6},
-                                "content": [
-                                    {
-                                        "component": "VTextField",
-                                        "props": {
-                                            "model": "exclude_extensions",
-                                            "label": "排除文件类型",
-                                            "placeholder": "jpg,png,gif",
-                                        },
-                                    }
-                                ],
-                            },
-                            {
-                                "component": "VCol",
-                                "props": {"cols": 12, "md": 6},
-                                "content": [
-                                    {
-                                        "component": "VTextField",
-                                        "props": {
-                                            "model": "hash_buffer_size",
-                                            "label": "哈希缓冲区大小（字节）",
-                                            "placeholder": "65536",
-                                        },
-                                    }
-                                ],
-                            },
-                        ],
-                    },
-                    {
-                        "component": "VRow",
-                        "content": [
-                            {
-                                "component": "VCol",
-                                "props": {
-                                    "cols": 12,
-                                },
-                                "content": [
-                                    {
-                                        "component": "VTextarea",
-                                        "props": {
-                                            "model": "exclude_keywords",
-                                            "label": "排除关键词",
-                                            "rows": 2,
-                                            "placeholder": "每行一个关键词",
-                                        },
-                                    }
-                                ],
-                            }
-                        ],
-                    },
-                    {
-                        "component": "VRow",
-                        "content": [
-                            {
-                                "component": "VCol",
-                                "props": {
-                                    "cols": 12,
-                                },
-                                "content": [
-                                    {
-                                        "component": "VAlert",
-                                        "props": {
-                                            "type": "info",
-                                            "variant": "tonal",
-                                            "text": "试运行模式：仅检测重复文件，不实际创建硬链接。建议首次使用开启此选项，确认无误后再关闭。\n硬链接要求源文件和目标文件必须在同一个文件系统/分区上，否则会创建失败。\n注意：硬链接过程会保持文件名不变，以防止做种报错。",
-                                        },
-                                    }
-                                ],
-                            }
-                        ],
-                    },
+                    }
                 ],
-            }
+            },
+            {
+                'component': 'VRow',
+                'content': [
+                    {
+                        'component': 'VCol',
+                        'props': {'cols': 12},
+                        'content': [
+                            {
+                                'component': 'VAlert',
+                                'props': {
+                                    'type': 'warning',
+                                    'variant': 'tonal',
+                                    'class': 'mb-3', # Reduced margin
+                                    'density': 'compact', # Make alert denser
+                                    'icon': 'mdi-alert',
+                                    'text': "本插件仍处于开发试验阶段，不排除与其他监控类、硬链接类插件冲突，使用前请务必考虑好数据安全，如有损失，本插件概不负责。强烈建议先在不重要的目录进行测试。",
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+            # --- Basic Settings Section ---
+            {
+                'component': 'VCard',
+                'props': {'variant': 'outlined', 'class': 'mb-4'},
+                'content': [
+                    {
+                        'component': 'VCardTitle',
+                        'props': {'class': 'd-flex align-center text-h6 py-3'},
+                        'content': [
+                            {'component': 'VIcon', 'props': {'icon': 'mdi-cog', 'color': 'primary', 'class': 'mr-2'}},
+                            {'component': 'span', 'text': '基础设置'}
+                        ]
+                    },
+                    {'component': 'VDivider'},
+                    {
+                        'component': 'VCardText',
+                        'content': [
+                            # Switches Row (Reverted style)
+                            {
+                                'component': 'VRow',
+                                'class': 'align-center mb-2',
+                                'content': [
+                                    {
+                                        'component': 'VCol',
+                                        'props': {"cols": 12, "sm": 4},
+                                        'content': [
+                                            {
+                                                'component': 'VSwitch',
+                                                'props': {
+                                                    'model': 'enabled',
+                                                    'label': '启用插件',
+                                                    'color': 'primary',
+                                                    # 'inset': False, # Reverted
+                                                    # 'hide-details': False # Reverted
+                                                },
+                                            }
+                                        ],
+                                    },
+                                    {
+                                        'component': 'VCol',
+                                        'props': {"cols": 12, "sm": 4},
+                                        'content': [
+                                            {
+                                                'component': 'VSwitch',
+                                                'props': {
+                                                    'model': 'onlyonce',
+                                                    'label': '立即运行一次',
+                                                    # 'inset': False,
+                                                    # 'hide-details': False
+                                                },
+                                            }
+                                        ],
+                                    },
+                                    {
+                                        'component': 'VCol',
+                                        'props': {"cols": 12, "sm": 4},
+                                        'content': [
+                                            {
+                                                'component': 'VSwitch',
+                                                'props': {
+                                                    'model': 'dry_run',
+                                                    'label': '试运行模式',
+                                                    'hint': '开启后不实际创建链接', # Reverted to hint
+                                                    # 'inset': False,
+                                                    'persistent-hint': True
+                                                },
+                                            }
+                                        ],
+                                    },
+                                ],
+                            },
+                            # Cron and Min Size Row (Removed dense)
+                            {
+                                'component': 'VRow',
+                                'class': 'mb-2',
+                                'content': [
+                                     {
+                                        'component': 'VCol',
+                                        'props': {"cols": 12, "sm": 6},
+                                        'content': [
+                                            {
+                                                'component': 'VCronField',
+                                                'props': {
+                                                    'model': 'cron',
+                                                    'label': '定时扫描周期',
+                                                    'placeholder': '5位cron表达式，留空关闭',
+                                                    'variant': 'outlined' 
+                                                },
+                                            }
+                                        ],
+                                    },
+                                    {
+                                        'component': 'VCol',
+                                        'props': {"cols": 12, "sm": 6},
+                                        'content': [
+                                            {
+                                                'component': 'VTextField',
+                                                'props': {
+                                                    'model': 'min_size',
+                                                    'label': '最小文件大小（KB）',
+                                                    'placeholder': '1024',
+                                                    'type': 'number',
+                                                    'hint': '小于此大小的文件将被忽略',
+                                                    'persistent-hint': True, 
+                                                    'variant': 'outlined'
+                                                },
+                                            }
+                                        ],
+                                    },
+                                ],
+                            },
+                            # Hash Buffer Size Row (Removed dense)
+                            {
+                                'component': 'VRow',
+                                'class': 'mb-2',
+                                'content': [
+                                      {
+                                        'component': 'VCol',
+                                        'props': {'cols': 12},
+                                        'content': [
+                                            {
+                                                'component': 'VTextField',
+                                                'props': {
+                                                    'model': 'hash_buffer_size',
+                                                    'label': '哈希缓冲区大小（字节）',
+                                                    'placeholder': '65536',
+                                                    'type': 'number',
+                                                    'hint': '计算文件哈希时每次读取的字节数。增大可加快I/O速度（需足够内存），减小可降低内存占用。建议默认65536 (64KB)。',
+                                                    'persistent-hint': True,
+                                                    # 'density': 'compact',
+                                                    'variant': 'outlined'
+                                                },
+                                            }
+                                        ],
+                                    },
+                                ]
+                            },
+                        ]
+                    }
+                ]
+            },
+            # --- Path Settings Section ---
+            {
+                'component': 'VCard',
+                'props': {'variant': 'outlined', 'class': 'mb-4'},
+                'content': [
+                    {
+                        'component': 'VCardTitle',
+                        'props': {'class': 'd-flex align-center text-h6 py-3'},
+                        'content': [
+                            {'component': 'VIcon', 'props': {'icon': 'mdi-folder-settings-outline', 'color': 'primary', 'class': 'mr-2'}},
+                            {'component': 'span', 'text': '路径设置'}
+                        ]
+                    },
+                    {'component': 'VDivider'},
+                    {
+                        'component': 'VCardText',
+                        'content': [
+                             # Scan Dirs (Removed dense)
+                            {
+                                'component': 'VRow',
+                                'class': 'mb-2',
+                                'content': [
+                                    {
+                                        'component': 'VCol',
+                                        'props': {"cols": 12},
+                                        'content': [
+                                            {
+                                                'component': 'VTextarea',
+                                                'props': {
+                                                    'model': 'scan_dirs',
+                                                    'label': '扫描目录',
+                                                    'rows': 5,
+                                                    'placeholder': '每行一个目录路径',
+                                                    'prependInnerIcon': 'mdi-folder-search',
+                                                    'variant': 'outlined'
+                                                },
+                                            }
+                                        ],
+                                    }
+                                ],
+                            },
+                             # Exclude Dirs (Removed dense)
+                            {
+                                'component': 'VRow',
+                                'class': 'mb-2',
+                                'content': [
+                                    {
+                                        'component': 'VCol',
+                                        'props': {"cols": 12},
+                                        'content': [
+                                            {
+                                                'component': 'VTextarea',
+                                                'props': {
+                                                    'model': 'exclude_dirs',
+                                                    'label': '排除目录',
+                                                    'rows': 3,
+                                                    'placeholder': '每行一个目录路径，排除这些目录及其子目录下的所有文件',
+                                                    'prependInnerIcon': 'mdi-folder-remove',
+                                                    'variant': 'outlined'
+                                                },
+                                            }
+                                        ],
+                                    }
+                                ],
+                            },
+                        ]
+                    }
+                ]
+            },
+             # --- Exclusion Rules Section ---
+            {
+                'component': 'VCard',
+                'props': {'variant': 'outlined', 'class': 'mb-4'},
+                'content': [
+                    {
+                        'component': 'VCardTitle',
+                        'props': {'class': 'd-flex align-center text-h6 py-3'},
+                        'content': [
+                            {'component': 'VIcon', 'props': {'icon': 'mdi-filter-variant-remove', 'color': 'primary', 'class': 'mr-2'}},
+                            {'component': 'span', 'text': '排除规则'}
+                        ]
+                    },
+                    {'component': 'VDivider'},
+                    {
+                        'component': 'VCardText',
+                        'content': [
+                            # Exclude Extensions (Removed dense)
+                            {
+                                'component': 'VRow',
+                                'class': 'mb-2',
+                                'content': [
+                                    {
+                                        'component': 'VCol',
+                                        'props': {"cols": 12},
+                                        'content': [
+                                            {
+                                                'component': 'VTextField',
+                                                'props': {
+                                                    'model': 'exclude_extensions',
+                                                    'label': '排除文件类型 (扩展名)',
+                                                    'placeholder': 'jpg,png,gif,nfo',
+                                                    'hint': '用逗号分隔，不带点，忽略大小写',
+                                                    'persistent-hint': True,
+                                                    # 'density': 'compact',
+                                                    'variant': 'outlined'
+                                                },
+                                            }
+                                        ],
+                                    },
+                                ]
+                            },
+                            # Exclude Keywords (Removed dense)
+                            {
+                                'component': 'VRow',
+                                'class': 'mb-2',
+                                'content': [
+                                    {
+                                        'component': 'VCol',
+                                        'props': {
+                                            'cols': 12,
+                                        },
+                                        'content': [
+                                            {
+                                                'component': 'VTextarea',
+                                                'props': {
+                                                    'model': 'exclude_keywords',
+                                                    'label': '排除路径包含关键词 (正则表达式)',
+                                                    'rows': 2,
+                                                    'placeholder': '每行一个正则表达式，例如 \\\\.partial$ 或 sample',
+                                                    'hint': '匹配完整文件路径，区分大小写，支持正则',
+                                                    'persistent-hint': True,
+                                                    'variant': 'outlined'
+                                                },
+                                            }
+                                        ],
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ]
+            },
+            # --- Alerts are at the top ---
         ], {
+            # Default values remain the same
             "enabled": False,
             "onlyonce": False,
             "dry_run": True,
@@ -791,7 +1010,329 @@ class smarthardlink(_PluginBase):
         }
 
     def get_page(self) -> List[dict]:
-        pass
+        """
+        构建插件详情页面，展示硬链接历史
+        """
+        # 获取历史记录
+        historys = self.get_data('link_history') or []
+
+        # 如果没有历史记录
+        if not historys:
+            return [
+                {
+                    'component': 'VAlert',
+                    'props': {
+                        'type': 'info',
+                        'variant': 'tonal',
+                        'text': '暂无硬链接操作记录',
+                        'class': 'mb-2',
+                        'prepend-icon': 'mdi-history'
+                    }
+                }
+            ]
+
+        # 按时间倒序排列历史
+        historys = sorted(historys, key=lambda x: x.get("end_time", ""), reverse=True)
+
+        # 构建历史记录表格行 (添加图标和颜色)
+        history_rows = []
+        for history in historys:
+            # --- Status chip logic (unchanged) ---
+            status_text = history.get("status", "未知")
+            status_color = "info" # Default
+            status_icon = "mdi-information"
+            if "失败" in status_text:
+                status_color = "error"
+                status_icon = "mdi-close-circle"
+            elif "完成" in status_text:
+                 status_color = "success"
+                 status_icon = "mdi-check-circle"
+            error_text = history.get("error", "")
+
+            # --- Mode chip logic ---
+            mode_text = history.get("mode", "")
+            mode_color = "grey" # Default
+            mode_icon = "mdi-help-circle-outline"
+            if mode_text == "试运行":
+                mode_color = "info"
+                mode_icon = "mdi-test-tube"
+            elif mode_text == "实际运行":
+                mode_color = "primary"
+                mode_icon = "mdi-cogs"
+
+            # --- Format other data (unchanged) ---
+            space_saved_fmt = history.get("space_saved_formatted", "0 B")
+            skipped_count = history.get("skipped_hardlinks", 0)
+            processed_count = history.get("processed_files", 0)
+            created_count = history.get("hardlinks_created", 0)
+            duration_text = history.get("duration", "N/A")
+
+            history_rows.append({
+                'component': 'tr',
+                'content': [
+                    # 完成时间
+                    {
+                        'component': 'td',
+                        'props': {'class': 'text-caption'},
+                        'content': [
+                            {'component': 'VIcon', 'props': {'icon': 'mdi-calendar-check', 'size': 'x-small', 'class': 'mr-1', 'color': 'grey'}},
+                            {'component': 'span', 'text': history.get("end_time", "N/A")}
+                        ]
+                    },
+                    # 耗时
+                    {
+                        'component': 'td',
+                        'props': {'class': 'text-caption'},
+                        'content': [
+                            {'component': 'VIcon', 'props': {'icon': 'mdi-clock-outline', 'size': 'x-small', 'class': 'mr-1', 'color': 'grey'}},
+                            {'component': 'span', 'text': duration_text}
+                        ]
+                    },
+                    # 状态
+                    {
+                        'component': 'td',
+                        'content': [
+                             {
+                                'component': 'VChip',
+                                'props': {
+                                    'color': status_color,
+                                    'size': 'small',
+                                    'variant': 'elevated', 
+                                    'prepend-icon': status_icon
+                                },
+                                'text': status_text
+                            },
+                            {
+                                'component': 'div',
+                                'props': {'class': 'text-caption text-error mt-1'},
+                                'text': error_text if error_text else ""
+                            }
+                        ]
+                    },
+                     # 模式
+                    {
+                        'component': 'td',
+                        'content': [
+                            {
+                                'component': 'VChip', 
+                                'props': {
+                                    'color': mode_color,
+                                    'size': 'small',
+                                    'variant': 'outlined', # Use outlined for mode maybe?
+                                    'prepend-icon': mode_icon
+                                },
+                                'text': mode_text
+                            } if mode_text else {'component': 'span', 'text': 'N/A', 'class': 'text-caption'}
+                        ]
+                    },
+                    # 处理文件数
+                    {
+                        'component': 'td',
+                        'props': {'class': 'text-center text-caption'},
+                        'content': [
+                             {'component': 'VIcon', 'props': {'icon': 'mdi-file-document-multiple-outline', 'size': 'x-small', 'class': 'mr-1', 'color': 'grey'}},
+                             {'component': 'span', 'text': str(processed_count)}
+                        ]
+                    },
+                    # 创建链接数
+                    {
+                        'component': 'td',
+                        'props': {'class': 'text-center text-caption'},
+                        'content': [
+                            {'component': 'VIcon', 'props': {'icon': 'mdi-link-variant-plus', 'size': 'x-small', 'class': 'mr-1', 'color': 'success'}},
+                            {'component': 'span', 'text': str(created_count)}
+                        ]
+                    },
+                    # 已跳过链接数
+                    {
+                        'component': 'td',
+                        'props': {'class': 'text-center text-caption'},
+                        'content': [
+                            {'component': 'VIcon', 'props': {'icon': 'mdi-link-variant-off', 'size': 'x-small', 'class': 'mr-1', 'color': 'orange'}},
+                            {'component': 'span', 'text': str(skipped_count)}
+                        ]
+                    },
+                    # 节省空间
+                    {
+                        'component': 'td',
+                        'props': {'class': 'text-caption'},
+                        'content': [
+                            {'component': 'VIcon', 'props': {'icon': 'mdi-content-save-outline', 'size': 'x-small', 'class': 'mr-1', 'color': 'green'}},
+                            {'component': 'span', 'props': {'class': 'text-green-darken-1 font-weight-medium'}, 'text': space_saved_fmt} # Green text
+                        ]
+                    },
+                ]
+            })
+
+        # --- 最终页面组装 (优化 VCardTitle 和 Table Header) ---
+        return [
+            {
+                'component': 'VCard',
+                'props': {'variant': 'outlined', 'class': 'mb-4'},
+                'content': [
+                    {
+                        'component': 'VCardTitle',
+                        'props': {'class': 'd-flex align-center text-h6 py-3'},
+                        'content': [
+                             {
+                                'component': 'VIcon',
+                                'props': {'icon': 'mdi-history', 'class': 'mr-2', 'color': 'primary'},
+                            },
+                            {'component': 'span', 'text': '智能硬链接历史记录'}
+                        ]
+                    },
+                    {
+                        'component': 'VDivider'
+                    },
+                    {
+                        'component': 'VCardText',
+                        'props': {'class': 'pa-0'},
+                        'content': [
+                            {
+                                'component': 'VTable',
+                                'props': {
+                                    'hover': True,
+                                    'density': 'comfortable' 
+                                },
+                                'content': [
+                                    # 表头 (Using text for icon AND props.color for color)
+                                    {
+                                        'component': 'thead',
+                                        'content': [
+                                            {
+                                                'component': 'tr',
+                                                'props': {'class': 'bg-grey-lighten-5'},
+                                                'content': [
+                                                    # --- Modified headers below ---
+                                                    {
+                                                        'component': 'th',
+                                                        'props': {'class': 'text-caption', 'style': 'white-space: nowrap; padding: 4px 8px;'},
+                                                        'content': [
+                                                            {
+                                                                'component': 'div',
+                                                                'props': {'class': 'd-flex align-center'},
+                                                                'content': [
+                                                                    {'component': 'VIcon', 'props': {'size': '14', 'class': 'mr-1', 'color': 'grey'}, 'text': 'mdi-calendar-check'}, # text + props.color
+                                                                    {'component': 'span', 'text': '完成时间'}
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'props': {'class': 'text-caption', 'style': 'white-space: nowrap; padding: 4px 8px;'},
+                                                        'content': [
+                                                            {
+                                                                'component': 'div',
+                                                                'props': {'class': 'd-flex align-center'},
+                                                                'content': [
+                                                                    {'component': 'VIcon', 'props': {'size': '14', 'class': 'mr-1', 'color': 'grey'}, 'text': 'mdi-clock-outline'}, # text + props.color
+                                                                    {'component': 'span', 'text': '耗时'}
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'props': {'class': 'text-caption', 'style': 'white-space: nowrap; padding: 4px 8px;'},
+                                                        'content': [
+                                                            {
+                                                                'component': 'div',
+                                                                'props': {'class': 'd-flex align-center'},
+                                                                'content': [
+                                                                    {'component': 'VIcon', 'props': {'size': '14', 'class': 'mr-1', 'color': 'grey'}, 'text': 'mdi-list-status'}, # text + props.color
+                                                                    {'component': 'span', 'text': '状态'}
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'props': {'class': 'text-caption', 'style': 'white-space: nowrap; padding: 4px 8px;'},
+                                                        'content': [
+                                                            {
+                                                                'component': 'div',
+                                                                'props': {'class': 'd-flex align-center'},
+                                                                'content': [
+                                                                    {'component': 'VIcon', 'props': {'size': '14', 'class': 'mr-1', 'color': 'grey'}, 'text': 'mdi-cogs'}, # text + props.color
+                                                                    {'component': 'span', 'text': '模式'}
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'props': {'class': 'text-caption', 'style': 'white-space: nowrap; padding: 4px 8px;'},
+                                                        'content': [
+                                                            {
+                                                                'component': 'div',
+                                                                'props': {'class': 'd-flex align-center justify-center'},
+                                                                'content': [
+                                                                    {'component': 'VIcon', 'props': {'size': '14', 'class': 'mr-1', 'color': 'grey'}, 'text': 'mdi-file-document-multiple-outline'}, # text + props.color
+                                                                    {'component': 'span', 'text': '处理'}
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'props': {'class': 'text-caption', 'style': 'white-space: nowrap; padding: 4px 8px;'},
+                                                        'content': [
+                                                            {
+                                                                'component': 'div',
+                                                                'props': {'class': 'd-flex align-center justify-center'},
+                                                                'content': [
+                                                                    {'component': 'VIcon', 'props': {'size': '14', 'class': 'mr-1', 'color': 'success'}, 'text': 'mdi-link-variant-plus'}, # text + props.color
+                                                                    {'component': 'span', 'text': '创建'}
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'props': {'class': 'text-caption', 'style': 'white-space: nowrap; padding: 4px 8px;'},
+                                                        'content': [
+                                                            {
+                                                                'component': 'div',
+                                                                'props': {'class': 'd-flex align-center justify-center'},
+                                                                'content': [
+                                                                    {'component': 'VIcon', 'props': {'size': '14', 'class': 'mr-1', 'color': 'orange'}, 'text': 'mdi-link-variant-off'}, # text + props.color
+                                                                    {'component': 'span', 'text': '跳过'}
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    {
+                                                        'component': 'th',
+                                                        'props': {'class': 'text-caption', 'style': 'white-space: nowrap; padding: 4px 8px;'},
+                                                        'content': [
+                                                            {
+                                                                'component': 'div',
+                                                                'props': {'class': 'd-flex align-center'},
+                                                                'content': [
+                                                                    {'component': 'VIcon', 'props': {'size': '14', 'class': 'mr-1', 'color': 'green'}, 'text': 'mdi-content-save-outline'}, # text + props.color
+                                                                    {'component': 'span', 'text': '节省'}
+                                                                ]
+                                                            }
+                                                        ]
+                                                    }
+                                                    # --- End of modified headers ---
+                                                ]
+                                            }
+                                        ]
+                                    },
+                                    # 表内容
+                                    {
+                                        'component': 'tbody',
+                                        'content': history_rows
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
 
     def stop_service(self):
         """

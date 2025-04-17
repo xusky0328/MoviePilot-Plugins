@@ -101,13 +101,13 @@
     "name": "智能硬链接",
     "description": "通过计算文件SHA1，将指定目录中相同SHA1的文件只保留一个，其他的用硬链接替换，用来清理重复占用的磁盘空间",
     "labels": "硬链接,SHA1,磁盘空间,重复文件",
-    "version": "1.0.3",
+    "version": "1.0.5",
     "icon": "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/hardlink.png",
     "author": "madrays",
     "level": 2,
     "v2": true,
     "history": {
-      "v1.0.3": "首次发布，支持SHA1重复文件识别，硬链接替换，保持种子文件名"
+      "v1.0.5": "首次发布，支持SHA1重复文件识别，硬链接替换，保持种子文件名"
     }
   }
 } 
