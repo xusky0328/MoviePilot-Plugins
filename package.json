@@ -97,7 +97,7 @@
       "v1.1.3": "cookie获取失败不再通知"
     }
   },
-  "SmartHardLink": {
+  "smarthardlink_": {
     "name": "智能硬链接",
     "description": "通过计算文件SHA1，将指定目录中相同SHA1的文件只保留一个，其他的用硬链接替换，用来清理重复占用的磁盘空间",
     "labels": "硬链接,SHA1,磁盘空间,重复文件",
