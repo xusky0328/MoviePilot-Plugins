@@ -30,7 +30,7 @@ class FengchaoInvite(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fengchao.png"
     # 插件版本
-    plugin_version = "1.1.2"
+    plugin_version = "1.1.3"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -830,8 +830,8 @@ class FengchaoInvite(_PluginBase):
         proxies = self._get_proxies()
         cookie = self._login_and_get_cookie(proxies)
         if not cookie:
+            # 只记录日志，不发送通知，避免因网络问题频繁推送通知
             logger.error("登录失败，无法获取Cookie")
-            self.send_msg("蜂巢邀请监控", "登录失败，无法获取Cookie")
             return
 
         # 检查待审核邀请
@@ -1427,29 +1427,42 @@ class FengchaoInvite(_PluginBase):
             api_user = item.get('api_username', '?')
             api_email = item.get('api_email', '?')
             
-            text_lines.append(f"\n--- 【{i}】 ID: {invite_id} (API用户: {api_user}) ---")
+            text_lines.append(f"\n=== 【{i}】ID: {invite_id} ===")
+            text_lines.append(f"📝 API信息: 用户={api_user} | 邮箱={api_email}")
 
+            verified_links = []
+            if 'link1' in details:
+                verified_links.append("链接1")
+            if 'link2' in details:
+                verified_links.append("链接2")
+            
+            text_lines.append(f"✅ 验证通过: {', '.join(verified_links)}")
+            
             if 'link1' in details:
                 l1_info = details['link1']
                 l1_user = l1_info.get('username', '未知')
                 l1_email = l1_info.get('email', '未知')
                 l1_level = l1_info.get('level', '未知')
-                text_lines.append(f"🔗 链接1 ✅: 用户={l1_user} | 邮箱={l1_email} | 等级={l1_level}")
+                text_lines.append("🔗 链接1验证结果:")
+                text_lines.append(f"   👤 用户: {l1_user}")
+                text_lines.append(f"   📧 邮箱: {l1_email}")
+                text_lines.append(f"   🏅 等级: {l1_level}")
             else:
-                # 如果 link1 不在 details 里，说明它可能不存在或未通过验证
-                # 这里是自动通过的通知，理论上至少有一个链接通过
-                 text_lines.append("🔗 链接1: (未验证或未提供)")
+                text_lines.append("🔗 链接1: 未验证或未提供")
 
             if 'link2' in details:
                 l2_info = details['link2']
                 l2_user = l2_info.get('username', '未知')
                 l2_email = l2_info.get('email', '未知')
                 l2_level = l2_info.get('level', '未知')
-                text_lines.append(f"🔗 链接2 ✅: 用户={l2_user} | 邮箱={l2_email} | 等级={l2_level}")
+                text_lines.append("🔗 链接2验证结果:")
+                text_lines.append(f"   👤 用户: {l2_user}")
+                text_lines.append(f"   📧 邮箱: {l2_email}")
+                text_lines.append(f"   🏅 等级: {l2_level}")
             else:
-                 text_lines.append("🔗 链接2: (未验证或未提供)")
+                text_lines.append("🔗 链接2: 未验证或未提供")
 
-        text_lines.append("\n备注已提交至蜂巢论坛。")
+        text_lines.append("\n💬 备注已提交至蜂巢论坛，包含所有验证细节。")
         text = "\n".join(text_lines)
 
         self.send_msg(title, text, self.plugin_icon)
@@ -1738,10 +1751,10 @@ class FengchaoInvite(_PluginBase):
         remark_parts = ["自动审核通过"]
         if 'link1' in verified_details:
             l1 = verified_details['link1']
-            remark_parts.append(f"L1: U={l1.get('username','?')}, L={l1.get('level','?')} ✅")
+            remark_parts.append(f"L1: U={l1.get('username','?')}, E={l1.get('email','?')}, L={l1.get('level','?')} ✅")
         if 'link2' in verified_details:
             l2 = verified_details['link2']
-            remark_parts.append(f"L2: U={l2.get('username','?')}, L={l2.get('level','?')} ✅")
+            remark_parts.append(f"L2: U={l2.get('username','?')}, E={l2.get('email','?')}, L={l2.get('level','?')} ✅")
         
         remark = " | ".join(remark_parts)
         # 限制备注长度，以防超出 API 限制 (假设限制 255)
