@@ -30,7 +30,7 @@ class FengchaoInvite(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/fengchao.png"
     # 插件版本
-    plugin_version = "1.1.3"
+    plugin_version = "1.1.4"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -1049,6 +1049,9 @@ class FengchaoInvite(_PluginBase):
             max_retries = int(self._retry_count) 
         if retry_delay is None:
             retry_delay = int(self._retry_interval)
+
+        # 初始化 approved_items 变量，确保在所有代码路径下都有定义
+        approved_items = []
 
         main_fengchao_username = None
         fengchao_site_name = None
