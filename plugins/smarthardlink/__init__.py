@@ -421,11 +421,11 @@ class smarthardlink(_PluginBase):
                 run_status = "完成 (无重复)"
                 notification_title = "【✅ 智能硬链接扫描完成】"
                 notification_text = (
-                    f"📢 执行结果\\n"
-                    f"━━━━━━━━━━\\n"
-                    f"🕐 时间：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\\n"
-                    f"📁 已扫描：{self._process_count} 个文件\\n"
-                    f"🔍 结果：未发现重复文件\\n"
+                    f"📢 执行结果\n"
+                    f"━━━━━━━━━━\n"
+                    f"🕐 时间：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    f"📁 已扫描：{self._process_count} 个文件\n"
+                    f"🔍 结果：未发现重复文件\n"
                     f"━━━━━━━━━━"
                 )
                 self._send_notify_message(notification_title, notification_text)
