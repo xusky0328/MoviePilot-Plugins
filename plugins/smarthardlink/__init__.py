@@ -23,7 +23,7 @@ from app.utils.system import SystemUtils
 lock = threading.Lock()
 
 
-class SmartHardLink(_PluginBase):
+class smarthardlink(_PluginBase):
     # 插件名称
     plugin_name = "智能硬链接"
     # 插件描述
@@ -31,7 +31,7 @@ class SmartHardLink(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/madrays/MoviePilot-Plugins/main/icons/hardlink.png"
     # 插件版本
-    plugin_version = "1.0.2"
+    plugin_version = "1.0.3"
     # 插件作者
     plugin_author = "madrays"
     # 作者主页
@@ -534,7 +534,7 @@ class SmartHardLink(_PluginBase):
         if self._enabled and self._cron:
             return [
                 {
-                    "id": "SmartHardLink",
+                    "id": "smarthardlink",
                     "name": "智能硬链接定时扫描服务",
                     "trigger": CronTrigger.from_crontab(self._cron),
                     "func": self.scan_and_process,
