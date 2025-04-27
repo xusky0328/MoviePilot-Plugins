@@ -55,6 +55,7 @@ class NexusPhpHandler(_ISiteHandler):
             "keepfrds",             # 朋友
             "moecat",               # 萌猫
             "springsunday"          # 春天
+            "ptzone"                # ptzone
         ]
         
         # 如果URL中包含任何一个NexusPHP特征，则认为是NexusPHP站点
